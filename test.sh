@@ -61,7 +61,7 @@ echo "$OUTPUT" | tail -3
 kill $SERVER_PID 2>/dev/null || true
 wait $SERVER_PID 2>/dev/null || true
 
-if echo "$OUTPUT" | grep -q "SUCCESS"; then
+if echo "$OUTPUT" | grep -q "0 failed"; then
     echo "  ✓ Echo integration passed"
     PASS=$((PASS + 1))
 else

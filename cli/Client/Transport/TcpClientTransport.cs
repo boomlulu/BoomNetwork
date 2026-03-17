@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Net.Sockets;
 using System.Threading;
@@ -7,22 +8,34 @@ using BoomNetwork.Core.Transport;
 namespace BoomNetwork.Client.Transport
 {
     /// <summary>
+    /// 收到的数据块（从 ArrayPool 租借）
+    /// </summary>
+    internal struct RecvChunk
+    {
+        public byte[] Buffer;
+        public int Length;
+    }
+
+    /// <summary>
     /// TCP 客户端传输层
     ///
     /// IO 线程负责 socket 读写，主线程通过 Tick() 取数据。
-    /// 线程同步通过 ConcurrentQueue 实现。
+    /// 收到的数据使用 ArrayPool 租借，Tick 处理完后归还。
     /// </summary>
     public class TcpClientTransport : ITransport
     {
         private TcpClient? _client;
         private NetworkStream? _stream;
         private Thread? _recvThread;
-        private volatile bool _running;
+
+        // 用 int + Interlocked 代替 volatile bool，避免竞态
+        private int _running; // 0=stopped, 1=running
+        private int _disconnectHandled; // 防止重复触发 disconnect
 
         private string _lastHost = "";
         private int _lastPort;
 
-        private readonly ConcurrentQueue<byte[]> _recvQueue = new();
+        private readonly ConcurrentQueue<RecvChunk> _recvQueue = new();
         private readonly ConcurrentQueue<Action> _eventQueue = new();
         private readonly object _sendLock = new();
 
@@ -40,23 +53,22 @@ namespace BoomNetwork.Client.Transport
             _lastHost = host;
             _lastPort = port;
             State = TransportState.Connecting;
+            Interlocked.Exchange(ref _disconnectHandled, 0);
 
-            // 在后台线程执行连接
-            var connectThread = new Thread(() => DoConnect(host, port))
-            {
-                IsBackground = true,
-                Name = "BoomNet-Connect"
-            };
-            connectThread.Start();
+            ThreadPool.QueueUserWorkItem(_ => DoConnect(host, port));
         }
 
         public void Disconnect()
         {
-            _running = false;
-            try { _stream?.Close(); } catch { }
-            try { _client?.Close(); } catch { }
+            Interlocked.Exchange(ref _running, 0);
+
+            var stream = _stream;
+            var client = _client;
             _stream = null;
             _client = null;
+
+            try { stream?.Close(); } catch { }
+            try { client?.Close(); } catch { }
 
             if (State == TransportState.Connected)
             {
@@ -78,14 +90,17 @@ namespace BoomNetwork.Client.Transport
 
         public void Send(byte[] data, int offset, int length)
         {
-            if (State != TransportState.Connected || _stream == null)
+            if (State != TransportState.Connected)
                 return;
+
+            var stream = _stream;
+            if (stream == null) return;
 
             lock (_sendLock)
             {
                 try
                 {
-                    _stream.Write(data, offset, length);
+                    stream.Write(data, offset, length);
                 }
                 catch (Exception ex)
                 {
@@ -97,16 +112,15 @@ namespace BoomNetwork.Client.Transport
 
         public void Tick()
         {
-            // 处理事件
             while (_eventQueue.TryDequeue(out var action))
             {
                 action();
             }
 
-            // 处理收到的数据
-            while (_recvQueue.TryDequeue(out var data))
+            while (_recvQueue.TryDequeue(out var chunk))
             {
-                OnData?.Invoke(data, 0, data.Length);
+                OnData?.Invoke(chunk.Buffer, 0, chunk.Length);
+                ArrayPool<byte>.Shared.Return(chunk.Buffer);
             }
         }
 
@@ -116,11 +130,12 @@ namespace BoomNetwork.Client.Transport
             {
                 var client = new TcpClient();
                 client.NoDelay = true;
+                client.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
                 client.Connect(host, port);
 
                 _client = client;
                 _stream = client.GetStream();
-                _running = true;
+                Interlocked.Exchange(ref _running, 1);
 
                 _eventQueue.Enqueue(() =>
                 {
@@ -128,7 +143,6 @@ namespace BoomNetwork.Client.Transport
                     OnConnected?.Invoke();
                 });
 
-                // 启动接收线程
                 _recvThread = new Thread(RecvLoop)
                 {
                     IsBackground = true,
@@ -151,24 +165,27 @@ namespace BoomNetwork.Client.Transport
             var buffer = new byte[8192];
             try
             {
-                while (_running && _stream != null)
+                while (Interlocked.CompareExchange(ref _running, 1, 1) == 1)
                 {
-                    int bytesRead = _stream.Read(buffer, 0, buffer.Length);
+                    var stream = _stream;
+                    if (stream == null) break;
+
+                    int bytesRead = stream.Read(buffer, 0, buffer.Length);
                     if (bytesRead == 0)
                     {
-                        // 服务器关闭连接
                         HandleDisconnect();
                         return;
                     }
 
-                    var data = new byte[bytesRead];
-                    Buffer.BlockCopy(buffer, 0, data, 0, bytesRead);
-                    _recvQueue.Enqueue(data);
+                    // 从 ArrayPool 租借，拷贝数据，入队
+                    var pooled = ArrayPool<byte>.Shared.Rent(bytesRead);
+                    Buffer.BlockCopy(buffer, 0, pooled, 0, bytesRead);
+                    _recvQueue.Enqueue(new RecvChunk { Buffer = pooled, Length = bytesRead });
                 }
             }
             catch (Exception)
             {
-                if (_running)
+                if (Interlocked.CompareExchange(ref _running, 0, 0) == 1)
                 {
                     HandleDisconnect();
                 }
@@ -177,8 +194,11 @@ namespace BoomNetwork.Client.Transport
 
         private void HandleDisconnect()
         {
-            if (!_running) return;
-            _running = false;
+            // 确保只触发一次
+            if (Interlocked.CompareExchange(ref _disconnectHandled, 1, 0) != 0)
+                return;
+
+            Interlocked.Exchange(ref _running, 0);
             _eventQueue.Enqueue(() =>
             {
                 State = TransportState.Disconnected;

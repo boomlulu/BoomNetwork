@@ -18,6 +18,12 @@ namespace BoomNetwork.Tests
             _framing = new LengthPrefixFraming();
         }
 
+        [TearDown]
+        public void TearDown()
+        {
+            _framing.Reset(); // 归还所有未消费的 pooled frames
+        }
+
         [Test]
         public void Feed_SingleCompleteFrame()
         {
@@ -28,24 +34,21 @@ namespace BoomNetwork.Tests
 
             Assert.That(count, Is.EqualTo(1));
             Assert.That(_framing.TryDequeueFrame(out var frame), Is.True);
-
-            var decoded = MessageCodec.Decode(frame);
-            Assert.That(decoded.Cmd, Is.EqualTo(1u));
-            Assert.That(Encoding.UTF8.GetString(decoded.Data), Is.EqualTo("test"));
+            using (frame)
+            {
+                var decoded = MessageCodec.Decode(frame.Span);
+                Assert.That(decoded.Cmd, Is.EqualTo(1u));
+                Assert.That(Encoding.UTF8.GetString(decoded.DataSpan), Is.EqualTo("test"));
+            }
         }
 
         [Test]
         public void Feed_MultipleFramesAtOnce_Sticky()
         {
-            var msg1 = MakeMessage(1, "aaa");
-            var msg2 = MakeMessage(2, "bbb");
-            var msg3 = MakeMessage(3, "ccc");
+            var b1 = EncodeMessage(MakeMessage(1, "aaa"));
+            var b2 = EncodeMessage(MakeMessage(2, "bbb"));
+            var b3 = EncodeMessage(MakeMessage(3, "ccc"));
 
-            var b1 = EncodeMessage(msg1);
-            var b2 = EncodeMessage(msg2);
-            var b3 = EncodeMessage(msg3);
-
-            // 粘包：三条消息合并成一个 byte[]
             var combined = new byte[b1.Length + b2.Length + b3.Length];
             Buffer.BlockCopy(b1, 0, combined, 0, b1.Length);
             Buffer.BlockCopy(b2, 0, combined, b1.Length, b2.Length);
@@ -54,81 +57,59 @@ namespace BoomNetwork.Tests
             int count = _framing.Feed(combined, 0, combined.Length);
             Assert.That(count, Is.EqualTo(3));
 
-            _framing.TryDequeueFrame(out var f1);
-            _framing.TryDequeueFrame(out var f2);
-            _framing.TryDequeueFrame(out var f3);
-
-            Assert.That(MessageCodec.Decode(f1).Cmd, Is.EqualTo(1u));
-            Assert.That(MessageCodec.Decode(f2).Cmd, Is.EqualTo(2u));
-            Assert.That(MessageCodec.Decode(f3).Cmd, Is.EqualTo(3u));
+            AssertFrameCmd(1u);
+            AssertFrameCmd(2u);
+            AssertFrameCmd(3u);
         }
 
         [Test]
         public void Feed_SplitFrame_Unpacking()
         {
-            var msg = MakeMessage(99, "split-test-data");
-            var bytes = EncodeMessage(msg);
-
-            // 拆包：把一条消息分两次 Feed
+            var bytes = EncodeMessage(MakeMessage(99, "split-test-data"));
             int split = bytes.Length / 2;
 
-            int count1 = _framing.Feed(bytes, 0, split);
-            Assert.That(count1, Is.EqualTo(0)); // 数据不完整
+            Assert.That(_framing.Feed(bytes, 0, split), Is.EqualTo(0));
+            Assert.That(_framing.Feed(bytes, split, bytes.Length - split), Is.EqualTo(1));
 
-            int count2 = _framing.Feed(bytes, split, bytes.Length - split);
-            Assert.That(count2, Is.EqualTo(1)); // 现在完整了
-
-            _framing.TryDequeueFrame(out var frame);
-            var decoded = MessageCodec.Decode(frame);
-            Assert.That(decoded.Cmd, Is.EqualTo(99u));
-            Assert.That(Encoding.UTF8.GetString(decoded.Data), Is.EqualTo("split-test-data"));
+            Assert.That(_framing.TryDequeueFrame(out var frame), Is.True);
+            using (frame)
+            {
+                var decoded = MessageCodec.Decode(frame.Span);
+                Assert.That(decoded.Cmd, Is.EqualTo(99u));
+                Assert.That(Encoding.UTF8.GetString(decoded.DataSpan), Is.EqualTo("split-test-data"));
+            }
         }
 
         [Test]
         public void Feed_ByteByByte()
         {
-            var msg = MakeMessage(7, "x");
-            var bytes = EncodeMessage(msg);
+            var bytes = EncodeMessage(MakeMessage(7, "x"));
 
-            // 极端拆包：逐字节喂入
             for (int i = 0; i < bytes.Length - 1; i++)
             {
-                int count = _framing.Feed(bytes, i, 1);
-                Assert.That(count, Is.EqualTo(0));
+                Assert.That(_framing.Feed(bytes, i, 1), Is.EqualTo(0));
             }
 
-            int last = _framing.Feed(bytes, bytes.Length - 1, 1);
-            Assert.That(last, Is.EqualTo(1));
-
-            _framing.TryDequeueFrame(out var frame);
-            Assert.That(MessageCodec.Decode(frame).Cmd, Is.EqualTo(7u));
+            Assert.That(_framing.Feed(bytes, bytes.Length - 1, 1), Is.EqualTo(1));
+            AssertFrameCmd(7u);
         }
 
         [Test]
         public void Feed_StickyAndSplit_Mixed()
         {
-            var msg1 = MakeMessage(1, "aa");
-            var msg2 = MakeMessage(2, "bbbb");
-            var b1 = EncodeMessage(msg1);
-            var b2 = EncodeMessage(msg2);
+            var b1 = EncodeMessage(MakeMessage(1, "aa"));
+            var b2 = EncodeMessage(MakeMessage(2, "bbbb"));
 
             var combined = new byte[b1.Length + b2.Length];
             Buffer.BlockCopy(b1, 0, combined, 0, b1.Length);
             Buffer.BlockCopy(b2, 0, combined, b1.Length, b2.Length);
 
-            // 第一次喂入：完整的 msg1 + msg2 的前半部分
             int cut = b1.Length + b2.Length / 2;
-            int count1 = _framing.Feed(combined, 0, cut);
-            Assert.That(count1, Is.EqualTo(1)); // 只有 msg1 完整
+            Assert.That(_framing.Feed(combined, 0, cut), Is.EqualTo(1));
+            Assert.That(_framing.Feed(combined, cut, combined.Length - cut), Is.EqualTo(1));
 
-            // 第二次喂入：msg2 的后半部分
-            int count2 = _framing.Feed(combined, cut, combined.Length - cut);
-            Assert.That(count2, Is.EqualTo(1)); // msg2 完整了
-
-            _framing.TryDequeueFrame(out var f1);
-            _framing.TryDequeueFrame(out var f2);
-            Assert.That(MessageCodec.Decode(f1).Cmd, Is.EqualTo(1u));
-            Assert.That(MessageCodec.Decode(f2).Cmd, Is.EqualTo(2u));
+            AssertFrameCmd(1u);
+            AssertFrameCmd(2u);
         }
 
         [Test]
@@ -142,32 +123,32 @@ namespace BoomNetwork.Tests
         [Test]
         public void Reset_ClearsState()
         {
-            var msg = MakeMessage(1, "data");
-            var bytes = EncodeMessage(msg);
-
-            // 喂入不完整数据
+            var bytes = EncodeMessage(MakeMessage(1, "data"));
             _framing.Feed(bytes, 0, bytes.Length / 2);
             _framing.Reset();
 
-            // 喂入完整数据（不应受之前残留影响）
-            var msg2 = MakeMessage(2, "fresh");
-            var bytes2 = EncodeMessage(msg2);
-            int count = _framing.Feed(bytes2, 0, bytes2.Length);
+            var bytes2 = EncodeMessage(MakeMessage(2, "fresh"));
+            Assert.That(_framing.Feed(bytes2, 0, bytes2.Length), Is.EqualTo(1));
+            AssertFrameCmd(2u);
+        }
 
-            Assert.That(count, Is.EqualTo(1));
-            _framing.TryDequeueFrame(out var frame);
-            Assert.That(MessageCodec.Decode(frame).Cmd, Is.EqualTo(2u));
+        private void AssertFrameCmd(uint expectedCmd)
+        {
+            Assert.That(_framing.TryDequeueFrame(out var frame), Is.True);
+            using (frame)
+            {
+                var decoded = MessageCodec.Decode(frame.Span);
+                Assert.That(decoded.Cmd, Is.EqualTo(expectedCmd));
+            }
         }
 
         private static Message MakeMessage(uint cmd, string data)
         {
+            var bytes = Encoding.UTF8.GetBytes(data);
             return new Message
             {
-                Version = 0,
-                Cmd = cmd,
-                ClientSeq = 0,
-                ServerSeq = 0,
-                Data = Encoding.UTF8.GetBytes(data),
+                Version = 0, Cmd = cmd, ClientSeq = 0, ServerSeq = 0,
+                Data = bytes, DataLength = bytes.Length,
             };
         }
 

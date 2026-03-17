@@ -18,11 +18,23 @@ namespace BoomNetwork.Core
         public int ServerSeq;
         public byte[] Data;
 
-        public int TotalSize => HeaderSize + BodyHeaderSize + (Data?.Length ?? 0);
+        /// <summary>
+        /// Data 的实际有效长度。
+        /// 当 Data 来自 ArrayPool 时，Data.Length 可能大于实际数据长度。
+        /// 普通场景下 DataLength == Data.Length。
+        /// </summary>
+        public int DataLength;
+
+        public int TotalSize => HeaderSize + BodyHeaderSize + DataLength;
+
+        /// <summary>
+        /// 获取有效数据的 Span
+        /// </summary>
+        public ReadOnlySpan<byte> DataSpan => Data != null ? Data.AsSpan(0, DataLength) : ReadOnlySpan<byte>.Empty;
 
         public override string ToString()
         {
-            return $"[Msg Cmd={Cmd} CS={ClientSeq} SS={ServerSeq} DataLen={Data?.Length ?? 0}]";
+            return $"[Msg Cmd={Cmd} CS={ClientSeq} SS={ServerSeq} DataLen={DataLength}]";
         }
     }
 }
