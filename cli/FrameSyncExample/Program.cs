@@ -4,6 +4,7 @@ using System.Threading;
 using BoomNetwork.Core.FrameSync;
 using BoomNetwork.Client.Transport;
 using BoomNetwork.Client.Session;
+using BoomNetwork.Client.Connection;
 using BoomNetwork.Client.FrameSync;
 
 namespace BoomNetwork.FrameSyncExample
@@ -20,19 +21,14 @@ namespace BoomNetwork.FrameSyncExample
 
             Console.WriteLine($"[Test] Connecting 2 clients to {host}:{port}...\n");
 
-            var client1 = CreateClient("Client1");
-            var client2 = CreateClient("Client2");
+            var (client1, cm1, transport1) = CreateClient("Client1");
+            var (client2, cm2, transport2) = CreateClient("Client2");
 
             // 缩短心跳参数方便测试
-            client1.HeartbeatIntervalMs = 500;
-            client1.HeartbeatTimeoutMs = 2000;
-            client1.ReconnectIntervalMs = 500;
-            client1.MaxReconnectAttempts = 3;
-
-            client2.HeartbeatIntervalMs = 500;
-            client2.HeartbeatTimeoutMs = 2000;
-            client2.ReconnectIntervalMs = 500;
-            client2.MaxReconnectAttempts = 3;
+            cm1.HeartbeatIntervalMs = 500;
+            cm1.HeartbeatTimeoutMs = 2000;
+            cm2.HeartbeatIntervalMs = 500;
+            cm2.HeartbeatTimeoutMs = 2000;
 
             // === Test 1: 连接 + 绑定 ===
             Console.WriteLine("--- Test 1: Connect + Bind ---");
@@ -73,13 +69,14 @@ namespace BoomNetwork.FrameSyncExample
 
             Report($"Client1 received {c1Frames} frames", c1Frames > 0);
 
-            // === Test 4: 心跳正常工作（等几秒，不应断线） ===
+            // === Test 4: 心跳保持连接 ===
             Console.WriteLine("\n--- Test 4: Heartbeat keeps alive ---");
-            var stateBefore = client1.CurrentState;
-            TickFor(new[] { client1, client2 }, 3000); // 等 3 秒，心跳应该保持连接
-            Report("Still syncing after 3s", client1.CurrentState == FrameSyncClient.State.Syncing);
+            TickFor(new[] { client1, client2 }, 3000);
+            Report("Still syncing after 3s",
+                client1.CurrentState == FrameSyncClient.State.Syncing
+                && cm1.CurrentState == ConnectionManager.State.Connected);
 
-            // === Test 5: 模拟断线 + 自动重连 ===
+            // === Test 5: 断线 + 自动重连 ===
             Console.WriteLine("\n--- Test 5: Disconnect + Auto Reconnect ---");
             bool reconnected = false;
             client1.OnReconnected += () =>
@@ -88,27 +85,27 @@ namespace BoomNetwork.FrameSyncExample
                 Console.WriteLine("  [Client1] Reconnected!");
             };
 
-            // 保存断线前的帧号
             uint frameBeforeDisconnect = client1.LastFrameNumber;
             Console.WriteLine($"  Frame before disconnect: {frameBeforeDisconnect}");
 
-            // 通过 transport 层直接断开（模拟网络异常）
-            var transport1 = GetTransport(client1);
-            transport1?.Disconnect();
+            // 通过 transport 直接断开（模拟网络异常）
+            transport1.Disconnect();
 
             // 等重连完成
             TickUntil(new[] { client1, client2 },
                 () => reconnected,
-                10000);
+                15000);
 
             Report("Auto reconnected", reconnected);
-            Report("State restored to syncing",
+            Report("ConnectionManager state = Connected",
+                cm1.CurrentState == ConnectionManager.State.Connected);
+            Report("FrameSyncClient state = Syncing",
                 client1.CurrentState == FrameSyncClient.State.Syncing);
-            Report($"Frame number advanced (was {frameBeforeDisconnect}, now {client1.LastFrameNumber})",
+            Report($"Frame advanced (was {frameBeforeDisconnect}, now {client1.LastFrameNumber})",
                 client1.LastFrameNumber >= frameBeforeDisconnect);
 
             // === Test 6: 重连后继续收帧 ===
-            Console.WriteLine("\n--- Test 6: Receive frames after reconnect ---");
+            Console.WriteLine("\n--- Test 6: Frames after reconnect ---");
             int framesAfterReconnect = 0;
             client1.OnFrame += _ => framesAfterReconnect++;
 
@@ -129,24 +126,16 @@ namespace BoomNetwork.FrameSyncExample
             if (failed > 0) Environment.Exit(1);
         }
 
-        // 获取底层 transport（用于模拟断线）
-        static TcpClientTransport? GetTransport(FrameSyncClient client)
-        {
-            // 通过反射拿到 _session._transport
-            var sessionField = typeof(FrameSyncClient).GetField("_session",
-                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            var session = sessionField?.GetValue(client) as NetworkSession;
-
-            var transportField = typeof(NetworkSession).GetField("_transport",
-                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            return transportField?.GetValue(session) as TcpClientTransport;
-        }
-
-        static FrameSyncClient CreateClient(string name)
+        static (FrameSyncClient client, ConnectionManager cm, TcpClientTransport transport) CreateClient(string name)
         {
             var transport = new TcpClientTransport();
             var session = new NetworkSession(transport);
-            var client = new FrameSyncClient(session);
+            var reconnectStrategy = new CompositeReconnectStrategy(
+                (new QuickReconnectStrategy { TimeoutMs = 3000 }, 2),
+                (new SnapshotReconnectStrategy { TimeoutMs = 5000 }, 1)
+            );
+            var cm = new ConnectionManager(session, reconnectStrategy);
+            var client = new FrameSyncClient(session, cm);
 
             client.OnBound += id => Console.WriteLine($"  [{name}] Bound as player {id}");
             client.OnFrameSyncStart += data =>
@@ -154,7 +143,7 @@ namespace BoomNetwork.FrameSyncExample
             client.OnFrameSyncStop += () => Console.WriteLine($"  [{name}] FrameSync stopped");
             client.OnError += err => Console.WriteLine($"  [{name}] {err}");
 
-            return client;
+            return (client, cm, transport);
         }
 
         static void TickUntil(FrameSyncClient[] clients, Func<bool> condition, int maxMs)
