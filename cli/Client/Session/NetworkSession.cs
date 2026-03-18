@@ -8,9 +8,6 @@ using BoomNetwork.Core.Transport;
 
 namespace BoomNetwork.Client.Session
 {
-    /// <summary>
-    /// 待完成的异步请求
-    /// </summary>
     internal struct PendingRequest
     {
         public float TimeoutMs;
@@ -20,24 +17,16 @@ namespace BoomNetwork.Client.Session
     }
 
     /// <summary>
-    /// 会话层 — 在 Transport + Framing + Codec 之上提供可靠消息通信
-    ///
-    /// 职责:
-    ///   - 自动管理 ClientSeq 编号
-    ///   - SendAsync 请求/响应匹配（Dictionary O(1) 查找）
-    ///   - Tick 驱动的超时检测
-    ///   - 消息分发
+    /// 会话层 — 适配新动态包头格式
     /// </summary>
     public class NetworkSession
     {
         private readonly ITransport _transport;
         private readonly LengthPrefixFraming _framing;
         private readonly Dictionary<int, PendingRequest> _pendingRequests = new();
-        private readonly List<int> _timeoutKeys = new(); // 复用列表，避免每帧分配
+        private readonly List<int> _timeoutKeys = new();
 
-        private int _nextClientSeq = 1;
-
-        // 发送缓冲区，按需扩展
+        private int _nextSeq = 1;
         private byte[] _encodeBuf;
 
         public event Action<Message>? OnMessage;
@@ -77,9 +66,6 @@ namespace BoomNetwork.Client.Session
             _transport.Reconnect();
         }
 
-        /// <summary>
-        /// 每帧调用。驱动 Transport + 超时检测。
-        /// </summary>
         public void Tick(float deltaTimeMs)
         {
             _transport.Tick();
@@ -87,28 +73,22 @@ namespace BoomNetwork.Client.Session
         }
 
         /// <summary>
-        /// 发送消息（自动分配 ClientSeq）
+        /// 发送消息（无 Seq，不需要回复）
         /// </summary>
-        public void Send(uint cmd, byte[]? data = null, int dataLength = -1)
+        public void Send(byte cmd, byte[]? data = null, int dataLength = -1)
         {
-            int len = data?.Length ?? 0;
-            if (dataLength >= 0) len = dataLength;
-
+            int len = dataLength >= 0 ? dataLength : (data?.Length ?? 0);
             var msg = new Message
             {
-                Version = 0,
                 Cmd = cmd,
-                ClientSeq = _nextClientSeq++,
-                ServerSeq = 0,
+                HasSeq = false,
+                Seq = 0,
                 Data = data ?? Array.Empty<byte>(),
                 DataLength = len,
             };
             SendRaw(msg);
         }
 
-        /// <summary>
-        /// 发送原始消息
-        /// </summary>
         public void SendRaw(Message msg)
         {
             int size = MessageCodec.EncodedSize(msg);
@@ -118,18 +98,17 @@ namespace BoomNetwork.Client.Session
         }
 
         /// <summary>
-        /// 发送请求并等待响应（Tick 驱动，回调式）
+        /// 发送请求并等待响应（带 Seq 匹配）
         /// </summary>
-        public int SendAsync(uint cmd, byte[]? data, float timeoutMs,
+        public int SendAsync(byte cmd, byte[]? data, float timeoutMs,
             Action<Message>? onResponse, Action<string>? onTimeout = null)
         {
-            int seq = _nextClientSeq++;
+            int seq = _nextSeq++;
             var msg = new Message
             {
-                Version = 0,
                 Cmd = cmd,
-                ClientSeq = seq,
-                ServerSeq = 0,
+                HasSeq = true,
+                Seq = seq,
                 Data = data ?? Array.Empty<byte>(),
                 DataLength = data?.Length ?? 0,
             };
@@ -159,14 +138,14 @@ namespace BoomNetwork.Client.Session
             while (_framing.TryDequeueFrame(out var frame))
             {
                 var msg = MessageCodec.Decode(frame.Span);
-                frame.Dispose(); // 归还 framing 的 ArrayPool buffer
+                frame.Dispose();
                 DispatchMessage(msg);
             }
         }
 
         private void DispatchMessage(Message msg)
         {
-            if (_pendingRequests.Remove(msg.ClientSeq, out var pending))
+            if (msg.HasSeq && _pendingRequests.Remove(msg.Seq, out var pending))
             {
                 pending.OnResponse?.Invoke(msg);
                 return;
@@ -178,34 +157,25 @@ namespace BoomNetwork.Client.Session
         private void CheckTimeouts(float deltaTimeMs)
         {
             _timeoutKeys.Clear();
-
             foreach (var kvp in _pendingRequests)
             {
                 var req = kvp.Value;
                 req.ElapsedMs += deltaTimeMs;
-                _pendingRequests[kvp.Key] = req; // struct 需要写回
-
+                _pendingRequests[kvp.Key] = req;
                 if (req.ElapsedMs >= req.TimeoutMs)
-                {
                     _timeoutKeys.Add(kvp.Key);
-                }
             }
-
             foreach (var key in _timeoutKeys)
             {
                 if (_pendingRequests.Remove(key, out var req))
-                {
                     req.OnTimeout?.Invoke($"Request seq={key} timed out after {req.TimeoutMs}ms");
-                }
             }
         }
 
         private void CancelAllPending(string reason)
         {
             foreach (var kvp in _pendingRequests)
-            {
                 kvp.Value.OnTimeout?.Invoke(reason);
-            }
             _pendingRequests.Clear();
         }
 
@@ -217,8 +187,7 @@ namespace BoomNetwork.Client.Session
 
         private void EnsureEncodeBuf(int size)
         {
-            if (_encodeBuf.Length >= size)
-                return;
+            if (_encodeBuf.Length >= size) return;
             ArrayPool<byte>.Shared.Return(_encodeBuf);
             _encodeBuf = ArrayPool<byte>.Shared.Rent(size);
         }

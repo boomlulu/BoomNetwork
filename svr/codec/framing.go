@@ -10,8 +10,8 @@ import (
 // FrameReader 带缓冲的帧读取器，复用内部 buffer 减少分配
 type FrameReader struct {
 	reader    *bufio.Reader
-	headerBuf [HeaderSize]byte  // 复用 header buffer
-	frameBuf  []byte            // 复用 frame buffer，按需扩容
+	headerBuf [5]byte     // 最大: FlagsCmd(1) + BodyLen(4) = 5
+	frameBuf  []byte      // 复用 frame buffer，按需扩容
 }
 
 // NewFrameReader 创建帧读取器
@@ -23,36 +23,51 @@ func NewFrameReader(r io.Reader) *FrameReader {
 }
 
 // ReadFrame 读取一个完整帧（复用内部 buffer，零分配热路径）
-// 返回的 []byte 是内部 buffer 的切片，下次调用 ReadFrame 后失效
+// 新格式: [FlagsCmd:1][BodyLen:2/4][Body...]
 func (fr *FrameReader) ReadFrame() ([]byte, error) {
-	// 读 4 字节 BodyLen
-	if _, err := io.ReadFull(fr.reader, fr.headerBuf[:]); err != nil {
-		return nil, fmt.Errorf("read header: %w", err)
+	// 读 1 字节 FlagsCmd
+	if _, err := io.ReadFull(fr.reader, fr.headerBuf[:1]); err != nil {
+		return nil, fmt.Errorf("read flagscmd: %w", err)
 	}
 
-	bodyLen := int(binary.LittleEndian.Uint32(fr.headerBuf[:]))
-	if bodyLen < BodyHeaderSize {
-		return nil, fmt.Errorf("invalid body length: %d", bodyLen)
+	flagsCmd := fr.headerBuf[0]
+	largeLen := flagsCmd&FlagLenSize4 != 0
+	lenFieldSize := 2
+	if largeLen {
+		lenFieldSize = 4
 	}
+
+	// 读 BodyLen
+	if _, err := io.ReadFull(fr.reader, fr.headerBuf[1:1+lenFieldSize]); err != nil {
+		return nil, fmt.Errorf("read bodylen: %w", err)
+	}
+
+	var bodyLen int
+	if largeLen {
+		bodyLen = int(binary.LittleEndian.Uint32(fr.headerBuf[1:]))
+	} else {
+		bodyLen = int(binary.LittleEndian.Uint16(fr.headerBuf[1:]))
+	}
+
 	if bodyLen > 1<<20 {
 		return nil, fmt.Errorf("body too large: %d", bodyLen)
 	}
 
-	totalLen := HeaderSize + bodyLen
+	headerSize := 1 + lenFieldSize
+	totalLen := headerSize + bodyLen
 
-	// 按需扩容 frameBuf
 	if cap(fr.frameBuf) < totalLen {
 		fr.frameBuf = make([]byte, totalLen)
 	} else {
 		fr.frameBuf = fr.frameBuf[:totalLen]
 	}
 
-	// 拷贝 header
-	copy(fr.frameBuf, fr.headerBuf[:])
+	copy(fr.frameBuf, fr.headerBuf[:headerSize])
 
-	// 读 body
-	if _, err := io.ReadFull(fr.reader, fr.frameBuf[HeaderSize:]); err != nil {
-		return nil, fmt.Errorf("read body: %w", err)
+	if bodyLen > 0 {
+		if _, err := io.ReadFull(fr.reader, fr.frameBuf[headerSize:]); err != nil {
+			return nil, fmt.Errorf("read body: %w", err)
+		}
 	}
 
 	return fr.frameBuf[:totalLen], nil
@@ -115,26 +130,15 @@ func (fw *FrameWriter) Flush() error {
 
 // ReadFrame 从 reader 中读取一个完整帧（每次分配）
 func ReadFrame(r io.Reader) ([]byte, error) {
-	header := make([]byte, HeaderSize)
-	if _, err := io.ReadFull(r, header); err != nil {
-		return nil, fmt.Errorf("read header: %w", err)
+	fr := NewFrameReader(r)
+	frame, err := fr.ReadFrame()
+	if err != nil {
+		return nil, err
 	}
-
-	bodyLen := int(binary.LittleEndian.Uint32(header))
-	if bodyLen < BodyHeaderSize {
-		return nil, fmt.Errorf("invalid body length: %d", bodyLen)
-	}
-	if bodyLen > 1<<20 {
-		return nil, fmt.Errorf("body too large: %d", bodyLen)
-	}
-
-	frame := make([]byte, HeaderSize+bodyLen)
-	copy(frame, header)
-	if _, err := io.ReadFull(r, frame[HeaderSize:]); err != nil {
-		return nil, fmt.Errorf("read body: %w", err)
-	}
-
-	return frame, nil
+	// 拷贝（因为 fr.ReadFrame 返回的是内部 buffer 引用）
+	result := make([]byte, len(frame))
+	copy(result, frame)
+	return result, nil
 }
 
 // ReadMessage 从 reader 中读取并解码一条完整消息（每次分配）
@@ -146,7 +150,7 @@ func ReadMessage(r io.Reader) (*Message, error) {
 	return DecodeCopy(frame)
 }
 
-// WriteMessage 编码并写入一条消息（每次分配）
+// WriteMessage 编码并写入一条消息
 func WriteMessage(w io.Writer, msg *Message) error {
 	data := Encode(msg)
 	_, err := w.Write(data)

@@ -23,12 +23,12 @@ namespace BoomNetwork.Benchmark
             var smallData = Encoding.UTF8.GetBytes("Hello BoomNetwork benchmark test payload!");
             _smallMsg = new Message
             {
-                Version = 0, Cmd = 100, ClientSeq = 12345, ServerSeq = 67890,
+                Cmd = 10, HasSeq = true, Seq = 12345,
                 Data = smallData, DataLength = smallData.Length,
             };
             _largeMsg = new Message
             {
-                Version = 0, Cmd = 200, ClientSeq = 1, ServerSeq = 2,
+                Cmd = 20, HasSeq = false,
                 Data = new byte[1024], DataLength = 1024,
             };
 
@@ -65,7 +65,7 @@ namespace BoomNetwork.Benchmark
     [MemoryDiagnoser]
     public class FramingBenchmark
     {
-        private byte[] _stickyData = null!; // 100 条消息粘在一起
+        private byte[] _stickyData = null!;
         private LengthPrefixFraming _framing = null!;
 
         [GlobalSetup]
@@ -76,8 +76,7 @@ namespace BoomNetwork.Benchmark
             var data = Encoding.UTF8.GetBytes("benchmark payload");
             var msg = new Message
             {
-                Version = 0, Cmd = 1, ClientSeq = 0, ServerSeq = 0,
-                Data = data, DataLength = data.Length,
+                Cmd = 1, Data = data, DataLength = data.Length,
             };
 
             int frameSize = MessageCodec.EncodedSize(msg);
@@ -96,9 +95,7 @@ namespace BoomNetwork.Benchmark
             _framing.Reset();
             int count = _framing.Feed(_stickyData, 0, _stickyData.Length);
             while (_framing.TryDequeueFrame(out var frame))
-            {
-                frame.Dispose(); // 归还 ArrayPool
-            }
+                frame.Dispose();
             return count;
         }
     }

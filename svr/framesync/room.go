@@ -1,18 +1,21 @@
 package framesync
 
 import (
-	"fmt"
 	"sync"
 	"time"
 
 	"github.com/boom/boomnetwork/codec"
-	"github.com/boom/boomnetwork/transport"
 )
+
+// PlayerConn 玩家连接接口
+type PlayerConn interface {
+	Send(msg *codec.Message) error
+}
 
 // Player 房间内的玩家
 type Player struct {
 	ID   int32
-	Conn *transport.Conn
+	Conn PlayerConn
 }
 
 // Room 帧同步房间
@@ -46,11 +49,10 @@ func NewRoom(frameRate int32) *Room {
 }
 
 // AddPlayer 添加玩家到房间
-func (r *Room) AddPlayer(id int32, conn *transport.Conn) {
+func (r *Room) AddPlayer(id int32, conn PlayerConn) {
 	r.mu.Lock()
 	r.players[id] = &Player{ID: id, Conn: conn}
 	r.mu.Unlock()
-	fmt.Printf("[Room] Player %d joined (total: %d)\n", id, len(r.players))
 }
 
 // RemovePlayer 移除玩家
@@ -58,7 +60,6 @@ func (r *Room) RemovePlayer(id int32) {
 	r.mu.Lock()
 	delete(r.players, id)
 	r.mu.Unlock()
-	fmt.Printf("[Room] Player %d left (total: %d)\n", id, len(r.players))
 }
 
 // PlayerCount 玩家数量
@@ -89,8 +90,6 @@ func (r *Room) Start() {
 	}
 	r.broadcast(CmdStartFrameSync, EncodeInitData(initData))
 
-	fmt.Printf("[Room] FrameSync started (rate=%d, interval=%dms)\n", r.frameRate, r.frameInterval.Milliseconds())
-
 	go r.tickLoop()
 }
 
@@ -105,9 +104,7 @@ func (r *Room) Stop() {
 	close(r.stopCh)
 	r.mu.Unlock()
 
-	// 广播 StopFrameSync
 	r.broadcast(CmdStopFrameSync, nil)
-	fmt.Printf("[Room] FrameSync stopped at frame %d\n", r.frameNumber)
 }
 
 // OnInput 收到玩家输入
@@ -140,18 +137,15 @@ func (r *Room) stepFrame() {
 	r.mu.Lock()
 	r.frameNumber++
 
-	// 取走当前帧的输入
 	inputs := r.pendingInputs
 	r.pendingInputs = nil
 	r.mu.Unlock()
 
-	// 组帧
 	frame := &FrameData{
 		FrameNumber: r.frameNumber,
 		Inputs:      inputs,
 	}
 
-	// 编码
 	size := FrameDataSize(frame)
 	if cap(r.frameBuf) < size {
 		r.frameBuf = make([]byte, size)
@@ -160,12 +154,11 @@ func (r *Room) stepFrame() {
 	}
 	EncodeFrameData(frame, r.frameBuf)
 
-	// 广播
 	r.broadcast(CmdPushFrames, r.frameBuf[:size])
 }
 
 // broadcast 广播消息给所有玩家
-func (r *Room) broadcast(cmd uint32, data []byte) {
+func (r *Room) broadcast(cmd byte, data []byte) {
 	r.mu.Lock()
 	players := make([]*Player, 0, len(r.players))
 	for _, p := range r.players {
@@ -178,8 +171,6 @@ func (r *Room) broadcast(cmd uint32, data []byte) {
 		Data: data,
 	}
 	for _, p := range players {
-		if err := p.Conn.Send(msg); err != nil {
-			fmt.Printf("[Room] Send to player %d failed: %v\n", p.ID, err)
-		}
+		p.Conn.Send(msg)
 	}
 }

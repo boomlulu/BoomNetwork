@@ -10,9 +10,9 @@ namespace BoomNetwork.Example
 {
     class Program
     {
-        const uint CmdEcho = 1;
-        const uint CmdPing = 2;
-        const uint CmdNoReply = 3;
+        const byte CmdEcho = 1;
+        const byte CmdPing = 2;
+        const byte CmdNoReply = 3;
 
         static int passed = 0;
         static int failed = 0;

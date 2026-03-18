@@ -15,19 +15,19 @@ type Handler func(conn *transport.Conn, msg *codec.Message) *codec.Message
 // Router 消息路由器 — 根据 Cmd 分发到对应 Handler
 type Router struct {
 	mu       sync.RWMutex
-	handlers map[uint32]Handler
+	handlers map[byte]Handler
 	fallback Handler
 }
 
 // NewRouter 创建路由器
 func NewRouter() *Router {
 	return &Router{
-		handlers: make(map[uint32]Handler),
+		handlers: make(map[byte]Handler),
 	}
 }
 
 // On 注册指定 Cmd 的处理函数
-func (r *Router) On(cmd uint32, handler Handler) {
+func (r *Router) On(cmd byte, handler Handler) {
 	r.mu.Lock()
 	r.handlers[cmd] = handler
 	r.mu.Unlock()
@@ -65,8 +65,9 @@ func (r *Router) AsTransportHandler() transport.Handler {
 		if rsp == nil {
 			return
 		}
-		// 响应消息的 ClientSeq 必须和请求一致，客户端靠这个匹配
-		rsp.ClientSeq = msg.ClientSeq
+		// 响应消息的 Seq 必须和请求一致，客户端靠这个匹配
+		rsp.HasSeq = msg.HasSeq
+		rsp.Seq = msg.Seq
 		if err := conn.Send(rsp); err != nil {
 			fmt.Printf("[Router] Send response to client %d failed: %v\n", conn.ID, err)
 		}

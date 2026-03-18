@@ -65,7 +65,7 @@ namespace BoomNetwork.Tests
         [Test]
         public void Feed_SplitFrame_Unpacking()
         {
-            var bytes = EncodeMessage(MakeMessage(99, "split-test-data"));
+            var bytes = EncodeMessage(MakeMessage(30, "split-test-data"));
             int split = bytes.Length / 2;
 
             Assert.That(_framing.Feed(bytes, 0, split), Is.EqualTo(0));
@@ -75,7 +75,7 @@ namespace BoomNetwork.Tests
             using (frame)
             {
                 var decoded = MessageCodec.Decode(frame.Span);
-                Assert.That(decoded.Cmd, Is.EqualTo(99u));
+                Assert.That(decoded.Cmd, Is.EqualTo((byte)30));
                 Assert.That(Encoding.UTF8.GetString(decoded.DataSpan), Is.EqualTo("split-test-data"));
             }
         }
@@ -142,13 +142,12 @@ namespace BoomNetwork.Tests
             }
         }
 
-        private static Message MakeMessage(uint cmd, string data)
+        private static Message MakeMessage(byte cmd, string data)
         {
             var bytes = Encoding.UTF8.GetBytes(data);
             return new Message
             {
-                Version = 0, Cmd = cmd, ClientSeq = 0, ServerSeq = 0,
-                Data = bytes, DataLength = bytes.Length,
+                Cmd = cmd, Data = bytes, DataLength = bytes.Length,
             };
         }
 

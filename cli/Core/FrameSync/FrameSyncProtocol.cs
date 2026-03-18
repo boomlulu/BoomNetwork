@@ -8,14 +8,14 @@ namespace BoomNetwork.Core.FrameSync
     /// </summary>
     public static class FrameSyncCmd
     {
-        public const uint SessionBind       = 10;  // 客户端 → 服务器：绑定会话
-        public const uint SessionBindRsp    = 11;  // 服务器 → 客户端：绑定响应
+        public const byte SessionBind       = 10;  // 客户端 → 服务器：绑定会话
+        public const byte SessionBindRsp    = 11;  // 服务器 → 客户端：绑定响应
 
-        public const uint StartFrameSync   = 20;  // 服务器 → 客户端：帧同步开始
-        public const uint StopFrameSync    = 21;  // 服务器 → 客户端：帧同步结束
+        public const byte StartFrameSync   = 20;  // 服务器 → 客户端：帧同步开始
+        public const byte StopFrameSync    = 21;  // 服务器 → 客户端：帧同步结束
 
-        public const uint FrameInput       = 30;  // 客户端 → 服务器：玩家输入
-        public const uint PushFrames       = 31;  // 服务器 → 客户端：推送帧数据
+        public const byte FrameInput       = 30;  // 客户端 → 服务器：玩家输入
+        public const byte PushFrames       = 31;  // 服务器 → 客户端：推送帧数据
     }
 
     /// <summary>

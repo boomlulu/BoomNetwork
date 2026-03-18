@@ -6,19 +6,15 @@ import (
 )
 
 var benchMsg = &Message{
-	Version:   0,
-	Cmd:       100,
-	ClientSeq: 12345,
-	ServerSeq: 67890,
-	Data:      []byte("Hello BoomNetwork benchmark test payload!"),
+	Cmd:    10,
+	HasSeq: true,
+	Seq:    12345,
+	Data:   []byte("Hello BoomNetwork benchmark test payload!"),
 }
 
 var benchMsgLarge = &Message{
-	Version:   0,
-	Cmd:       200,
-	ClientSeq: 1,
-	ServerSeq: 2,
-	Data:      make([]byte, 1024),
+	Cmd:  20,
+	Data: make([]byte, 1024),
 }
 
 func BenchmarkEncode_Small(b *testing.B) {
@@ -65,7 +61,6 @@ func BenchmarkDecode_Large(b *testing.B) {
 }
 
 func BenchmarkFrameReader_Small(b *testing.B) {
-	// 预编码 N 条消息到 buffer
 	var buf bytes.Buffer
 	for i := 0; i < 10000; i++ {
 		WriteMessage(&buf, benchMsg)

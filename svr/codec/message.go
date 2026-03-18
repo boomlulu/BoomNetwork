@@ -6,27 +6,54 @@ import (
 	"sync"
 )
 
+// 新包头格式:
+// [FlagsCmd: 1B][BodyLen: 2B/4B][Seq: 0B/4B][Data: NB]
+//
+// FlagsCmd byte:
+//   bit 0:   LenSize (0=BodyLen 2B, 1=BodyLen 4B)
+//   bit 1:   HasSeq  (0=no Seq, 1=Seq 4B)
+//   bit 2-7: Cmd     (0-63)
+
 const (
-	HeaderSize     = 4  // BodyLen 字段长度
-	BodyHeaderSize = 13 // Version(1) + Cmd(4) + ClientSeq(4) + ServerSeq(4)
-	MinFrameSize   = HeaderSize + BodyHeaderSize
+	FlagLenSize4 = 0x01
+	FlagHasSeq   = 0x02
+
+	MinHeaderSize = 3  // FlagsCmd(1) + BodyLen(2)
+	LargeBodyThreshold = 65530
 )
 
-// Message 网络消息结构，和 C# 端线格式完全一致
-// Wire: [BodyLen:4 LE][Version:1][Cmd:4 LE][ClientSeq:4 LE][ServerSeq:4 LE][Data:N]
+// Message 网络消息
 type Message struct {
-	Version   byte
-	Cmd       uint32
-	ClientSeq int32
-	ServerSeq int32
-	Data      []byte
+	Cmd    byte
+	Seq    int32
+	HasSeq bool
+	Data   []byte
 }
 
 func (m *Message) String() string {
-	return fmt.Sprintf("[Msg Cmd=%d CS=%d SS=%d DataLen=%d]", m.Cmd, m.ClientSeq, m.ServerSeq, len(m.Data))
+	return fmt.Sprintf("[Msg Cmd=%d Seq=%d DataLen=%d]", m.Cmd, m.Seq, len(m.Data))
 }
 
-// bufPool 复用编码缓冲区，减少 GC 压力
+// HeaderSize 包头大小
+func (m *Message) HeaderSize() int {
+	size := 1 // FlagsCmd
+	if len(m.Data) > LargeBodyThreshold {
+		size += 4
+	} else {
+		size += 2
+	}
+	if m.HasSeq {
+		size += 4
+	}
+	return size
+}
+
+// EncodedSize 编码后的总大小
+func EncodedSize(msg *Message) int {
+	return msg.HeaderSize() + len(msg.Data)
+}
+
+// bufPool 复用编码缓冲区
 var bufPool = sync.Pool{
 	New: func() interface{} {
 		buf := make([]byte, 0, 1024)
@@ -34,13 +61,9 @@ var bufPool = sync.Pool{
 	},
 }
 
-// Encode 编码 Message 为完整线格式 bytes
-// 返回的 []byte 来自内部 pool，调用方在发送完毕后应调用 PutBuf 归还
+// Encode 编码 Message
 func Encode(msg *Message) []byte {
-	dataLen := len(msg.Data)
-	bodyLen := BodyHeaderSize + dataLen
-	totalLen := HeaderSize + bodyLen
-
+	totalLen := EncodedSize(msg)
 	bufPtr := bufPool.Get().(*[]byte)
 	buf := *bufPtr
 	if cap(buf) < totalLen {
@@ -48,80 +71,112 @@ func Encode(msg *Message) []byte {
 	} else {
 		buf = buf[:totalLen]
 	}
-
-	binary.LittleEndian.PutUint32(buf[0:4], uint32(bodyLen))
-	buf[4] = msg.Version
-	binary.LittleEndian.PutUint32(buf[5:9], msg.Cmd)
-	binary.LittleEndian.PutUint32(buf[9:13], uint32(msg.ClientSeq))
-	binary.LittleEndian.PutUint32(buf[13:17], uint32(msg.ServerSeq))
-
-	if dataLen > 0 {
-		copy(buf[17:], msg.Data)
-	}
-
+	EncodeTo(msg, buf)
 	return buf
 }
 
-// PutBuf 归还 Encode 返回的缓冲区到 pool
+// PutBuf 归还 Encode 返回的缓冲区
 func PutBuf(buf []byte) {
 	buf = buf[:0]
 	bufPool.Put(&buf)
 }
 
-// EncodeTo 编码到调用方提供的 buffer（零分配）
-// 返回写入的字节数
+// EncodeTo 编码到指定 buffer
 func EncodeTo(msg *Message, buf []byte) int {
 	dataLen := len(msg.Data)
-	bodyLen := BodyHeaderSize + dataLen
-	totalLen := HeaderSize + bodyLen
+	largeLen := dataLen > LargeBodyThreshold
 
-	binary.LittleEndian.PutUint32(buf[0:4], uint32(bodyLen))
-	buf[4] = msg.Version
-	binary.LittleEndian.PutUint32(buf[5:9], msg.Cmd)
-	binary.LittleEndian.PutUint32(buf[9:13], uint32(msg.ClientSeq))
-	binary.LittleEndian.PutUint32(buf[13:17], uint32(msg.ServerSeq))
+	// FlagsCmd
+	flagsCmd := msg.Cmd << 2
+	if largeLen {
+		flagsCmd |= FlagLenSize4
+	}
+	if msg.HasSeq {
+		flagsCmd |= FlagHasSeq
+	}
+	buf[0] = flagsCmd
+	offset := 1
 
-	if dataLen > 0 {
-		copy(buf[17:], msg.Data)
+	// BodyLen
+	bodyLen := dataLen
+	if msg.HasSeq {
+		bodyLen += 4
+	}
+	if largeLen {
+		binary.LittleEndian.PutUint32(buf[offset:], uint32(bodyLen))
+		offset += 4
+	} else {
+		binary.LittleEndian.PutUint16(buf[offset:], uint16(bodyLen))
+		offset += 2
 	}
 
-	return totalLen
+	// Seq
+	if msg.HasSeq {
+		binary.LittleEndian.PutUint32(buf[offset:], uint32(msg.Seq))
+		offset += 4
+	}
+
+	// Data
+	if dataLen > 0 {
+		copy(buf[offset:], msg.Data)
+		offset += dataLen
+	}
+
+	return offset
 }
 
-// EncodedSize 计算编码后的总长度
-func EncodedSize(msg *Message) int {
-	return HeaderSize + BodyHeaderSize + len(msg.Data)
-}
-
-// Decode 从完整线格式 bytes 解码
-// 注意: Data 引用 buf 的切片（零拷贝），调用方不应修改 buf
+// Decode 解码（Data 零拷贝引用原 buffer）
 func Decode(buf []byte) (*Message, error) {
-	if len(buf) < MinFrameSize {
+	if len(buf) < MinHeaderSize {
 		return nil, fmt.Errorf("buffer too short: %d", len(buf))
 	}
 
-	bodyLen := int(binary.LittleEndian.Uint32(buf[0:4]))
-	if len(buf) < HeaderSize+bodyLen {
-		return nil, fmt.Errorf("incomplete frame: need %d, got %d", HeaderSize+bodyLen, len(buf))
+	flagsCmd := buf[0]
+	largeLen := flagsCmd&FlagLenSize4 != 0
+	hasSeq := flagsCmd&FlagHasSeq != 0
+	cmd := flagsCmd >> 2
+	offset := 1
+
+	// BodyLen
+	var bodyLen int
+	if largeLen {
+		if len(buf) < offset+4 {
+			return nil, fmt.Errorf("buffer too short for 4B len")
+		}
+		bodyLen = int(binary.LittleEndian.Uint32(buf[offset:]))
+		offset += 4
+	} else {
+		bodyLen = int(binary.LittleEndian.Uint16(buf[offset:]))
+		offset += 2
 	}
 
 	msg := &Message{
-		Version:   buf[4],
-		Cmd:       binary.LittleEndian.Uint32(buf[5:9]),
-		ClientSeq: int32(binary.LittleEndian.Uint32(buf[9:13])),
-		ServerSeq: int32(binary.LittleEndian.Uint32(buf[13:17])),
+		Cmd:    cmd,
+		HasSeq: hasSeq,
 	}
 
-	dataLen := bodyLen - BodyHeaderSize
+	// Seq
+	if hasSeq {
+		if len(buf) < offset+4 {
+			return nil, fmt.Errorf("buffer too short for seq")
+		}
+		msg.Seq = int32(binary.LittleEndian.Uint32(buf[offset:]))
+		offset += 4
+	}
+
+	// Data
+	dataLen := bodyLen
+	if hasSeq {
+		dataLen -= 4
+	}
 	if dataLen > 0 {
-		// 零拷贝：直接引用原 buffer 的切片
-		msg.Data = buf[17 : 17+dataLen]
+		msg.Data = buf[offset : offset+dataLen]
 	}
 
 	return msg, nil
 }
 
-// DecodeCopy 从完整线格式 bytes 解码（复制 Data，安全持有）
+// DecodeCopy 解码（Data 独立拷贝）
 func DecodeCopy(buf []byte) (*Message, error) {
 	msg, err := Decode(buf)
 	if err != nil {
@@ -133,4 +188,29 @@ func DecodeCopy(buf []byte) (*Message, error) {
 		msg.Data = data
 	}
 	return msg, nil
+}
+
+// PeekFrameSize 从 buffer 开头探测完整帧长度，返回 -1 表示数据不够
+func PeekFrameSize(buf []byte) int {
+	if len(buf) < 1 {
+		return -1
+	}
+	flagsCmd := buf[0]
+	largeLen := flagsCmd&FlagLenSize4 != 0
+	lenFieldSize := 2
+	if largeLen {
+		lenFieldSize = 4
+	}
+	if len(buf) < 1+lenFieldSize {
+		return -1
+	}
+
+	var bodyLen int
+	if largeLen {
+		bodyLen = int(binary.LittleEndian.Uint32(buf[1:]))
+	} else {
+		bodyLen = int(binary.LittleEndian.Uint16(buf[1:]))
+	}
+
+	return 1 + lenFieldSize + bodyLen
 }
