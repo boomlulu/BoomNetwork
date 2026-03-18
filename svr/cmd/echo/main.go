@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -17,10 +18,13 @@ const (
 	CmdNoReply = 3 // 不回复，用于测试客户端超时
 )
 
+var proto = flag.String("proto", "tcp", "protocol: tcp or kcp")
+
 func main() {
+	flag.Parse()
 	addr := ":9000"
-	if len(os.Args) > 1 {
-		addr = os.Args[1]
+	if flag.NArg() > 0 {
+		addr = flag.Arg(0)
 	}
 
 	router := session.NewRouter()
@@ -40,14 +44,14 @@ func main() {
 		return nil // 不回复
 	})
 
-	server := transport.NewTcpServer(router.AsTransportHandler())
+	server := transport.NewServer(*proto, router.AsTransportHandler())
 
 	if err := server.Listen(addr); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to start: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("[Server] Running on %s (Cmd: Echo=%d Ping=%d NoReply=%d)\n", addr, CmdEcho, CmdPing, CmdNoReply)
+	fmt.Printf("[Server] Running on %s (proto=%s, Cmd: Echo=%d Ping=%d NoReply=%d)\n", addr, *proto, CmdEcho, CmdPing, CmdNoReply)
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
