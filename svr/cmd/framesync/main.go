@@ -14,13 +14,10 @@ import (
 	"github.com/boom/boomnetwork/transport"
 )
 
-// connPlayerMap 连接 ID → 玩家 ID 映射
-var connPlayerMap sync.Map
+var connPlayerMap sync.Map     // connID → playerId
+var playerConnMap sync.Map     // playerId → *transport.Conn (用于重连恢复)
 
-// room 全局房间（简化版，实际应支持多房间）
-var room = framesync.NewRoom(20) // 20帧/秒
-
-// autoStartCount 自动开始帧同步的玩家数（0=手动）
+var room = framesync.NewRoom(20)
 var autoStartCount = 2
 
 var playerCounter int32
@@ -36,13 +33,15 @@ func main() {
 
 	router.On(framesync.CmdSessionBind, handleSessionBind)
 	router.On(framesync.CmdFrameInput, handleFrameInput)
+	router.On(framesync.CmdHeartbeat, handleHeartbeat)
+	router.On(framesync.CmdReconnect, handleReconnect)
 
 	server := transport.NewTcpServer(router.AsTransportHandler())
 	if err := server.Listen(addr); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("[FrameSync Server] Running on %s (frameRate=20, autoStart=%d players)\n", addr, autoStartCount)
+	fmt.Printf("[FrameSync Server] Running on %s (frameRate=20, autoStart=%d)\n", addr, autoStartCount)
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
@@ -60,15 +59,14 @@ func handleSessionBind(conn *transport.Conn, msg *codec.Message) *codec.Message 
 	playerMu.Unlock()
 
 	connPlayerMap.Store(conn.ID, playerId)
+	playerConnMap.Store(playerId, conn)
 	room.AddPlayer(playerId, conn)
 
-	// 响应：玩家 ID
 	rsp := make([]byte, 4)
 	binary.LittleEndian.PutUint32(rsp, uint32(playerId))
 
 	fmt.Printf("[Server] Player %d bound (conn %d)\n", playerId, conn.ID)
 
-	// 自动开始
 	if autoStartCount > 0 && room.PlayerCount() >= autoStartCount {
 		room.Start()
 	}
@@ -83,5 +81,34 @@ func handleFrameInput(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	}
 	playerId := val.(int32)
 	room.OnInput(playerId, msg.Data)
-	return nil // 输入不需要回复
+	return nil
+}
+
+func handleHeartbeat(conn *transport.Conn, msg *codec.Message) *codec.Message {
+	return &codec.Message{Cmd: framesync.CmdHeartbeatRsp}
+}
+
+func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
+	if len(msg.Data) < 4 {
+		return &codec.Message{Cmd: framesync.CmdReconnectRsp, Data: []byte{0, 0, 0, 0}}
+	}
+
+	playerId := int32(binary.LittleEndian.Uint32(msg.Data))
+	fmt.Printf("[Server] Player %d reconnecting (conn %d)\n", playerId, conn.ID)
+
+	// 更新连接映射
+	connPlayerMap.Store(conn.ID, playerId)
+	playerConnMap.Store(playerId, conn)
+
+	// 重新加入房间（替换旧连接）
+	room.AddPlayer(playerId, conn)
+
+	// 返回当前帧号
+	frameNumber := room.CurrentFrameNumber()
+	rsp := make([]byte, 4)
+	binary.LittleEndian.PutUint32(rsp, uint32(frameNumber))
+
+	fmt.Printf("[Server] Player %d reconnected at frame %d\n", playerId, frameNumber)
+
+	return &codec.Message{Cmd: framesync.CmdReconnectRsp, Data: rsp}
 }

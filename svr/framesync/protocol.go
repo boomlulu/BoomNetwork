@@ -12,6 +12,12 @@ const (
 	CmdStopFrameSync  = 21
 	CmdFrameInput     = 30
 	CmdPushFrames     = 31
+
+	CmdHeartbeat      = 40
+	CmdHeartbeatRsp   = 41
+
+	CmdReconnect      = 50
+	CmdReconnectRsp   = 51
 )
 
 // InitData 帧同步初始化数据

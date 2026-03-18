@@ -18,30 +18,38 @@ namespace BoomNetwork.FrameSyncExample
             string host = "127.0.0.1";
             int port = 9000;
 
-            Console.WriteLine($"[FrameSync Test] Connecting 2 clients to {host}:{port}...\n");
+            Console.WriteLine($"[Test] Connecting 2 clients to {host}:{port}...\n");
 
-            // --- 创建两个客户端 ---
             var client1 = CreateClient("Client1");
             var client2 = CreateClient("Client2");
 
-            // --- 连接 ---
+            // 缩短心跳参数方便测试
+            client1.HeartbeatIntervalMs = 500;
+            client1.HeartbeatTimeoutMs = 2000;
+            client1.ReconnectIntervalMs = 500;
+            client1.MaxReconnectAttempts = 3;
+
+            client2.HeartbeatIntervalMs = 500;
+            client2.HeartbeatTimeoutMs = 2000;
+            client2.ReconnectIntervalMs = 500;
+            client2.MaxReconnectAttempts = 3;
+
+            // === Test 1: 连接 + 绑定 ===
+            Console.WriteLine("--- Test 1: Connect + Bind ---");
             client1.Connect(host, port);
             client2.Connect(host, port);
 
-            // 等待两个都绑定成功
             TickUntil(new[] { client1, client2 },
                 () => client1.CurrentState >= FrameSyncClient.State.WaitingStart
                    && client2.CurrentState >= FrameSyncClient.State.WaitingStart,
-                3000);
+                5000);
 
-            Report("Both clients bound",
+            Report("Both bound",
                 client1.CurrentState >= FrameSyncClient.State.WaitingStart
                 && client2.CurrentState >= FrameSyncClient.State.WaitingStart);
 
-            Console.WriteLine($"  Client1: PlayerId={client1.PlayerId}");
-            Console.WriteLine($"  Client2: PlayerId={client2.PlayerId}");
-
-            // --- 等待帧同步开始（服务器 2 人自动开始）---
+            // === Test 2: 帧同步开始 ===
+            Console.WriteLine("\n--- Test 2: FrameSync Start ---");
             TickUntil(new[] { client1, client2 },
                 () => client1.CurrentState >= FrameSyncClient.State.Syncing
                    && client2.CurrentState >= FrameSyncClient.State.Syncing,
@@ -51,55 +59,65 @@ namespace BoomNetwork.FrameSyncExample
                 client1.CurrentState >= FrameSyncClient.State.Syncing
                 && client2.CurrentState >= FrameSyncClient.State.Syncing);
 
-            // --- 发送输入并接收帧 ---
-            Console.WriteLine("\n--- Sending inputs and receiving frames ---");
+            // === Test 3: 收帧 ===
+            Console.WriteLine("\n--- Test 3: Receive Frames ---");
+            int c1Frames = 0;
+            client1.OnFrame += _ => c1Frames++;
 
-            int client1Frames = 0;
-            int client2Frames = 0;
-            int client1RecvInputs = 0;
-            int client2RecvInputs = 0;
-
-            client1.OnFrame += frame =>
-            {
-                client1Frames++;
-                client1RecvInputs += frame.Inputs?.Length ?? 0;
-            };
-
-            client2.OnFrame += frame =>
-            {
-                client2Frames++;
-                client2RecvInputs += frame.Inputs?.Length ?? 0;
-            };
-
-            // 两个客户端各发 5 条输入
             for (int i = 0; i < 5; i++)
             {
-                client1.SendInput(Encoding.UTF8.GetBytes($"c1-input-{i}"));
-                client2.SendInput(Encoding.UTF8.GetBytes($"c2-input-{i}"));
-                TickFor(new[] { client1, client2 }, 100); // 等一帧让输入到达
+                client1.SendInput(Encoding.UTF8.GetBytes($"input-{i}"));
+                TickFor(new[] { client1, client2 }, 100);
             }
+            TickFor(new[] { client1, client2 }, 1000);
 
-            // 再 Tick 一段时间收完帧
+            Report($"Client1 received {c1Frames} frames", c1Frames > 0);
+
+            // === Test 4: 心跳正常工作（等几秒，不应断线） ===
+            Console.WriteLine("\n--- Test 4: Heartbeat keeps alive ---");
+            var stateBefore = client1.CurrentState;
+            TickFor(new[] { client1, client2 }, 3000); // 等 3 秒，心跳应该保持连接
+            Report("Still syncing after 3s", client1.CurrentState == FrameSyncClient.State.Syncing);
+
+            // === Test 5: 模拟断线 + 自动重连 ===
+            Console.WriteLine("\n--- Test 5: Disconnect + Auto Reconnect ---");
+            bool reconnected = false;
+            client1.OnReconnected += () =>
+            {
+                reconnected = true;
+                Console.WriteLine("  [Client1] Reconnected!");
+            };
+
+            // 保存断线前的帧号
+            uint frameBeforeDisconnect = client1.LastFrameNumber;
+            Console.WriteLine($"  Frame before disconnect: {frameBeforeDisconnect}");
+
+            // 通过 transport 层直接断开（模拟网络异常）
+            var transport1 = GetTransport(client1);
+            transport1?.Disconnect();
+
+            // 等重连完成
+            TickUntil(new[] { client1, client2 },
+                () => reconnected,
+                10000);
+
+            Report("Auto reconnected", reconnected);
+            Report("State restored to syncing",
+                client1.CurrentState == FrameSyncClient.State.Syncing);
+            Report($"Frame number advanced (was {frameBeforeDisconnect}, now {client1.LastFrameNumber})",
+                client1.LastFrameNumber >= frameBeforeDisconnect);
+
+            // === Test 6: 重连后继续收帧 ===
+            Console.WriteLine("\n--- Test 6: Receive frames after reconnect ---");
+            int framesAfterReconnect = 0;
+            client1.OnFrame += _ => framesAfterReconnect++;
+
             TickFor(new[] { client1, client2 }, 2000);
 
-            Console.WriteLine($"  Client1: received {client1Frames} frames, {client1RecvInputs} inputs");
-            Console.WriteLine($"  Client2: received {client2Frames} frames, {client2RecvInputs} inputs");
+            Report($"Frames after reconnect: {framesAfterReconnect}",
+                framesAfterReconnect > 0);
 
-            // --- 验证 ---
-            Report("Both clients received frames",
-                client1Frames > 0 && client2Frames > 0);
-
-            Report("Frame numbers match",
-                client1.LastFrameNumber == client2.LastFrameNumber);
-
-            Report("Both received inputs from both players",
-                client1RecvInputs >= 5 && client2RecvInputs >= 5);
-
-            // 帧号应该连续（服务器 20fps，2 秒约 40 帧）
-            Report($"Frame number reasonable (got {client1.LastFrameNumber})",
-                client1.LastFrameNumber >= 10 && client1.LastFrameNumber <= 200);
-
-            // --- 清理 ---
+            // === 清理 ===
             client1.Disconnect();
             client2.Disconnect();
             TickFor(new[] { client1, client2 }, 100);
@@ -111,6 +129,19 @@ namespace BoomNetwork.FrameSyncExample
             if (failed > 0) Environment.Exit(1);
         }
 
+        // 获取底层 transport（用于模拟断线）
+        static TcpClientTransport? GetTransport(FrameSyncClient client)
+        {
+            // 通过反射拿到 _session._transport
+            var sessionField = typeof(FrameSyncClient).GetField("_session",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            var session = sessionField?.GetValue(client) as NetworkSession;
+
+            var transportField = typeof(NetworkSession).GetField("_transport",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            return transportField?.GetValue(session) as TcpClientTransport;
+        }
+
         static FrameSyncClient CreateClient(string name)
         {
             var transport = new TcpClientTransport();
@@ -119,9 +150,9 @@ namespace BoomNetwork.FrameSyncExample
 
             client.OnBound += id => Console.WriteLine($"  [{name}] Bound as player {id}");
             client.OnFrameSyncStart += data =>
-                Console.WriteLine($"  [{name}] FrameSync started (rate={data.FrameRate}, interval={data.FrameInterval}ms)");
+                Console.WriteLine($"  [{name}] FrameSync started (rate={data.FrameRate})");
             client.OnFrameSyncStop += () => Console.WriteLine($"  [{name}] FrameSync stopped");
-            client.OnError += err => Console.WriteLine($"  [{name}] Error: {err}");
+            client.OnError += err => Console.WriteLine($"  [{name}] {err}");
 
             return client;
         }

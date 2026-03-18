@@ -16,6 +16,12 @@ namespace BoomNetwork.Core.FrameSync
 
         public const byte FrameInput       = 30;  // 客户端 → 服务器：玩家输入
         public const byte PushFrames       = 31;  // 服务器 → 客户端：推送帧数据
+
+        public const byte Heartbeat       = 40;  // 客户端 → 服务器：心跳
+        public const byte HeartbeatRsp    = 41;  // 服务器 → 客户端：心跳响应
+
+        public const byte Reconnect       = 50;  // 客户端 → 服务器：重连请求（携带 playerId）
+        public const byte ReconnectRsp    = 51;  // 服务器 → 客户端：重连响应（携带当前帧号）
     }
 
     /// <summary>

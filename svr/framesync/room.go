@@ -69,6 +69,13 @@ func (r *Room) PlayerCount() int {
 	return len(r.players)
 }
 
+// CurrentFrameNumber 当前帧号
+func (r *Room) CurrentFrameNumber() uint32 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.frameNumber
+}
+
 // Start 开始帧同步
 func (r *Room) Start() {
 	r.mu.Lock()
