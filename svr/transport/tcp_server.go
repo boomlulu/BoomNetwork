@@ -4,22 +4,27 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/boom/boomnetwork/codec"
 )
 
 // Conn 代表一个客户端连接
 type Conn struct {
-	ID   int
-	conn net.Conn
-	mu   sync.Mutex
+	ID     int
+	conn   net.Conn
+	writer *codec.FrameWriter
+	mu     sync.Mutex
 }
 
 // Send 发送一条消息给该连接
 func (c *Conn) Send(msg *codec.Message) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return codec.WriteMessage(c.conn, msg)
+	if err := c.writer.WriteMessage(msg); err != nil {
+		return err
+	}
+	return c.writer.Flush()
 }
 
 // Close 关闭连接
@@ -27,22 +32,47 @@ func (c *Conn) Close() error {
 	return c.conn.Close()
 }
 
+// RemoteAddr 远程地址
+func (c *Conn) RemoteAddr() net.Addr {
+	return c.conn.RemoteAddr()
+}
+
 // Handler 消息处理回调
 type Handler func(conn *Conn, msg *codec.Message)
+
+// ServerConfig 服务器配置
+type ServerConfig struct {
+	ReadTimeout  time.Duration // 读超时，0 表示无限制
+	WriteTimeout time.Duration // 写超时，0 表示无限制
+}
+
+// DefaultServerConfig 默认配置
+func DefaultServerConfig() ServerConfig {
+	return ServerConfig{
+		ReadTimeout:  60 * time.Second,
+		WriteTimeout: 10 * time.Second,
+	}
+}
 
 // TcpServer TCP 服务器
 type TcpServer struct {
 	listener net.Listener
 	handler  Handler
+	config   ServerConfig
 	nextID   int
 	mu       sync.Mutex
 	conns    map[int]*Conn
 }
 
 // NewTcpServer 创建 TCP 服务器
-func NewTcpServer(handler Handler) *TcpServer {
+func NewTcpServer(handler Handler, configs ...ServerConfig) *TcpServer {
+	cfg := DefaultServerConfig()
+	if len(configs) > 0 {
+		cfg = configs[0]
+	}
 	return &TcpServer{
 		handler: handler,
+		config:  cfg,
 		conns:   make(map[int]*Conn),
 	}
 }
@@ -83,12 +113,23 @@ func (s *TcpServer) acceptLoop() {
 	for {
 		raw, err := s.listener.Accept()
 		if err != nil {
-			return // listener closed
+			return
+		}
+
+		// TCP NoDelay + KeepAlive
+		if tcp, ok := raw.(*net.TCPConn); ok {
+			tcp.SetNoDelay(true)
+			tcp.SetKeepAlive(true)
+			tcp.SetKeepAlivePeriod(30 * time.Second)
 		}
 
 		s.mu.Lock()
 		s.nextID++
-		c := &Conn{ID: s.nextID, conn: raw}
+		c := &Conn{
+			ID:     s.nextID,
+			conn:   raw,
+			writer: codec.NewFrameWriter(raw),
+		}
 		s.conns[c.ID] = c
 		s.mu.Unlock()
 
@@ -106,8 +147,15 @@ func (s *TcpServer) handleConn(c *Conn) {
 		fmt.Printf("[Server] Client %d disconnected\n", c.ID)
 	}()
 
+	reader := codec.NewFrameReader(c.conn)
+
 	for {
-		msg, err := codec.ReadMessage(c.conn)
+		// 设置读超时
+		if s.config.ReadTimeout > 0 {
+			c.conn.SetReadDeadline(time.Now().Add(s.config.ReadTimeout))
+		}
+
+		msg, err := reader.ReadMessageCopy()
 		if err != nil {
 			return
 		}
