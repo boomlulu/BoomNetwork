@@ -127,18 +127,55 @@ func (fw *FrameWriter) Flush() error {
 }
 
 // --- 兼容旧 API（供测试和简单场景使用）---
+// 注意：这些函数不用 bufio，直接 io.ReadFull，适合单次或简单场景。
+// 高频场景请用 FrameReader/FrameWriter。
 
-// ReadFrame 从 reader 中读取一个完整帧（每次分配）
+// ReadFrame 从 reader 中读取一个完整帧（每次分配，不用 bufio）
 func ReadFrame(r io.Reader) ([]byte, error) {
-	fr := NewFrameReader(r)
-	frame, err := fr.ReadFrame()
-	if err != nil {
-		return nil, err
+	// 读 1 字节 FlagsCmd
+	var flagsBuf [1]byte
+	if _, err := io.ReadFull(r, flagsBuf[:]); err != nil {
+		return nil, fmt.Errorf("read flagscmd: %w", err)
 	}
-	// 拷贝（因为 fr.ReadFrame 返回的是内部 buffer 引用）
-	result := make([]byte, len(frame))
-	copy(result, frame)
-	return result, nil
+
+	flagsCmd := flagsBuf[0]
+	largeLen := flagsCmd&FlagLenSize4 != 0
+	lenFieldSize := 2
+	if largeLen {
+		lenFieldSize = 4
+	}
+
+	// 读 BodyLen
+	lenBuf := make([]byte, lenFieldSize)
+	if _, err := io.ReadFull(r, lenBuf); err != nil {
+		return nil, fmt.Errorf("read bodylen: %w", err)
+	}
+
+	var bodyLen int
+	if largeLen {
+		bodyLen = int(binary.LittleEndian.Uint32(lenBuf))
+	} else {
+		bodyLen = int(binary.LittleEndian.Uint16(lenBuf))
+	}
+
+	if bodyLen > 1<<20 {
+		return nil, fmt.Errorf("body too large: %d", bodyLen)
+	}
+
+	headerSize := 1 + lenFieldSize
+	totalLen := headerSize + bodyLen
+
+	frame := make([]byte, totalLen)
+	frame[0] = flagsCmd
+	copy(frame[1:], lenBuf)
+
+	if bodyLen > 0 {
+		if _, err := io.ReadFull(r, frame[headerSize:]); err != nil {
+			return nil, fmt.Errorf("read body: %w", err)
+		}
+	}
+
+	return frame, nil
 }
 
 // ReadMessage 从 reader 中读取并解码一条完整消息（每次分配）

@@ -1,0 +1,28 @@
+==========================================
+  BoomNetwork Performance Report
+  2026-03-18 21:41:39
+==========================================
+
+[ Go Benchmark ]
+goos: darwin
+goarch: arm64
+cpu: Apple M3 Pro
+BenchmarkEncode_Small-11         	45745144	        24.30 ns/op	      24 B/op	       1 allocs/op
+BenchmarkEncode_Large-11         	38156306	        31.14 ns/op	      24 B/op	       1 allocs/op
+BenchmarkEncodeTo_Small-11       	351403398	         3.532 ns/op	       0 B/op	       0 allocs/op
+BenchmarkDecode_Small-11         	77180965	        15.43 ns/op	      48 B/op	       1 allocs/op
+BenchmarkDecode_Large-11         	82682586	        15.99 ns/op	      48 B/op	       1 allocs/op
+BenchmarkFrameReader_Small-11    	    3286	    362917 ns/op	  489412 B/op	   10005 allocs/op
+BenchmarkFrameWriter_Small-11    	   14538	     83887 ns/op	    9351 B/op	       3 allocs/op
+
+[ C# Benchmark ]
+| Method              | Mean      | Error     | StdDev    | Gen0   | Gen1   | Allocated |
+|-------------------- |----------:|----------:|----------:|-------:|-------:|----------:|
+| Encode_Small        |  3.571 ns | 0.0214 ns | 0.0179 ns |      - |      - |         - |
+| Encode_Large        | 19.884 ns | 0.0870 ns | 0.0680 ns |      - |      - |         - |
+| Decode_Small        |  6.391 ns | 0.0670 ns | 0.0627 ns | 0.0086 | 0.0000 |      72 B |
+| Decode_Large        | 52.446 ns | 1.0471 ns | 1.1638 ns | 0.1253 | 0.0073 |    1048 B |
+| Decode_Small_Pooled | 13.186 ns | 0.2870 ns | 0.3524 ns |      - |      - |         - |
+| Method                  | Mean     | Error     | StdDev    | Allocated |
+|------------------------ |---------:|----------:|----------:|----------:|
+| Feed_100_StickyMessages | 4.008 us | 0.0755 us | 0.1130 us |         - |
