@@ -16,15 +16,16 @@ import (
 )
 
 var (
-	addr  = flag.String("addr", ":9000", "listen address")
-	proto = flag.String("proto", "tcp", "protocol: tcp or kcp")
+	addr           = flag.String("addr", ":9000", "listen address")
+	proto          = flag.String("proto", "tcp", "protocol: tcp or kcp")
+	playersPerRoom = flag.Int("ppr", 2, "players per room to auto-start")
 )
 
-var connPlayerMap sync.Map
-var playerConnMap sync.Map
+var roomMgr = framesync.NewRoomManager()
 
-var room = framesync.NewRoom(20)
-var autoStartCount = 2
+// 映射关系
+var connPlayerMap sync.Map  // connID → playerId
+var playerRoomMap sync.Map  // playerId → *Room
 
 var playerCounter int32
 var playerMu sync.Mutex
@@ -43,14 +44,14 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Failed: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("[FrameSync Server] Running on %s (proto=%s, frameRate=20, autoStart=%d)\n", *addr, *proto, autoStartCount)
+	fmt.Printf("[FrameSync Server] Running on %s (proto=%s, ppr=%d)\n", *addr, *proto, *playersPerRoom)
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	<-sig
 
 	fmt.Println("\n[FrameSync Server] Shutting down...")
-	room.Stop()
+	roomMgr.StopAll()
 	server.Close()
 }
 
@@ -60,16 +61,20 @@ func handleSessionBind(conn *transport.Conn, msg *codec.Message) *codec.Message 
 	playerId := playerCounter
 	playerMu.Unlock()
 
+	// 自动分配房间
+	room := roomMgr.AutoAssignRoom(*playersPerRoom)
+
 	connPlayerMap.Store(conn.ID, playerId)
-	playerConnMap.Store(playerId, conn)
+	playerRoomMap.Store(playerId, room)
 	room.AddPlayer(playerId, conn)
 
 	rsp := make([]byte, 4)
 	binary.LittleEndian.PutUint32(rsp, uint32(playerId))
 
-	fmt.Printf("[Server] Player %d bound (conn %d)\n", playerId, conn.ID)
+	fmt.Printf("[Server] Player %d bound (conn %d, room %d)\n", playerId, conn.ID, room.ID)
 
-	if autoStartCount > 0 && room.PlayerCount() >= autoStartCount {
+	// 人满自动开始
+	if room.PlayerCount() >= *playersPerRoom {
 		room.Start()
 	}
 
@@ -82,6 +87,12 @@ func handleFrameInput(conn *transport.Conn, msg *codec.Message) *codec.Message {
 		return nil
 	}
 	playerId := val.(int32)
+
+	roomVal, ok := playerRoomMap.Load(playerId)
+	if !ok {
+		return nil
+	}
+	room := roomVal.(*framesync.Room)
 	room.OnInput(playerId, msg.Data)
 	return nil
 }
@@ -90,52 +101,46 @@ func handleHeartbeat(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	return &codec.Message{Cmd: framesync.CmdHeartbeatRsp}
 }
 
-// handleReconnect 处理重连请求
-// 客户端发送: [playerId:4][lastFrame:4]
-// 服务端返回: [currentFrame:4] 并重发缺失的帧
 func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	if len(msg.Data) < 4 {
 		return &codec.Message{Cmd: framesync.CmdReconnectRsp, Data: []byte{0, 0, 0, 0}}
 	}
 
 	playerId := int32(binary.LittleEndian.Uint32(msg.Data[0:4]))
-
-	// 客户端最后确认的帧号（可选，老客户端可能不发）
 	var lastFrame uint32
 	if len(msg.Data) >= 8 {
 		lastFrame = binary.LittleEndian.Uint32(msg.Data[4:8])
 	}
 
-	fmt.Printf("[Server] Player %d reconnecting (conn %d, lastFrame=%d)\n", playerId, conn.ID, lastFrame)
+	// 找到玩家的房间
+	roomVal, ok := playerRoomMap.Load(playerId)
+	if !ok {
+		fmt.Printf("[Server] Player %d reconnect failed: no room found\n", playerId)
+		return &codec.Message{Cmd: framesync.CmdReconnectRsp, Data: []byte{0, 0, 0, 0}}
+	}
+	room := roomVal.(*framesync.Room)
 
-	// 更新连接映射
+	fmt.Printf("[Server] Player %d reconnecting (conn %d, room %d, lastFrame=%d)\n",
+		playerId, conn.ID, room.ID, lastFrame)
+
 	connPlayerMap.Store(conn.ID, playerId)
-	playerConnMap.Store(playerId, conn)
-
-	// 重新加入房间（替换旧连接，恢复在线状态）
 	room.AddPlayer(playerId, conn)
 
-	// 返回当前帧号
 	currentFrame := room.CurrentFrameNumber()
 	rsp := make([]byte, 4)
 	binary.LittleEndian.PutUint32(rsp, currentFrame)
 
-	// 异步重发缺失的帧（在回复之后发，不阻塞响应）
+	// 异步重发缺失帧
 	if lastFrame > 0 && lastFrame < currentFrame {
 		go func() {
 			frames := room.GetFramesSince(lastFrame)
-			fmt.Printf("[Server] Resending %d frames to player %d (from %d to %d)\n",
-				len(frames), playerId, lastFrame+1, currentFrame)
+			fmt.Printf("[Server] Resending %d frames to player %d\n", len(frames), playerId)
 			for _, cf := range frames {
-				conn.Send(&codec.Message{
-					Cmd:  framesync.CmdPushFrames,
-					Data: cf.EncodedData,
-				})
+				conn.Send(&codec.Message{Cmd: framesync.CmdPushFrames, Data: cf.EncodedData})
 			}
 		}()
 	}
 
 	fmt.Printf("[Server] Player %d reconnected at frame %d\n", playerId, currentFrame)
-
 	return &codec.Message{Cmd: framesync.CmdReconnectRsp, Data: rsp}
 }
