@@ -92,9 +92,9 @@ func (rm *RoomManager) AutoAssignRoom(playersPerRoom int) *Room {
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
 
-	// 找一个没满的房间
+	// 找一个没满且未开始的房间（只算在线玩家）
 	for _, r := range rm.rooms {
-		if r.TotalPlayerCount() < playersPerRoom {
+		if r.PlayerCount() < playersPerRoom {
 			return r
 		}
 	}
