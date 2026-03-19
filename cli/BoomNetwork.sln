@@ -15,6 +15,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BoomNetwork.FrameSyncExampl
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BoomNetwork.KcpTest", "KcpTest\BoomNetwork.KcpTest.csproj", "{6669D5A0-053E-4C7E-A2FA-3B01A218313C}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BoomNetwork.StressTest", "StressTest\BoomNetwork.StressTest.csproj", "{D42F09A7-E6AF-4316-9FB5-E330728F6D5E}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -45,5 +47,9 @@ Global
 		{6669D5A0-053E-4C7E-A2FA-3B01A218313C}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{6669D5A0-053E-4C7E-A2FA-3B01A218313C}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{6669D5A0-053E-4C7E-A2FA-3B01A218313C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D42F09A7-E6AF-4316-9FB5-E330728F6D5E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D42F09A7-E6AF-4316-9FB5-E330728F6D5E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D42F09A7-E6AF-4316-9FB5-E330728F6D5E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D42F09A7-E6AF-4316-9FB5-E330728F6D5E}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal
