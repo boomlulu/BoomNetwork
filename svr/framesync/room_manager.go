@@ -7,9 +7,8 @@ import (
 )
 
 // RoomManager 房间管理器
-// 职责: 创建/查找/销毁房间，不管房间内部逻辑
 type RoomManager struct {
-	mu     sync.RWMutex
+	mu     sync.Mutex
 	rooms  map[int32]*Room
 	nextID int32
 	config RoomConfig
@@ -27,24 +26,27 @@ func NewRoomManager(config ...RoomConfig) *RoomManager {
 	}
 }
 
-// CreateRoom 创建新房间
-func (rm *RoomManager) CreateRoom() *Room {
+// CreateRoom 创建新房间（不加锁，调用方负责）
+func (rm *RoomManager) createRoomLocked() *Room {
 	id := atomic.AddInt32(&rm.nextID, 1)
 	room := NewRoomWithConfig(rm.config)
 	room.ID = id
-
-	rm.mu.Lock()
 	rm.rooms[id] = room
-	rm.mu.Unlock()
-
 	fmt.Printf("[RoomManager] Room %d created\n", id)
 	return room
 }
 
+// CreateRoom 创建新房间（公开版，自带锁）
+func (rm *RoomManager) CreateRoom() *Room {
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
+	return rm.createRoomLocked()
+}
+
 // GetRoom 查找房间
 func (rm *RoomManager) GetRoom(id int32) *Room {
-	rm.mu.RLock()
-	defer rm.mu.RUnlock()
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
 	return rm.rooms[id]
 }
 
@@ -65,8 +67,8 @@ func (rm *RoomManager) RemoveRoom(id int32) {
 
 // RoomCount 房间数量
 func (rm *RoomManager) RoomCount() int {
-	rm.mu.RLock()
-	defer rm.mu.RUnlock()
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
 	return len(rm.rooms)
 }
 
@@ -86,22 +88,17 @@ func (rm *RoomManager) StopAll() {
 	fmt.Printf("[RoomManager] All %d rooms stopped\n", len(rooms))
 }
 
-// AutoAssignRoom 自动分配房间（填满当前房间，满了创建新的）
-// playersPerRoom: 每房间人数上限
+// AutoAssignRoom 自动分配房间（原子操作，无竞态）
 func (rm *RoomManager) AutoAssignRoom(playersPerRoom int) *Room {
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
 
-	// 找一个没满且未开始的房间（只算在线玩家）
 	for _, r := range rm.rooms {
 		if r.PlayerCount() < playersPerRoom {
 			return r
 		}
 	}
 
-	// 没有空位，创建新房间
-	rm.mu.Unlock()
-	room := rm.CreateRoom()
-	rm.mu.Lock()
-	return room
+	// 在锁内创建，不会有两个请求各创建一个房间
+	return rm.createRoomLocked()
 }
