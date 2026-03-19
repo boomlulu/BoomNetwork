@@ -266,14 +266,27 @@ namespace BoomNetwork.Client.Session
         private void CheckTimeouts(float deltaTimeMs)
         {
             _timeoutKeys.Clear();
+
+            // 阶段 1：收集所有 key（不在遍历中修改字典）
             foreach (var kvp in _pendingRequests)
+                _timeoutKeys.Add(kvp.Key);
+
+            // 阶段 2：更新计时 + 检查超时
+            for (int i = _timeoutKeys.Count - 1; i >= 0; i--)
             {
-                var req = kvp.Value;
+                int key = _timeoutKeys[i];
+                if (!_pendingRequests.TryGetValue(key, out var req))
+                {
+                    _timeoutKeys.RemoveAt(i);
+                    continue;
+                }
                 req.ElapsedMs += deltaTimeMs;
-                _pendingRequests[kvp.Key] = req;
-                if (req.ElapsedMs >= req.TimeoutMs)
-                    _timeoutKeys.Add(kvp.Key);
+                _pendingRequests[key] = req;
+                if (req.ElapsedMs < req.TimeoutMs)
+                    _timeoutKeys.RemoveAt(i); // 没超时，从列表移除
             }
+
+            // 阶段 3：处理超时的
             foreach (var key in _timeoutKeys)
             {
                 if (_pendingRequests.Remove(key, out var req))
