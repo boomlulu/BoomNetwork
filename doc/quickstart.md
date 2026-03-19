@@ -1,5 +1,20 @@
 # BoomNetwork 快速入门
 
+## 文档阅读顺序
+
+| 顺序 | 文档 | 内容 | 适合谁 |
+|------|------|------|--------|
+| 1 | [why.md](why.md) | 这是什么、解决什么问题、何时该用 | 所有人 |
+| 2 | [concepts.md](concepts.md) | 帧同步、粘包、Seq、心跳、重连等核心概念 | 不熟悉游戏网络的人 |
+| 3 | **quickstart.md (本文)** | 架构总览、模块说明、如何跑起来 | 所有人 |
+| 4 | [sequence-diagrams.md](sequence-diagrams.md) | 6 张时序图：游戏流程、心跳、重连、Tick 内部 | 想理解运行流程的人 |
+| 5 | [configuration.md](configuration.md) | 所有可配参数、默认值、调参建议 | 接入项目时查阅 |
+| 6 | [architecture.md](architecture.md) | 设计原则、分层架构、数据流、线格式、内存策略 | 想深入理解或贡献代码的人 |
+| 7 | [benchmark-report.md](benchmark-report.md) | Codec 基准、TCP/KCP 压测、包头优化效果 | 关心性能的人 |
+| 8 | [roadmap.md](roadmap.md) | 未来规划 v0.1 → v1.0 | 想了解方向的人 |
+
+---
+
 ## 架构总览
 
 ```
