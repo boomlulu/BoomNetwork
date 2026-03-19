@@ -1,0 +1,23 @@
+{
+  "name": "com.boom.boomnetwork",
+  "version": "0.1.0",
+  "displayName": "BoomNetwork",
+  "description": "帧同步网络库 — TCP/KCP 双端通信、心跳保活、断线重连、策略模式",
+  "unity": "2022.3",
+  "author": {
+    "name": "Boom",
+    "url": "https://github.com/luwenyiCC/BoomNetwork"
+  },
+  "keywords": [
+    "network",
+    "framesync",
+    "lockstep",
+    "multiplayer",
+    "tcp",
+    "kcp"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/luwenyiCC/BoomNetwork.git"
+  }
+}
