@@ -179,7 +179,8 @@ namespace BoomNetwork.KcpTest
 
             public bool Connect()
             {
-                Transport.Connect("127.0.0.1", 9000);
+                int port = int.TryParse(Environment.GetEnvironmentVariable("BOOM_PORT"), out var p) ? p : 9000;
+                Transport.Connect("127.0.0.1", port);
                 TickFor(500);
                 if (Transport.State != TransportState.Connected)
                 {

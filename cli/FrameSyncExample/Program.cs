@@ -17,7 +17,7 @@ namespace BoomNetwork.FrameSyncExample
         static void Main(string[] args)
         {
             string host = "127.0.0.1";
-            int port = 9000;
+            int port = int.TryParse(Environment.GetEnvironmentVariable("BOOM_PORT"), out var p) ? p : 9000;
 
             Console.WriteLine($"[Test] Connecting 2 clients to {host}:{port}...\n");
 
