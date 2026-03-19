@@ -90,23 +90,52 @@ func handleHeartbeat(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	return &codec.Message{Cmd: framesync.CmdHeartbeatRsp}
 }
 
+// handleReconnect 处理重连请求
+// 客户端发送: [playerId:4][lastFrame:4]
+// 服务端返回: [currentFrame:4] 并重发缺失的帧
 func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	if len(msg.Data) < 4 {
 		return &codec.Message{Cmd: framesync.CmdReconnectRsp, Data: []byte{0, 0, 0, 0}}
 	}
 
-	playerId := int32(binary.LittleEndian.Uint32(msg.Data))
-	fmt.Printf("[Server] Player %d reconnecting (conn %d)\n", playerId, conn.ID)
+	playerId := int32(binary.LittleEndian.Uint32(msg.Data[0:4]))
 
+	// 客户端最后确认的帧号（可选，老客户端可能不发）
+	var lastFrame uint32
+	if len(msg.Data) >= 8 {
+		lastFrame = binary.LittleEndian.Uint32(msg.Data[4:8])
+	}
+
+	fmt.Printf("[Server] Player %d reconnecting (conn %d, lastFrame=%d)\n", playerId, conn.ID, lastFrame)
+
+	// 更新连接映射
 	connPlayerMap.Store(conn.ID, playerId)
 	playerConnMap.Store(playerId, conn)
+
+	// 重新加入房间（替换旧连接，恢复在线状态）
 	room.AddPlayer(playerId, conn)
 
-	frameNumber := room.CurrentFrameNumber()
+	// 返回当前帧号
+	currentFrame := room.CurrentFrameNumber()
 	rsp := make([]byte, 4)
-	binary.LittleEndian.PutUint32(rsp, uint32(frameNumber))
+	binary.LittleEndian.PutUint32(rsp, currentFrame)
 
-	fmt.Printf("[Server] Player %d reconnected at frame %d\n", playerId, frameNumber)
+	// 异步重发缺失的帧（在回复之后发，不阻塞响应）
+	if lastFrame > 0 && lastFrame < currentFrame {
+		go func() {
+			frames := room.GetFramesSince(lastFrame)
+			fmt.Printf("[Server] Resending %d frames to player %d (from %d to %d)\n",
+				len(frames), playerId, lastFrame+1, currentFrame)
+			for _, cf := range frames {
+				conn.Send(&codec.Message{
+					Cmd:  framesync.CmdPushFrames,
+					Data: cf.EncodedData,
+				})
+			}
+		}()
+	}
+
+	fmt.Printf("[Server] Player %d reconnected at frame %d\n", playerId, currentFrame)
 
 	return &codec.Message{Cmd: framesync.CmdReconnectRsp, Data: rsp}
 }

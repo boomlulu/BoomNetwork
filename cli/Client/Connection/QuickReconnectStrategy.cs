@@ -9,8 +9,8 @@ namespace BoomNetwork.Client.Connection
     /// <summary>
     /// 快速重连策略
     ///
-    /// 流程: 重建 TCP → 发送 Reconnect(playerId) → 服务器确认 → 重发未确认消息
-    /// 适用: 短时间断线（< 几秒），服务器还保留着玩家状态
+    /// 流程: 重建 TCP → 发送 Reconnect(playerId, lastFrame) → 服务器重发缺失帧 → 重发未确认消息
+    /// 适用: 短时间断线（< 几秒），服务器帧缓冲区还有数据
     /// </summary>
     public class QuickReconnectStrategy : IReconnectStrategy
     {
@@ -25,33 +25,31 @@ namespace BoomNetwork.Client.Connection
         {
             _cancelled = false;
 
-            // 轻量重置：保留已发送缓冲区
             session.LightReset();
 
-            // 监听连接成功
             void onConnected()
             {
                 session.OnConnected -= onConnected;
                 if (_cancelled) return;
 
-                // 发送重连请求
-                var data = new byte[4];
-                BinaryPrimitives.WriteInt32LittleEndian(data, context.PlayerId);
+                // 发送 [playerId:4][lastFrame:4]
+                var data = new byte[8];
+                BinaryPrimitives.WriteInt32LittleEndian(data.AsSpan(0), context.PlayerId);
+                BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(4), context.LastFrameNumber);
 
                 session.SendAsync(FrameSyncCmd.Reconnect, data, TimeoutMs,
                     onResponse: msg =>
                     {
                         if (_cancelled) return;
 
-                        // 服务器返回当前帧号
                         if (msg.DataLength >= 4)
                         {
                             context.ServerFrameNumber = BinaryPrimitives.ReadUInt32LittleEndian(msg.DataSpan);
                         }
                         context.IsSnapshotRestore = false;
 
-                        // 重发未确认的消息
-                        int resent = session.ResendUnacked();
+                        // 服务器会异步重发缺失帧，客户端这边重发未确认的消息
+                        session.ResendUnacked();
 
                         onSuccess();
                     },
