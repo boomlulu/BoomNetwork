@@ -13,7 +13,7 @@ namespace BoomNetwork.Client.Session
         public float TimeoutMs;
         public float ElapsedMs;
         public Action<Message>? OnResponse;
-        public Action<string>? OnTimeout;
+        public Action<NetworkError>? OnTimeout;
     }
 
     /// <summary>
@@ -64,7 +64,7 @@ namespace BoomNetwork.Client.Session
         public event Action<Message>? OnMessage;
         public event Action? OnConnected;
         public event Action? OnDisconnected;
-        public event Action<string>? OnError;
+        public event Action<NetworkError>? OnError;
 
         // --- 状态 ---
         public TransportState State => _transport.State;
@@ -88,7 +88,7 @@ namespace BoomNetwork.Client.Session
 
             _transport.OnConnected += () => OnConnected?.Invoke();
             _transport.OnDisconnected += HandleDisconnected;
-            _transport.OnError += (err) => OnError?.Invoke(err);
+            _transport.OnError += (err) => OnError?.Invoke(err); // 透传 transport 错误
             _transport.OnData += OnTransportData;
         }
 
@@ -101,7 +101,7 @@ namespace BoomNetwork.Client.Session
         public void Disconnect()
         {
             _transport.Disconnect();
-            CancelAllPending("Disconnected");
+            CancelAllPending(ErrorCode.SessionReset, "Disconnected");
         }
 
         public void Reconnect()
@@ -165,7 +165,7 @@ namespace BoomNetwork.Client.Session
         /// 发送请求并等待响应
         /// </summary>
         public int SendAsync(byte cmd, byte[]? data, float timeoutMs,
-            Action<Message>? onResponse, Action<string>? onTimeout = null)
+            Action<Message>? onResponse, Action<NetworkError>? onTimeout = null)
         {
             int seq = _nextSeq++;
             var msg = new Message
@@ -225,7 +225,7 @@ namespace BoomNetwork.Client.Session
             _sentBuffer.Clear();
             _lastRecvServerSeq = 0;
             _lastAckedSeq = 0;
-            CancelAllPending("Full reset");
+            CancelAllPending(ErrorCode.SessionReset, "Full reset");
         }
 
         /// <summary>
@@ -234,7 +234,7 @@ namespace BoomNetwork.Client.Session
         public void LightReset()
         {
             _framing.Reset();
-            CancelAllPending("Light reset");
+            CancelAllPending(ErrorCode.SessionReset, "Light reset");
         }
 
         private void OnTransportData(byte[] data, int offset, int length)
@@ -277,20 +277,20 @@ namespace BoomNetwork.Client.Session
             foreach (var key in _timeoutKeys)
             {
                 if (_pendingRequests.Remove(key, out var req))
-                    req.OnTimeout?.Invoke($"Request seq={key} timed out after {req.TimeoutMs}ms");
+                    req.OnTimeout?.Invoke(new NetworkError(ErrorCode.RequestTimeout, $"seq={key} timed out after {req.TimeoutMs}ms"));
             }
         }
 
-        private void CancelAllPending(string reason)
+        private void CancelAllPending(ErrorCode code, string reason)
         {
             foreach (var kvp in _pendingRequests)
-                kvp.Value.OnTimeout?.Invoke(reason);
+                kvp.Value.OnTimeout?.Invoke(new NetworkError(code, reason));
             _pendingRequests.Clear();
         }
 
         private void HandleDisconnected()
         {
-            CancelAllPending("Connection lost");
+            CancelAllPending(ErrorCode.ConnectionDropped, "Connection lost");
             OnDisconnected?.Invoke();
         }
 

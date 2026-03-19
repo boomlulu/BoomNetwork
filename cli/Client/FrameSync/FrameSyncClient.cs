@@ -2,6 +2,7 @@ using System;
 using System.Buffers.Binary;
 using BoomNetwork.Core;
 using BoomNetwork.Core.FrameSync;
+
 using BoomNetwork.Client.Session;
 using BoomNetwork.Client.Connection;
 
@@ -44,7 +45,7 @@ namespace BoomNetwork.Client.FrameSync
         public event Action? OnFrameSyncStop;
         public event Action? OnDisconnected;
         public event Action? OnReconnected;
-        public event Action<string>? OnError;
+        public event Action<NetworkError>? OnError;
 
         // --- 内部 ---
         private int _playerId;
@@ -65,7 +66,8 @@ namespace BoomNetwork.Client.FrameSync
             _connectionManager.OnConnected += OnConnectionEstablished;
             _connectionManager.OnDisconnected += OnConnectionLost;
             _connectionManager.OnReconnected += OnConnectionReconnected;
-            _connectionManager.OnLog += (msg) => OnError?.Invoke(msg);
+            _connectionManager.OnError += (err) => OnError?.Invoke(err);
+            _connectionManager.OnLog += (msg) => { /* 日志级别，不作为错误传播 */ };
         }
 
         /// <summary>
@@ -128,7 +130,7 @@ namespace BoomNetwork.Client.FrameSync
                 },
                 onTimeout: err =>
                 {
-                    OnError?.Invoke($"SessionBind timeout: {err}");
+                    OnError?.Invoke(new NetworkError(ErrorCode.SessionBindTimeout, err.Message));
                     _connectionManager.Disconnect();
                 });
         }

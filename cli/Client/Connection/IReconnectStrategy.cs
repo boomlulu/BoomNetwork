@@ -1,4 +1,5 @@
 using System;
+using BoomNetwork.Core;
 using BoomNetwork.Client.Session;
 
 namespace BoomNetwork.Client.Connection
@@ -23,7 +24,7 @@ namespace BoomNetwork.Client.Connection
         /// <param name="onSuccess">成功回调</param>
         /// <param name="onFail">失败回调（reason）</param>
         void Attempt(NetworkSession session, string host, int port,
-            ReconnectContext context, Action onSuccess, Action<string> onFail);
+            ReconnectContext context, Action onSuccess, Action<NetworkError> onFail);
 
         /// <summary>
         /// 取消正在进行的重连

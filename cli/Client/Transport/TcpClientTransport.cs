@@ -3,6 +3,7 @@ using System.Buffers;
 using System.Collections.Concurrent;
 using System.Net.Sockets;
 using System.Threading;
+using BoomNetwork.Core;
 using BoomNetwork.Core.Transport;
 
 namespace BoomNetwork.Client.Transport
@@ -44,7 +45,7 @@ namespace BoomNetwork.Client.Transport
         public event Action? OnConnected;
         public event Action? OnDisconnected;
         public event Action<byte[], int, int>? OnData;
-        public event Action<string>? OnError;
+        public event Action<NetworkError>? OnError;
 
         public void Connect(string host, int port)
         {
@@ -104,7 +105,7 @@ namespace BoomNetwork.Client.Transport
                 }
                 catch (Exception ex)
                 {
-                    _eventQueue.Enqueue(() => OnError?.Invoke($"Send failed: {ex.Message}"));
+                    _eventQueue.Enqueue(() => OnError?.Invoke(new NetworkError(ErrorCode.SendFailed, ex.Message)));
                     HandleDisconnect();
                 }
             }
@@ -155,7 +156,7 @@ namespace BoomNetwork.Client.Transport
                 _eventQueue.Enqueue(() =>
                 {
                     State = TransportState.Disconnected;
-                    OnError?.Invoke($"Connect failed: {ex.Message}");
+                    OnError?.Invoke(new NetworkError(ErrorCode.ConnectFailed, ex.Message));
                 });
             }
         }

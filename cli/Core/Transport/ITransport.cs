@@ -26,6 +26,6 @@ namespace BoomNetwork.Core.Transport
         event Action OnConnected;
         event Action OnDisconnected;
         event Action<byte[], int, int> OnData;
-        event Action<string> OnError;
+        event Action<NetworkError> OnError;
     }
 }

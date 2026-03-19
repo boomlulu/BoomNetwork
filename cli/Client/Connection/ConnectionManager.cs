@@ -55,6 +55,7 @@ namespace BoomNetwork.Client.Connection
         /// <summary>
         /// 状态变化日志
         /// </summary>
+        public event Action<NetworkError>? OnError;
         public event Action<string>? OnLog;
 
         // --- 内部 ---
@@ -160,6 +161,7 @@ namespace BoomNetwork.Client.Connection
             {
                 Log($"Heartbeat timeout ({HeartbeatTimeoutMs}ms)");
                 StopHeartbeat();
+                OnError?.Invoke(new NetworkError(ErrorCode.HeartbeatTimeout, $"No response for {HeartbeatTimeoutMs}ms"));
                 _intentionalDisconnect = false;
                 _session.Disconnect(); // 触发 HandleSessionDisconnected → 重连
             }
@@ -210,9 +212,10 @@ namespace BoomNetwork.Client.Connection
                     StartHeartbeat();
                     OnReconnected?.Invoke(context);
                 },
-                onFail: reason =>
+                onFail: err =>
                 {
-                    Log($"Reconnect failed: {reason}");
+                    Log($"Reconnect failed: {err}");
+                    OnError?.Invoke(new NetworkError(ErrorCode.AllStrategiesExhausted, err.Message));
                     TransitionTo(State.Disconnected);
                     OnDisconnected?.Invoke();
                 });

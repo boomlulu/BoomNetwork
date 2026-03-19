@@ -21,7 +21,7 @@ namespace BoomNetwork.Client.Connection
         private bool _cancelled;
 
         public void Attempt(NetworkSession session, string host, int port,
-            ReconnectContext context, Action onSuccess, Action<string> onFail)
+            ReconnectContext context, Action onSuccess, Action<NetworkError> onFail)
         {
             _cancelled = false;
 
@@ -62,7 +62,7 @@ namespace BoomNetwork.Client.Connection
                     onTimeout: err =>
                     {
                         if (_cancelled) return;
-                        onFail($"SnapshotReconnect timeout: {err}");
+                        onFail(new NetworkError(ErrorCode.ReconnectFailed, $"SnapshotReconnect: {err.Message}"));
                     });
             }
 

@@ -1,4 +1,5 @@
 using System;
+using BoomNetwork.Core;
 using BoomNetwork.Client.Session;
 
 namespace BoomNetwork.Client.Connection
@@ -35,7 +36,7 @@ namespace BoomNetwork.Client.Connection
         }
 
         public void Attempt(NetworkSession session, string host, int port,
-            ReconnectContext context, Action onSuccess, Action<string> onFail)
+            ReconnectContext context, Action onSuccess, Action<NetworkError> onFail)
         {
             _cancelled = false;
             _chainIndex = 0;
@@ -52,14 +53,14 @@ namespace BoomNetwork.Client.Connection
         }
 
         private void TryNext(NetworkSession session, string host, int port,
-            ReconnectContext context, Action onSuccess, Action<string> onFail)
+            ReconnectContext context, Action onSuccess, Action<NetworkError> onFail)
         {
             if (_cancelled)
                 return;
 
             if (_chainIndex >= _chain.Length)
             {
-                onFail("All reconnect strategies exhausted");
+                onFail(new NetworkError(ErrorCode.AllStrategiesExhausted, "All reconnect strategies exhausted"));
                 return;
             }
 

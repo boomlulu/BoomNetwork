@@ -2,6 +2,7 @@ using System;
 using System.Buffers;
 using System.Collections.Concurrent;
 using System.Threading;
+using BoomNetwork.Core;
 using BoomNetwork.Core.Transport;
 using KcpProject;
 
@@ -30,7 +31,7 @@ namespace BoomNetwork.Client.Transport
         public event Action? OnConnected;
         public event Action? OnDisconnected;
         public event Action<byte[], int, int>? OnData;
-        public event Action<string>? OnError;
+        public event Action<NetworkError>? OnError;
 
         public void Connect(string host, int port)
         {
@@ -53,7 +54,7 @@ namespace BoomNetwork.Client.Transport
             catch (Exception ex)
             {
                 State = TransportState.Disconnected;
-                OnError?.Invoke($"KCP connect failed: {ex.Message}");
+                OnError?.Invoke(new NetworkError(ErrorCode.ConnectFailed, ex.Message));
             }
         }
 
@@ -93,7 +94,7 @@ namespace BoomNetwork.Client.Transport
             }
             catch (Exception ex)
             {
-                OnError?.Invoke($"KCP send failed: {ex.Message}");
+                OnError?.Invoke(new NetworkError(ErrorCode.SendFailed, ex.Message));
                 HandleDisconnect();
             }
         }
@@ -128,7 +129,7 @@ namespace BoomNetwork.Client.Transport
             }
             catch (Exception ex)
             {
-                OnError?.Invoke($"KCP tick error: {ex.Message}");
+                OnError?.Invoke(new NetworkError(ErrorCode.TransportError, ex.Message));
                 HandleDisconnect();
             }
         }
