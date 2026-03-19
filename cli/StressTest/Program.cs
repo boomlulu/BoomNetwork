@@ -1,6 +1,5 @@
 using System;
 using System.Diagnostics;
-using System.Text;
 using System.Threading;
 using BoomNetwork.Core;
 using BoomNetwork.Core.FrameSync;
@@ -14,6 +13,7 @@ namespace BoomNetwork.StressTest
     class Program
     {
         static long totalBound;
+        static long totalSyncing;
         static long totalFramesRecv;
         static long totalInputsSent;
 
@@ -23,17 +23,15 @@ namespace BoomNetwork.StressTest
             int port = int.TryParse(Environment.GetEnvironmentVariable("BOOM_PORT"), out var p) ? p : 9000;
             int clientCount = int.TryParse(Environment.GetEnvironmentVariable("BOOM_CLIENTS"), out var c) ? c : 100;
             int durationSec = int.TryParse(Environment.GetEnvironmentVariable("BOOM_DURATION"), out var d) ? d : 10;
-            int inputSize = 32;
 
             Console.WriteLine("==========================================");
-            Console.WriteLine("  BoomNetwork C# Stress Test");
+            Console.WriteLine("  BoomNetwork C# ↔ Go Stress Test");
             Console.WriteLine($"  {clientCount} clients → {host}:{port}");
-            Console.WriteLine($"  Duration: {durationSec}s, Input: {inputSize}B");
+            Console.WriteLine($"  Duration: {durationSec}s");
             Console.WriteLine("==========================================\n");
 
             var clients = new FrameSyncClient[clientCount];
 
-            // 创建
             for (int i = 0; i < clientCount; i++)
             {
                 var transport = new TcpClientTransport();
@@ -47,82 +45,60 @@ namespace BoomNetwork.StressTest
                 cm.HeartbeatTimeoutMs = 30000;
                 clients[i] = new FrameSyncClient(session, cm);
                 clients[i].OnBound += _ => Interlocked.Increment(ref totalBound);
+                clients[i].OnFrameSyncStart += _ => Interlocked.Increment(ref totalSyncing);
                 clients[i].OnError += _ => { };
             }
 
-            // 批量连接
-            Console.Write("[Connecting] ");
+            // --- 阶段 1：连接 ---
+            Console.Write("[1/4 Connecting] ");
             for (int i = 0; i < clientCount; i++)
             {
                 clients[i].Connect(host, port);
                 if (i % 50 == 49)
                 {
-                    Thread.Sleep(50);
-                    TickAll(clients, i + 1, 50);
+                    Thread.Sleep(30);
+                    TickAll(clients, i + 1, 30);
                     Console.Write(".");
                 }
             }
             Console.WriteLine();
 
-            // 等绑定
-            var deadline = Stopwatch.StartNew();
-            while (Interlocked.Read(ref totalBound) < clientCount && deadline.ElapsedMilliseconds < 30000)
-            {
-                TickAll(clients, clientCount, 16);
-                Thread.Sleep(16);
-            }
-            Console.WriteLine($"[Bound] {Interlocked.Read(ref totalBound)}/{clientCount}");
+            // --- 阶段 2：等所有人绑定 ---
+            WaitFor("2/4 Bound", () => Interlocked.Read(ref totalBound) >= clientCount,
+                clients, clientCount, 30000);
+            Console.WriteLine($"  {Interlocked.Read(ref totalBound)}/{clientCount}");
 
-            // 等所有房间开始帧同步
-            Console.Write("[Waiting FrameSync start] ");
-            deadline.Restart();
-            while (deadline.ElapsedMilliseconds < 10000)
-            {
-                TickAll(clients, clientCount, 16);
-                Thread.Sleep(16);
+            // --- 阶段 3：等所有人进入帧同步 ---
+            WaitFor("3/4 Syncing", () => Interlocked.Read(ref totalSyncing) >= clientCount,
+                clients, clientCount, 30000);
+            Console.WriteLine($"  {Interlocked.Read(ref totalSyncing)}/{clientCount}");
 
-                int syncing = 0;
-                for (int i = 0; i < clientCount; i++)
-                    if (clients[i].CurrentState >= FrameSyncClient.State.Syncing)
-                        syncing++;
-                if (syncing >= clientCount)
-                    break;
-            }
-            {
-                int syncing = 0;
-                for (int i = 0; i < clientCount; i++)
-                    if (clients[i].CurrentState >= FrameSyncClient.State.Syncing)
-                        syncing++;
-                Console.WriteLine($"{syncing}/{clientCount} syncing");
-            }
-
+            // --- 阶段 4：稳定期测量 ---
             // 注册帧计数
             for (int i = 0; i < clientCount; i++)
                 clients[i].OnFrame += _ => Interlocked.Increment(ref totalFramesRecv);
 
-            // 重置计数器 — 从这里开始才是纯粹的稳定期统计
+            // 清零（排除启动阶段）
             Interlocked.Exchange(ref totalFramesRecv, 0);
             Interlocked.Exchange(ref totalInputsSent, 0);
 
-            Console.WriteLine($"\n[Running] {durationSec}s stress test...\n");
-            var inputData = new byte[inputSize];
+            Console.WriteLine($"\n[4/4 Running] {durationSec}s measurement...\n");
+
+            var inputData = new byte[32];
             new Random(42).NextBytes(inputData);
 
-            // 用 Stopwatch 精确控制 tick 间隔
             var sw = Stopwatch.StartNew();
             long nextTickMs = 0;
-            const int tickIntervalMs = 16;
-            int inputCounter = 0;
+            const int tickMs = 16;
+            int tickCount = 0;
 
             while (sw.ElapsedMilliseconds < durationSec * 1000)
             {
-                long now = sw.ElapsedMilliseconds;
+                TickAll(clients, clientCount, tickMs);
 
-                TickAll(clients, clientCount, tickIntervalMs);
-
-                // 每 ~48ms 发一次输入 (约 20fps)
-                inputCounter++;
-                if (inputCounter % 3 == 0)
+                // ~20fps 发输入
+                tickCount++;
+                if (tickCount % 3 == 0)
                 {
                     for (int i = 0; i < clientCount; i++)
                     {
@@ -134,61 +110,70 @@ namespace BoomNetwork.StressTest
                     }
                 }
 
-                // 精确 sleep：补偿 CPU 时间
-                nextTickMs += tickIntervalMs;
+                nextTickMs += tickMs;
                 long sleepMs = nextTickMs - sw.ElapsedMilliseconds;
-                if (sleepMs > 0)
-                    Thread.Sleep((int)sleepMs);
+                if (sleepMs > 0) Thread.Sleep((int)sleepMs);
             }
 
-            // 最后再 tick 几次确保收完
-            for (int i = 0; i < 10; i++)
+            // 最终排空：TCP buffer 里可能还有数据没取出
+            for (int i = 0; i < 30; i++)
             {
-                TickAll(clients, clientCount, 16);
-                Thread.Sleep(16);
+                TickAll(clients, clientCount, tickMs);
+                Thread.Sleep(10);
             }
 
-            double elapsed = sw.Elapsed.TotalSeconds;
+            double elapsed = sw.Elapsed.TotalSeconds; // 用实际 elapsed（含排空时间）
             long frames = Interlocked.Read(ref totalFramesRecv);
             long inputs = Interlocked.Read(ref totalInputsSent);
             long bound = Interlocked.Read(ref totalBound);
+            long syncing = Interlocked.Read(ref totalSyncing);
 
             for (int i = 0; i < clientCount; i++)
                 clients[i].Disconnect();
 
+            double fpsPerClient = frames / (double)syncing / elapsed;
+
             Console.WriteLine("==========================================");
             Console.WriteLine("  C# ↔ Go Cross-Language Stress Test");
             Console.WriteLine("==========================================");
-            Console.WriteLine($"  Duration:         {elapsed:F1}s");
-            Console.WriteLine($"  Clients:          {bound}/{clientCount}");
+            Console.WriteLine($"  Duration:         {durationSec}s");
+            Console.WriteLine($"  Bound:            {bound}/{clientCount}");
+            Console.WriteLine($"  Syncing:          {syncing}/{clientCount}");
             Console.WriteLine();
             Console.WriteLine("  [ Throughput ]");
             Console.WriteLine($"  Frames received:  {frames} total ({frames / elapsed:F0}/s)");
-            if (bound > 0)
-                Console.WriteLine($"  Per client:       {frames / (double)bound / elapsed:F1} frames/s");
+            Console.WriteLine($"  Per client:       {fpsPerClient:F1} frames/s");
             Console.WriteLine($"  Inputs sent:      {inputs} total ({inputs / elapsed:F0}/s)");
             Console.WriteLine();
 
-            var gc0 = GC.CollectionCount(0);
-            var gc1 = GC.CollectionCount(1);
-            var gc2 = GC.CollectionCount(2);
             long mem = GC.GetTotalMemory(false);
             Console.WriteLine("  [ Client Memory ]");
             Console.WriteLine($"  Managed heap:     {mem / 1e6:F2} MB");
-            Console.WriteLine($"  GC Gen0/1/2:      {gc0}/{gc1}/{gc2}");
+            Console.WriteLine($"  GC Gen0/1/2:      {GC.CollectionCount(0)}/{GC.CollectionCount(1)}/{GC.CollectionCount(2)}");
             Console.WriteLine($"  Threads:          {Process.GetCurrentProcess().Threads.Count}");
             Console.WriteLine("==========================================");
 
-            if (bound > 0 && frames > 0)
-                Console.WriteLine("\n  RESULT: PASS");
-            else
-                Console.WriteLine("\n  RESULT: FAIL");
+            bool pass = syncing >= clientCount * 95 / 100 && fpsPerClient >= 19.5;
+            Console.WriteLine(pass ? "\n  RESULT: PASS" : "\n  RESULT: FAIL");
+            if (!pass) Environment.Exit(1);
         }
 
         static void TickAll(FrameSyncClient[] clients, int count, float dt)
         {
             for (int i = 0; i < count; i++)
                 clients[i].Tick(dt);
+        }
+
+        static void WaitFor(string label, Func<bool> condition,
+            FrameSyncClient[] clients, int count, int timeoutMs)
+        {
+            Console.Write($"[{label}] ");
+            var sw = Stopwatch.StartNew();
+            while (!condition() && sw.ElapsedMilliseconds < timeoutMs)
+            {
+                TickAll(clients, count, 16);
+                Thread.Sleep(8); // 快速 tick，不拖延
+            }
         }
     }
 }
