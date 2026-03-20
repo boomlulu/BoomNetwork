@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/boom/boomnetwork/codec"
 	"github.com/boom/boomnetwork/framesync"
@@ -76,10 +77,19 @@ func handleSessionBind(conn *transport.Conn, msg *codec.Message) *codec.Message 
 	fmt.Printf("[Server] Player %d bound (conn %d, room %d, online=%d, total=%d, ppr=%d)\n",
 		playerId, conn.ID, room.ID, pc, tc, *playersPerRoom)
 
-	// 人满自动开始
-	if pc >= *playersPerRoom {
-		fmt.Printf("[Server] Room %d starting! (%d/%d)\n", room.ID, pc, *playersPerRoom)
-		room.Start()
+	// 人满自动开始（延迟到 SessionBindRsp 发送后，确保客户端先收到 bind 再收到 start）
+	shouldStart := pc >= *playersPerRoom
+	if shouldStart {
+		fmt.Printf("[Server] Room %d will start after bind rsp (%d/%d)\n", room.ID, pc, *playersPerRoom)
+	}
+
+	// 先发 SessionBindRsp 再 Start（通过 goroutine 延迟极短时间）
+	if shouldStart {
+		go func() {
+			// 等一个极短的时间让 SessionBindRsp 先发出
+			time.Sleep(10 * time.Millisecond)
+			room.Start()
+		}()
 	}
 
 	return &codec.Message{Cmd: framesync.CmdSessionBindRsp, Data: rsp}
