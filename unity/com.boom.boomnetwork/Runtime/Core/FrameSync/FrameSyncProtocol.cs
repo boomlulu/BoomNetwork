@@ -22,6 +22,20 @@ namespace BoomNetwork.Core.FrameSync
 
         public const byte Reconnect       = 50;  // 客户端 → 服务器：重连请求（携带 playerId）
         public const byte ReconnectRsp    = 51;  // 服务器 → 客户端：重连响应（携带当前帧号）
+
+        // 房间管理
+        public const byte GetRooms        = 60;  // 客户端 → 服务器：获取房间列表
+        public const byte GetRoomsRsp     = 61;  // 服务器 → 客户端：房间列表响应
+        public const byte CreateRoom      = 62;  // 客户端 → 服务器：创建房间（携带 maxPlayers）
+        public const byte CreateRoomRsp   = 63;  // 服务器 → 客户端：创建房间响应（携带 roomId）
+        public const byte JoinRoom        = 64;  // 客户端 → 服务器：加入房间（携带 roomId）
+        public const byte JoinRoomRsp     = 65;  // 服务器 → 客户端：加入房间响应（携带 playerId）
+        public const byte LeaveRoom       = 66;  // 客户端 → 服务器：离开房间
+        public const byte LeaveRoomRsp    = 67;  // 服务器 → 客户端：离开房间响应
+
+        // 服务器推送
+        public const byte PlayerJoined    = 70;  // 服务器 → 客户端：有玩家加入房间
+        public const byte PlayerLeft      = 71;  // 服务器 → 客户端：有玩家离开房间
     }
 
     /// <summary>
@@ -150,6 +164,94 @@ namespace BoomNetwork.Core.FrameSync
             }
 
             return frame;
+        }
+    }
+
+    /// <summary>
+    /// 房间信息
+    /// </summary>
+    public struct RoomInfo
+    {
+        public int RoomId;
+        public int PlayerCount;
+        public int MaxPlayers;
+        public bool Running;     // 帧同步是否已开始
+    }
+
+    /// <summary>
+    /// 房间协议编解码
+    /// </summary>
+    public static class RoomCodec
+    {
+        // === GetRoomsRsp ===
+        // Wire: [RoomCount:2] + N × [RoomId:4][PlayerCount:2][MaxPlayers:2][Running:1]
+
+        public static RoomInfo[] DecodeRoomList(ReadOnlySpan<byte> buf)
+        {
+            if (buf.Length < 2) return Array.Empty<RoomInfo>();
+            int offset = 0;
+            ushort count = BinaryPrimitives.ReadUInt16LittleEndian(buf.Slice(offset));
+            offset += 2;
+
+            var rooms = new RoomInfo[count];
+            for (int i = 0; i < count; i++)
+            {
+                rooms[i].RoomId = BinaryPrimitives.ReadInt32LittleEndian(buf.Slice(offset));
+                offset += 4;
+                rooms[i].PlayerCount = BinaryPrimitives.ReadUInt16LittleEndian(buf.Slice(offset));
+                offset += 2;
+                rooms[i].MaxPlayers = BinaryPrimitives.ReadUInt16LittleEndian(buf.Slice(offset));
+                offset += 2;
+                rooms[i].Running = buf[offset] != 0;
+                offset += 1;
+            }
+            return rooms;
+        }
+
+        // === CreateRoom ===
+        // Wire: [MaxPlayers:2]
+
+        public static byte[] EncodeCreateRoom(int maxPlayers)
+        {
+            var buf = new byte[2];
+            BinaryPrimitives.WriteUInt16LittleEndian(buf, (ushort)maxPlayers);
+            return buf;
+        }
+
+        // === CreateRoomRsp ===
+        // Wire: [RoomId:4]
+
+        public static int DecodeCreateRoomRsp(ReadOnlySpan<byte> buf)
+        {
+            return BinaryPrimitives.ReadInt32LittleEndian(buf);
+        }
+
+        // === JoinRoom ===
+        // Wire: [RoomId:4]
+
+        public static byte[] EncodeJoinRoom(int roomId)
+        {
+            var buf = new byte[4];
+            BinaryPrimitives.WriteInt32LittleEndian(buf, roomId);
+            return buf;
+        }
+
+        // === JoinRoomRsp ===
+        // Wire: [PlayerId:4][RoomId:4]
+
+        public static (int playerId, int roomId) DecodeJoinRoomRsp(ReadOnlySpan<byte> buf)
+        {
+            int playerId = BinaryPrimitives.ReadInt32LittleEndian(buf);
+            int roomId = BinaryPrimitives.ReadInt32LittleEndian(buf.Slice(4));
+            return (playerId, roomId);
+        }
+
+        // === PlayerJoined / PlayerLeft (服务器推送) ===
+        // Wire: [PlayerId:4]
+
+        public static int DecodePlayerId(ReadOnlySpan<byte> buf)
+        {
+            return BinaryPrimitives.ReadInt32LittleEndian(buf);
         }
     }
 }

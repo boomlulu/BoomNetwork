@@ -72,6 +72,36 @@ func (rm *RoomManager) RoomCount() int {
 	return len(rm.rooms)
 }
 
+// GetAllRoomInfos 获取所有房间信息
+func (rm *RoomManager) GetAllRoomInfos() []RoomInfo {
+	rm.mu.Lock()
+	rooms := make([]*Room, 0, len(rm.rooms))
+	for _, r := range rm.rooms {
+		rooms = append(rooms, r)
+	}
+	rm.mu.Unlock()
+
+	infos := make([]RoomInfo, len(rooms))
+	for i, r := range rooms {
+		infos[i] = r.GetRoomInfo()
+	}
+	return infos
+}
+
+// CreateRoomWithMaxPlayers 创建指定人数上限的房间
+func (rm *RoomManager) CreateRoomWithMaxPlayers(maxPlayers int) *Room {
+	cfg := rm.config
+	cfg.MaxPlayers = maxPlayers
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
+	id := atomic.AddInt32(&rm.nextID, 1)
+	room := NewRoomWithConfig(cfg)
+	room.ID = id
+	rm.rooms[id] = room
+	fmt.Printf("[RoomManager] Room %d created (max=%d)\n", id, maxPlayers)
+	return room
+}
+
 // StopAll 停止所有房间
 func (rm *RoomManager) StopAll() {
 	rm.mu.Lock()

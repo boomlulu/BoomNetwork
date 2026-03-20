@@ -36,6 +36,11 @@ namespace BoomNetwork.Core
         // --- FrameSync 4xxx ---
         SessionBindTimeout  = 4001,
         SessionBindFailed   = 4002,
+
+        // --- Room 5xxx ---
+        JoinRoomFailed      = 5001,
+        RoomNotFound        = 5002,
+        RoomFull            = 5003,
     }
 
     /// <summary>

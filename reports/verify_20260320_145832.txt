@@ -1,0 +1,15 @@
+BoomNetwork Verification Report
+Date: Fri Mar 20 14:58:32 CST 2026
+Platform: arm64 / macOS 26.2
+
+PASS  C# Unit Tests  19 tests
+PASS  Go Unit Tests  0.698s
+PASS  C# encode -> Go decode  
+PASS  Go encode -> C# decode  
+PASS  TCP Echo  4 checks
+PASS  FrameSync 2-client  ?
+PASS  TCP 3000 players  19.9 frames/s, down=9.63 MB/s, mem=122.68 MB
+PASS  Go Encode benchmark  22.15 ns/op, 24 B/op
+PASS  Go EncodeTo zero-alloc  3.365 ns/op, 0 alloc
+
+SUMMARY: 9/9 passed, 0 failed

@@ -56,12 +56,18 @@ func DefaultServerConfig() ServerConfig {
 
 // TcpServer TCP 服务器
 type TcpServer struct {
-	listener net.Listener
-	handler  Handler
-	config   ServerConfig
-	nextID   int
-	mu       sync.Mutex
-	conns    map[int]*Conn
+	listener     net.Listener
+	handler      Handler
+	config       ServerConfig
+	nextID       int
+	mu           sync.Mutex
+	conns        map[int]*Conn
+	onDisconnect func(*Conn)
+}
+
+// SetOnDisconnect 设置断开连接回调
+func (s *TcpServer) SetOnDisconnect(fn func(*Conn)) {
+	s.onDisconnect = fn
 }
 
 // NewTcpServer 创建 TCP 服务器
@@ -143,6 +149,9 @@ func (s *TcpServer) handleConn(c *Conn) {
 		s.mu.Lock()
 		delete(s.conns, c.ID)
 		s.mu.Unlock()
+		if s.onDisconnect != nil {
+			s.onDisconnect(c)
+		}
 		c.Close()
 		fmt.Printf("[Server] Client %d disconnected\n", c.ID)
 	}()

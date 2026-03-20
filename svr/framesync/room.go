@@ -37,6 +37,7 @@ type CachedFrame struct {
 // RoomConfig 房间配置
 type RoomConfig struct {
 	FrameRate           int32
+	MaxPlayers          int
 	FrameBufferSize     int           // 环形缓冲区大小
 	DisconnectKeepAlive time.Duration
 }
@@ -45,6 +46,7 @@ type RoomConfig struct {
 func DefaultRoomConfig() RoomConfig {
 	return RoomConfig{
 		FrameRate:           20,
+		MaxPlayers:          4,
 		FrameBufferSize:     200,
 		DisconnectKeepAlive: 30 * time.Second,
 	}
@@ -147,6 +149,50 @@ func (r *Room) TotalPlayerCount() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return len(r.players)
+}
+
+// IsRunning 帧同步是否正在运行
+func (r *Room) IsRunning() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.running
+}
+
+// MaxPlayers 房间最大人数
+func (r *Room) MaxPlayers() int {
+	return r.config.MaxPlayers
+}
+
+// GetRoomInfo 获取房间信息快照
+func (r *Room) GetRoomInfo() RoomInfo {
+	return RoomInfo{
+		RoomId:      r.ID,
+		PlayerCount: r.PlayerCount(),
+		MaxPlayers:  r.config.MaxPlayers,
+		Running:     r.IsRunning(),
+	}
+}
+
+// ForEachOnlinePlayer 遍历在线玩家（用于广播推送）
+func (r *Room) ForEachOnlinePlayer(fn func(id int32, conn PlayerConn)) {
+	r.mu.Lock()
+	players := make([]struct {
+		id   int32
+		conn PlayerConn
+	}, 0, len(r.players))
+	for _, p := range r.players {
+		if p.State == PlayerOnline && p.Conn != nil {
+			players = append(players, struct {
+				id   int32
+				conn PlayerConn
+			}{p.ID, p.Conn})
+		}
+	}
+	r.mu.Unlock()
+
+	for _, p := range players {
+		fn(p.id, p.conn)
+	}
 }
 
 // CurrentFrameNumber 当前帧号

@@ -12,12 +12,18 @@ import (
 
 // KcpServer KCP 服务器
 type KcpServer struct {
-	listener *kcp.Listener
-	handler  Handler
-	config   ServerConfig
-	nextID   int
-	mu       sync.Mutex
-	conns    map[int]*Conn
+	listener     *kcp.Listener
+	handler      Handler
+	config       ServerConfig
+	nextID       int
+	mu           sync.Mutex
+	conns        map[int]*Conn
+	onDisconnect func(*Conn)
+}
+
+// SetOnDisconnect 设置断开连接回调
+func (s *KcpServer) SetOnDisconnect(fn func(*Conn)) {
+	s.onDisconnect = fn
 }
 
 // NewKcpServer 创建 KCP 服务器
@@ -99,6 +105,9 @@ func (s *KcpServer) handleConn(c *Conn) {
 		s.mu.Lock()
 		delete(s.conns, c.ID)
 		s.mu.Unlock()
+		if s.onDisconnect != nil {
+			s.onDisconnect(c)
+		}
 		c.Close()
 		fmt.Printf("[KcpServer] Client %d disconnected\n", c.ID)
 	}()
@@ -126,6 +135,7 @@ type Server interface {
 	Listen(addr string) error
 	Close()
 	ConnCount() int
+	SetOnDisconnect(fn func(*Conn))
 }
 
 // 确保 TcpServer 和 KcpServer 都实现 Server 接口

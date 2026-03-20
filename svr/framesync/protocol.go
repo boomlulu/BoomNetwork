@@ -18,6 +18,20 @@ const (
 
 	CmdReconnect      = 50
 	CmdReconnectRsp   = 51
+
+	// 房间管理
+	CmdGetRooms      = 60
+	CmdGetRoomsRsp   = 61
+	CmdCreateRoom    = 62
+	CmdCreateRoomRsp = 63
+	CmdJoinRoom      = 64
+	CmdJoinRoomRsp   = 65
+	CmdLeaveRoom     = 66
+	CmdLeaveRoomRsp  = 67
+
+	// 服务器推送
+	CmdPlayerJoined = 70
+	CmdPlayerLeft   = 71
 )
 
 // InitData 帧同步初始化数据
@@ -124,4 +138,52 @@ func FrameDataSize(f *FrameData) int {
 		size += 6 + len(input.Data) // PlayerId(4) + DataLen(2) + Data
 	}
 	return size
+}
+
+// === 房间协议编解码 ===
+
+// RoomInfo 房间信息（用于列表展示）
+type RoomInfo struct {
+	RoomId      int32
+	PlayerCount int
+	MaxPlayers  int
+	Running     bool
+}
+
+// EncodeRoomList 编码房间列表
+// Wire: [Count:2] + N × [RoomId:4][PlayerCount:2][MaxPlayers:2][Running:1]
+func EncodeRoomList(rooms []RoomInfo) []byte {
+	buf := make([]byte, 2+len(rooms)*9)
+	binary.LittleEndian.PutUint16(buf[0:], uint16(len(rooms)))
+	offset := 2
+	for _, r := range rooms {
+		binary.LittleEndian.PutUint32(buf[offset:], uint32(r.RoomId))
+		offset += 4
+		binary.LittleEndian.PutUint16(buf[offset:], uint16(r.PlayerCount))
+		offset += 2
+		binary.LittleEndian.PutUint16(buf[offset:], uint16(r.MaxPlayers))
+		offset += 2
+		if r.Running {
+			buf[offset] = 1
+		}
+		offset += 1
+	}
+	return buf
+}
+
+// EncodeJoinRoomRsp 编码加入房间响应
+// Wire: [PlayerId:4][RoomId:4]
+func EncodeJoinRoomRsp(playerId int32, roomId int32) []byte {
+	buf := make([]byte, 8)
+	binary.LittleEndian.PutUint32(buf[0:], uint32(playerId))
+	binary.LittleEndian.PutUint32(buf[4:], uint32(roomId))
+	return buf
+}
+
+// EncodePlayerId 编码玩家 ID（PlayerJoined / PlayerLeft 推送用）
+// Wire: [PlayerId:4]
+func EncodePlayerId(playerId int32) []byte {
+	buf := make([]byte, 4)
+	binary.LittleEndian.PutUint32(buf[0:], uint32(playerId))
+	return buf
 }
