@@ -71,10 +71,14 @@ func handleSessionBind(conn *transport.Conn, msg *codec.Message) *codec.Message 
 	rsp := make([]byte, 4)
 	binary.LittleEndian.PutUint32(rsp, uint32(playerId))
 
-	fmt.Printf("[Server] Player %d bound (conn %d, room %d)\n", playerId, conn.ID, room.ID)
+	pc := room.PlayerCount()
+	tc := room.TotalPlayerCount()
+	fmt.Printf("[Server] Player %d bound (conn %d, room %d, online=%d, total=%d, ppr=%d)\n",
+		playerId, conn.ID, room.ID, pc, tc, *playersPerRoom)
 
 	// 人满自动开始
-	if room.PlayerCount() >= *playersPerRoom {
+	if pc >= *playersPerRoom {
+		fmt.Printf("[Server] Room %d starting! (%d/%d)\n", room.ID, pc, *playersPerRoom)
 		room.Start()
 	}
 

@@ -73,7 +73,7 @@ namespace BoomNetwork.Client.Connection
         public ConnectionManager(NetworkSession session, IReconnectStrategy? reconnectStrategy = null)
         {
             _session = session;
-            _reconnectStrategy = reconnectStrategy ?? CompositeReconnectStrategy.Default();
+            _reconnectStrategy = reconnectStrategy;
 
             _session.OnConnected += HandleSessionConnected;
             _session.OnDisconnected += HandleSessionDisconnected;
@@ -99,7 +99,7 @@ namespace BoomNetwork.Client.Connection
         {
             _intentionalDisconnect = true;
             StopHeartbeat();
-            _reconnectStrategy.Cancel();
+            _reconnectStrategy?.Cancel();
             _session.Disconnect();
             TransitionTo(State.Disconnected);
         }
@@ -188,6 +188,15 @@ namespace BoomNetwork.Client.Connection
 
             if (_intentionalDisconnect)
             {
+                TransitionTo(State.Disconnected);
+                OnDisconnected?.Invoke();
+                return;
+            }
+
+            // 没有重连策略 → 直接断开
+            if (_reconnectStrategy == null)
+            {
+                Log("No reconnect strategy, staying disconnected");
                 TransitionTo(State.Disconnected);
                 OnDisconnected?.Invoke();
                 return;
