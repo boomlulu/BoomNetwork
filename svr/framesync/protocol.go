@@ -4,34 +4,34 @@ import (
 	"encoding/binary"
 )
 
-// Cmd 定义
+// Cmd 定义 (FlagsCmd 6bit, 范围 0-63)
 const (
-	CmdSessionBind    = 10
-	CmdSessionBindRsp = 11
-	CmdStartFrameSync = 20
-	CmdStopFrameSync  = 21
-	CmdFrameInput     = 30
-	CmdPushFrames     = 31
+	CmdSessionBind    = 1
+	CmdSessionBindRsp = 2
+	CmdStartFrameSync = 3
+	CmdStopFrameSync  = 4
+	CmdFrameInput     = 5
+	CmdPushFrames     = 6
 
-	CmdHeartbeat      = 40
-	CmdHeartbeatRsp   = 41
+	CmdHeartbeat    = 7
+	CmdHeartbeatRsp = 8
 
-	CmdReconnect      = 50
-	CmdReconnectRsp   = 51
+	CmdReconnect    = 9
+	CmdReconnectRsp = 10
 
 	// 房间管理
-	CmdGetRooms      = 60
-	CmdGetRoomsRsp   = 61
-	CmdCreateRoom    = 62
-	CmdCreateRoomRsp = 63
-	CmdJoinRoom      = 64
-	CmdJoinRoomRsp   = 65
-	CmdLeaveRoom     = 66
-	CmdLeaveRoomRsp  = 67
+	CmdGetRooms      = 11
+	CmdGetRoomsRsp   = 12
+	CmdCreateRoom    = 13
+	CmdCreateRoomRsp = 14
+	CmdJoinRoom      = 15
+	CmdJoinRoomRsp   = 16
+	CmdLeaveRoom     = 17
+	CmdLeaveRoomRsp  = 18
 
 	// 服务器推送
-	CmdPlayerJoined = 70
-	CmdPlayerLeft   = 71
+	CmdPlayerJoined = 19
+	CmdPlayerLeft   = 20
 )
 
 // InitData 帧同步初始化数据

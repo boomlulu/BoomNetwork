@@ -8,34 +8,35 @@ namespace BoomNetwork.Core.FrameSync
     /// </summary>
     public static class FrameSyncCmd
     {
-        public const byte SessionBind       = 10;  // 客户端 → 服务器：绑定会话
-        public const byte SessionBindRsp    = 11;  // 服务器 → 客户端：绑定响应
+        // 注意: FlagsCmd 只有 6 bit 给 Cmd，范围 0-63
+        public const byte SessionBind       = 1;
+        public const byte SessionBindRsp    = 2;
 
-        public const byte StartFrameSync   = 20;  // 服务器 → 客户端：帧同步开始
-        public const byte StopFrameSync    = 21;  // 服务器 → 客户端：帧同步结束
+        public const byte StartFrameSync   = 3;
+        public const byte StopFrameSync    = 4;
 
-        public const byte FrameInput       = 30;  // 客户端 → 服务器：玩家输入
-        public const byte PushFrames       = 31;  // 服务器 → 客户端：推送帧数据
+        public const byte FrameInput       = 5;
+        public const byte PushFrames       = 6;
 
-        public const byte Heartbeat       = 40;  // 客户端 → 服务器：心跳
-        public const byte HeartbeatRsp    = 41;  // 服务器 → 客户端：心跳响应
+        public const byte Heartbeat        = 7;
+        public const byte HeartbeatRsp     = 8;
 
-        public const byte Reconnect       = 50;  // 客户端 → 服务器：重连请求（携带 playerId）
-        public const byte ReconnectRsp    = 51;  // 服务器 → 客户端：重连响应（携带当前帧号）
+        public const byte Reconnect        = 9;
+        public const byte ReconnectRsp     = 10;
 
         // 房间管理
-        public const byte GetRooms        = 60;  // 客户端 → 服务器：获取房间列表
-        public const byte GetRoomsRsp     = 61;  // 服务器 → 客户端：房间列表响应
-        public const byte CreateRoom      = 62;  // 客户端 → 服务器：创建房间（携带 maxPlayers）
-        public const byte CreateRoomRsp   = 63;  // 服务器 → 客户端：创建房间响应（携带 roomId）
-        public const byte JoinRoom        = 64;  // 客户端 → 服务器：加入房间（携带 roomId）
-        public const byte JoinRoomRsp     = 65;  // 服务器 → 客户端：加入房间响应（携带 playerId）
-        public const byte LeaveRoom       = 66;  // 客户端 → 服务器：离开房间
-        public const byte LeaveRoomRsp    = 67;  // 服务器 → 客户端：离开房间响应
+        public const byte GetRooms         = 11;
+        public const byte GetRoomsRsp      = 12;
+        public const byte CreateRoom       = 13;
+        public const byte CreateRoomRsp    = 14;
+        public const byte JoinRoom         = 15;
+        public const byte JoinRoomRsp      = 16;
+        public const byte LeaveRoom        = 17;
+        public const byte LeaveRoomRsp     = 18;
 
         // 服务器推送
-        public const byte PlayerJoined    = 70;  // 服务器 → 客户端：有玩家加入房间
-        public const byte PlayerLeft      = 71;  // 服务器 → 客户端：有玩家离开房间
+        public const byte PlayerJoined     = 19;
+        public const byte PlayerLeft       = 20;
     }
 
     /// <summary>
