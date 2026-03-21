@@ -1,7 +1,7 @@
 package framesync
 
 import (
-	"fmt"
+	"log"
 	"sync"
 	"sync/atomic"
 )
@@ -32,7 +32,7 @@ func (rm *RoomManager) createRoomLocked() *Room {
 	room := NewRoomWithConfig(rm.config)
 	room.ID = id
 	rm.rooms[id] = room
-	fmt.Printf("[RoomManager] Room %d created\n", id)
+	log.Printf("[RoomManager] Room %d created\n", id)
 	return room
 }
 
@@ -61,7 +61,7 @@ func (rm *RoomManager) RemoveRoom(id int32) {
 
 	if ok {
 		room.Stop()
-		fmt.Printf("[RoomManager] Room %d removed\n", id)
+		log.Printf("[RoomManager] Room %d removed\n", id)
 	}
 }
 
@@ -98,7 +98,7 @@ func (rm *RoomManager) CreateRoomWithMaxPlayers(maxPlayers int) *Room {
 	room := NewRoomWithConfig(cfg)
 	room.ID = id
 	rm.rooms[id] = room
-	fmt.Printf("[RoomManager] Room %d created (max=%d)\n", id, maxPlayers)
+	log.Printf("[RoomManager] Room %d created (max=%d)\n", id, maxPlayers)
 	return room
 }
 
@@ -115,7 +115,7 @@ func (rm *RoomManager) StopAll() {
 	for _, r := range rooms {
 		r.Stop()
 	}
-	fmt.Printf("[RoomManager] All %d rooms stopped\n", len(rooms))
+	log.Printf("[RoomManager] All %d rooms stopped\n", len(rooms))
 }
 
 // AutoAssignRoom 自动分配房间（原子操作，无竞态）
