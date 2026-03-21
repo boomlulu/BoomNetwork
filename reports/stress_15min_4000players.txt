@@ -1,0 +1,35 @@
+==========================================
+  BoomNetwork Long Stress Test Report
+  Date: 2026-03-22
+  Duration: 15 minutes
+  Config: 1000 rooms × 4 players = 4000 total
+==========================================
+
+  [ Connection ]
+  Connected:           4000 / 4000 (0 failed)
+
+  [ Throughput ]
+  Frames received:     71,999,366 (expected 72,000,000, loss 0.0009%)
+  Per client:          20.0 frames/s
+  Inputs sent:         71,999,286
+
+  [ Bandwidth ]
+  Upload:              2.80 MB/s (clients → server)
+  Download:            12.88 MB/s (server → clients)
+  Per client upload:   0.68 KB/s
+  Per client download: 3.14 KB/s
+  Total transferred:   2,519 MB up + 11,591 MB down = 14.1 GB
+
+  [ Server Memory ]
+  Heap in use:         200.02 MB
+  Heap alloc:          104.98 MB
+  Stack in use:        14.42 MB
+  Total sys:           529.61 MB
+  GC cycles:           126 (avg 1 per 7.1s)
+  Goroutines:          1002
+
+  [ Stability ]
+  Zero disconnections during 15 minutes
+  Memory stable (no growth trend)
+  Frame rate exactly 20.0 fps throughout
+==========================================
