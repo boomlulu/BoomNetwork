@@ -119,14 +119,20 @@ func onClientDisconnect(conn *transport.Conn) {
 func handleSessionBind(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	playerId := nextPlayerId()
 
-	// 只记录 conn → playerId 映射，不分配房间
+	// 记录映射
 	connPlayerMap.Store(conn.ID, playerId)
 	playerConnMap.Store(playerId, conn)
+
+	// 自动分配房间（FrameSyncClient 模式）
+	// Demo 的 CreateRoom+JoinRoom 流程不走这里
+	room := roomMgr.AutoAssignRoom(*ppr)
+	bindPlayerToRoom(playerId, conn, room)
 
 	rsp := make([]byte, 4)
 	binary.LittleEndian.PutUint32(rsp, uint32(playerId))
 
-	log.Printf("[Server] Player %d bound (conn %d)\n", playerId, conn.ID)
+	log.Printf("[Server] Player %d bound (conn %d, room %d, online=%d)\n",
+		playerId, conn.ID, room.ID, room.PlayerCount())
 
 	return &codec.Message{Cmd: framesync.CmdSessionBindRsp, Data: rsp}
 }

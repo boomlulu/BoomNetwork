@@ -242,7 +242,7 @@ namespace BoomNetwork.Client.Session
             _framing.Feed(data, offset, length);
             while (_framing.TryDequeueFrame(out var frame))
             {
-                var msg = MessageCodec.Decode(frame.Span);
+                var msg = MessageCodec.Decode(frame.Span, usePool: true);
                 frame.Dispose();
 
                 // 跟踪服务器消息序号
@@ -250,6 +250,9 @@ namespace BoomNetwork.Client.Session
                     _lastRecvServerSeq = msg.Seq;
 
                 DispatchMessage(msg);
+
+                // 归还 ArrayPool buffer（上层如需保留 data 要自己 copy）
+                MessageCodec.ReturnData(ref msg);
             }
         }
 

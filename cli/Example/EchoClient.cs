@@ -53,7 +53,7 @@ namespace BoomNetwork.Example
                     onResponse: msg =>
                     {
                         gotResponse = true;
-                        responseData = Encoding.UTF8.GetString(msg.Data);
+                        responseData = Encoding.UTF8.GetString(msg.Data, 0, msg.DataLength);
                     },
                     onTimeout: err => Console.WriteLine($"  Timeout: {err}"));
 
@@ -78,7 +78,7 @@ namespace BoomNetwork.Example
                 session.SendAsync(CmdPing, null, 3000,
                     onResponse: msg =>
                     {
-                        gotPong = Encoding.UTF8.GetString(msg.Data) == "pong";
+                        gotPong = Encoding.UTF8.GetString(msg.Data, 0, msg.DataLength) == "pong";
                     });
 
                 TickUntil(session, () => gotPong, 2000);

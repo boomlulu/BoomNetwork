@@ -46,6 +46,10 @@ namespace BoomNetwork.FrameSyncExample
 
             // === Test 2: 帧同步开始 ===
             Console.WriteLine("\n--- Test 2: FrameSync Start ---");
+            // 发 RequestStart（服务端不再自动 Start）
+            cm1.Session.Send(FrameSyncCmd.RequestStart);
+            Console.WriteLine("  Sent RequestStart");
+
             TickUntil(new[] { client1, client2 },
                 () => client1.CurrentState >= FrameSyncClient.State.Syncing
                    && client2.CurrentState >= FrameSyncClient.State.Syncing,
