@@ -97,11 +97,18 @@ func onClientDisconnect(conn *transport.Conn) {
 	if room.PlayerCount() == 0 {
 		roomID := room.ID
 		go func() {
-			time.Sleep(5 * time.Second)
+			time.Sleep(30 * time.Second) // 30 秒等待重连
 			if room.PlayerCount() == 0 {
 				room.Stop()
 				roomMgr.RemoveRoom(roomID)
-				log.Printf("[Server] Room %d cleaned up (empty)\n", roomID)
+				// 清理 playerRoomMap 中指向该房间的映射
+				playerRoomMap.Range(func(key, val any) bool {
+					if r, ok := val.(*framesync.Room); ok && r.ID == roomID {
+						playerRoomMap.Delete(key)
+					}
+					return true
+				})
+				log.Printf("[Server] Room %d cleaned up (empty after 30s)\n", roomID)
 			}
 		}()
 	}
@@ -164,6 +171,14 @@ func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
 		return &codec.Message{Cmd: framesync.CmdReconnectRsp, Data: rsp}
 	}
 	room := roomVal.(*framesync.Room)
+
+	// 检查房间是否还在 RoomManager 中（可能已被清理）
+	if roomMgr.GetRoom(room.ID) == nil {
+		log.Printf("[Server] Reconnect failed: player %d room %d already cleaned up\n", playerId, room.ID)
+		playerRoomMap.Delete(playerId)
+		rsp := make([]byte, 5)
+		return &codec.Message{Cmd: framesync.CmdReconnectRsp, Data: rsp}
+	}
 
 	// 更新连接映射
 	connPlayerMap.Store(conn.ID, playerId)
