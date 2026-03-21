@@ -91,6 +91,19 @@ func onClientDisconnect(conn *transport.Conn) {
 
 	// 通知同房其他玩家
 	broadcastToRoom(room, playerId, framesync.CmdPlayerLeft, framesync.EncodePlayerId(playerId))
+
+	// 如果房间没有在线玩家了，延迟清理
+	if room.PlayerCount() == 0 {
+		roomID := room.ID
+		go func() {
+			time.Sleep(5 * time.Second)
+			if room.PlayerCount() == 0 {
+				room.Stop()
+				roomMgr.RemoveRoom(roomID)
+				fmt.Printf("[Server] Room %d cleaned up (empty)\n", roomID)
+			}
+		}()
+	}
 }
 
 // ===================== 帧同步 Handler =====================
@@ -98,16 +111,14 @@ func onClientDisconnect(conn *transport.Conn) {
 func handleSessionBind(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	playerId := nextPlayerId()
 
-	// 自动分配房间
-	room := roomMgr.AutoAssignRoom(*ppr)
-
-	bindPlayerToRoom(playerId, conn, room)
+	// 只记录 conn → playerId 映射，不分配房间
+	connPlayerMap.Store(conn.ID, playerId)
+	playerConnMap.Store(playerId, conn)
 
 	rsp := make([]byte, 4)
 	binary.LittleEndian.PutUint32(rsp, uint32(playerId))
 
-	fmt.Printf("[Server] Player %d bound (conn %d, room %d, online=%d)\n",
-		playerId, conn.ID, room.ID, room.PlayerCount())
+	fmt.Printf("[Server] Player %d bound (conn %d)\n", playerId, conn.ID)
 
 	return &codec.Message{Cmd: framesync.CmdSessionBindRsp, Data: rsp}
 }
