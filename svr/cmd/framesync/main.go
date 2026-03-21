@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"flag"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"sync"
@@ -14,13 +15,17 @@ import (
 	"github.com/boom/boomnetwork/framesync"
 	"github.com/boom/boomnetwork/session"
 	"github.com/boom/boomnetwork/transport"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 var (
 	addr      = flag.String("addr", ":9000", "listen address")
 	proto     = flag.String("proto", "tcp", "protocol: tcp or kcp")
 	ppr       = flag.Int("ppr", 4, "default players per room")
-	authToken = flag.String("token", "", "auth token (empty = no auth)")
+	authToken   = flag.String("token", "", "auth token (empty = no auth)")
+	metricsAddr = flag.String("metrics", ":9090", "prometheus metrics address (empty = disabled)")
+	configFile  = flag.String("config", "", "JSON config file path (overrides flags)")
+	genConfig   = flag.Bool("gen-config", false, "generate default config.json and exit")
 )
 
 var roomMgr = framesync.NewRoomManager()
@@ -36,6 +41,22 @@ var playerMu sync.Mutex
 func main() {
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
 	flag.Parse()
+
+	// 生成默认配置文件
+	if *genConfig {
+		SaveDefaultConfig("config.json")
+		return
+	}
+
+	// 加载配置文件（如果指定，覆盖命令行参数）
+	if *configFile != "" {
+		cfg := LoadConfig(*configFile)
+		*addr = cfg.Addr
+		*proto = cfg.Proto
+		*ppr = cfg.PlayersPerRoom
+		*authToken = cfg.AuthToken
+		*metricsAddr = cfg.MetricsAddr
+	}
 
 	router := session.NewRouter()
 	// 帧同步
@@ -71,6 +92,17 @@ func main() {
 	}
 	log.Printf("[FrameSync Server] Running on %s (proto=%s, ppr=%d%s)\n", *addr, *proto, *ppr, authInfo)
 
+	// Prometheus metrics endpoint
+	if *metricsAddr != "" {
+		go func() {
+			http.Handle("/metrics", promhttp.Handler())
+			log.Printf("[Metrics] Listening on %s/metrics\n", *metricsAddr)
+			if err := http.ListenAndServe(*metricsAddr, nil); err != nil {
+				log.Printf("[Metrics] Failed: %v\n", err)
+			}
+		}()
+	}
+
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	<-sig
@@ -89,6 +121,8 @@ func nextPlayerId() int32 {
 }
 
 func onClientDisconnect(conn *transport.Conn) {
+	framesync.Metrics.ConnectionsCurrent.Dec()
+
 	val, ok := connPlayerMap.LoadAndDelete(conn.ID)
 	if !ok {
 		return
@@ -139,9 +173,12 @@ func handleSessionBind(conn *transport.Conn, msg *codec.Message) *codec.Message 
 		}
 		if clientToken != *authToken {
 			log.Printf("[Server] Auth failed for conn %d (bad token)\n", conn.ID)
-			return &codec.Message{Cmd: framesync.CmdSessionBindRsp, Data: []byte{0, 0, 0, 0}} // playerId=0 表示失败
+			framesync.Metrics.AuthFailures.Inc()
+			return &codec.Message{Cmd: framesync.CmdSessionBindRsp, Data: []byte{0, 0, 0, 0}}
 		}
 	}
+	framesync.Metrics.ConnectionsTotal.Inc()
+	framesync.Metrics.ConnectionsCurrent.Inc()
 
 	playerId := nextPlayerId()
 
@@ -176,6 +213,7 @@ func handleFrameInput(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	}
 	room := roomVal.(*framesync.Room)
 	room.OnInput(playerId, msg.Data)
+	framesync.Metrics.InputsReceived.Inc()
 	return nil
 }
 

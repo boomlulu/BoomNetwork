@@ -23,6 +23,10 @@ var (
 	duration       = flag.Duration("duration", 10*time.Second, "test duration")
 	frameRate      = flag.Int("fps", 20, "server frame rate")
 	inputSize      = flag.Int("input-size", 32, "input payload size in bytes")
+	// 网络模拟
+	simLatency  = flag.Int("latency", 0, "simulated one-way latency in ms (0=off)")
+	simJitter   = flag.Int("jitter", 0, "simulated latency jitter in ms (0=off)")
+	simLossRate = flag.Float64("loss", 0, "simulated packet loss rate 0.0-1.0 (0=off)")
 )
 
 // 统计
@@ -44,6 +48,9 @@ func main() {
 	fmt.Printf("  %d rooms × %d players = %d total\n", *rooms, *playersPerRoom, totalPlayers)
 	fmt.Printf("  Duration: %s, FrameRate: %d fps\n", *duration, *frameRate)
 	fmt.Printf("  Input payload: %d bytes\n", *inputSize)
+	if *simLatency > 0 || *simLossRate > 0 {
+		fmt.Printf("  Network sim: latency=%dms jitter=%dms loss=%.1f%%\n", *simLatency, *simJitter, *simLossRate*100)
+	}
 	fmt.Println("==========================================")
 
 	// 启动内嵌服务器
@@ -101,7 +108,40 @@ proceed:
 	atomic.StoreInt64(&totalBytesRecv, 0)
 
 	fmt.Printf("[Running] Stress test for %s...\n", *duration)
-	time.Sleep(*duration)
+
+	// Soak test: 定时采样内存（每 30 秒或 duration/10，取较大值）
+	sampleInterval := *duration / 10
+	if sampleInterval < 30*time.Second {
+		sampleInterval = 30 * time.Second
+	}
+	if *duration >= 60*time.Second {
+		fmt.Printf("[Soak] Memory sampling every %s\n", sampleInterval)
+		soakStart := time.Now()
+		for time.Since(soakStart) < *duration {
+			sleepDur := sampleInterval
+			remaining := *duration - time.Since(soakStart)
+			if sleepDur > remaining {
+				sleepDur = remaining
+			}
+			if sleepDur <= 0 {
+				break
+			}
+			time.Sleep(sleepDur)
+
+			var ms runtime.MemStats
+			runtime.ReadMemStats(&ms)
+			elapsed := time.Since(soakStart)
+			fmt.Printf("[Soak %s] Heap=%dMB Alloc=%dMB GC=%d Goroutines=%d Frames=%d\n",
+				elapsed.Round(time.Second),
+				ms.HeapInuse/1024/1024,
+				ms.HeapAlloc/1024/1024,
+				ms.NumGC,
+				runtime.NumGoroutine(),
+				atomic.LoadInt64(&totalFrameRecv))
+		}
+	} else {
+		time.Sleep(*duration)
+	}
 
 	// 停止
 	close(stopCh)
@@ -332,6 +372,21 @@ func runClient(stopCh chan struct{}) {
 		case <-recvDone:
 			return
 		case <-ticker.C:
+			// 网络模拟: 丢包
+			if *simLossRate > 0 && rand.Float64() < *simLossRate {
+				continue
+			}
+			// 网络模拟: 延迟 + 抖动
+			if *simLatency > 0 {
+				delay := *simLatency
+				if *simJitter > 0 {
+					delay += rand.Intn(*simJitter*2) - *simJitter
+					if delay < 0 {
+						delay = 0
+					}
+				}
+				time.Sleep(time.Duration(delay) * time.Millisecond)
+			}
 			writer.WriteMessage(&codec.Message{Cmd: framesync.CmdFrameInput, Data: inputData})
 			writer.Flush()
 			atomic.AddInt64(&totalInputSent, 1)

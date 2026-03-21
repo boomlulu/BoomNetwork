@@ -290,6 +290,7 @@ func (r *Room) tickLoop() {
 	defer func() {
 		if rec := recover(); rec != nil {
 			log.Printf("[Room %d] PANIC recovered: %v\n", r.ID, rec)
+			Metrics.RoomPanics.Inc()
 			r.mu.Lock()
 			r.running = false
 			r.mu.Unlock()

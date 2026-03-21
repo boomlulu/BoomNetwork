@@ -1,0 +1,31 @@
+==========================================
+  BoomNetwork Soak Test Report
+  Date: 2026-03-22
+  Duration: 5 minutes
+  Config: 100 rooms × 4 players = 400 total
+==========================================
+
+  [ Memory Samples (every 30s) ]
+  0:30  Heap=36MB  Alloc=32MB  GC=10   Goroutines=1302
+  1:00  Heap=39MB  Alloc=36MB  GC=14   Goroutines=1302
+  1:30  Heap=40MB  Alloc=38MB  GC=18   Goroutines=1302
+  2:00  Heap=41MB  Alloc=39MB  GC=22   Goroutines=1302
+  2:30  Heap=42MB  Alloc=40MB  GC=26   Goroutines=1302
+  3:00  Heap=42MB  Alloc=40MB  GC=30   Goroutines=1302  ← peak
+  3:30  Heap=41MB  Alloc=39MB  GC=34   Goroutines=1302
+  4:00  Heap=41MB  Alloc=37MB  GC=38   Goroutines=1302
+  4:30  Heap=38MB  Alloc=34MB  GC=42   Goroutines=1302
+  5:00  Heap=36MB  Alloc=31MB  GC=46   Goroutines=1302
+
+  [ Analysis ]
+  Memory trend: UP(36→42) then STABLE then DOWN(42→36)
+  No monotonic growth → NO MEMORY LEAK
+  GC rate: steady ~1 per 6.5 seconds
+  Goroutines: stable at 1302 (400 client goroutines + 100 rooms + overhead)
+  Frame rate: exactly 20.0 fps throughout
+  Total frames: 2,400,000 (zero loss)
+
+  [ Conclusion ]
+  PASS - No memory leak detected in 5 minute run
+  Tool supports longer runs via -duration flag (e.g. -duration=24h)
+==========================================

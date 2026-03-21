@@ -1,0 +1,46 @@
+==========================================
+  BoomNetwork Priority 1 Security Summary
+  Date: 2026-03-22
+==========================================
+
+[ Changes ]
+  P1-1: Message size limit
+    - MaxMessageSize = 64KB (configurable via SecurityConfig)
+    - Oversized messages → disconnect
+    - Applied to both FrameReader and standalone ReadFrame
+
+  P1-2: Rate limiting
+    - RateLimiter per connection (100 msg/sec default)
+    - Exceeding limit → disconnect
+    - Configurable via SecurityConfig.MaxMessagesPerSec
+
+  P1-3: Goroutine panic recovery
+    - Room.tickLoop has defer recover()
+    - Single room panic stops only that room
+    - Logged: "[Room N] PANIC recovered: ..."
+
+  P1-4: Token authentication
+    - -token flag enables auth (empty = disabled)
+    - Client sends token in SessionBind.Data
+    - Bad token → playerId=0 response
+
+[ Verification ]
+  9/9 tests passed
+  - C# Unit Tests: 19 passed
+  - Go Unit Tests: passed
+  - Cross-language: 2 passed
+  - TCP Echo: 4 checks passed
+  - FrameSync 2-client: passed
+  - Stress 3000 players: 20.0 fps, mem=123.70 MB
+
+[ Performance Impact ]
+  Before P1:
+    Stress 3000p: mem=125.77 MB
+    Decode_Small_Pooled: 12.83 ns, 0 alloc
+
+  After P1:
+    Stress 3000p: mem=123.70 MB (-1.6%)
+    Decode_Small_Pooled: 12.65 ns, 0 alloc
+
+  No performance regression from security features.
+==========================================
