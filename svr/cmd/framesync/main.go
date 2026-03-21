@@ -146,7 +146,9 @@ func handleHeartbeat(conn *transport.Conn, msg *codec.Message) *codec.Message {
 
 func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	if len(msg.Data) < 4 {
-		return &codec.Message{Cmd: framesync.CmdReconnectRsp, Data: []byte{0, 0, 0, 0}}
+		// 失败: [success:1=0][frame:4=0]
+		rsp := make([]byte, 5)
+		return &codec.Message{Cmd: framesync.CmdReconnectRsp, Data: rsp}
 	}
 
 	playerId := int32(binary.LittleEndian.Uint32(msg.Data[0:4]))
@@ -157,7 +159,9 @@ func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
 
 	roomVal, ok := playerRoomMap.Load(playerId)
 	if !ok {
-		return &codec.Message{Cmd: framesync.CmdReconnectRsp, Data: []byte{0, 0, 0, 0}}
+		log.Printf("[Server] Reconnect failed: player %d not found in any room\n", playerId)
+		rsp := make([]byte, 5)
+		return &codec.Message{Cmd: framesync.CmdReconnectRsp, Data: rsp}
 	}
 	room := roomVal.(*framesync.Room)
 
@@ -167,8 +171,11 @@ func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	room.AddPlayer(playerId, conn)
 
 	currentFrame := room.CurrentFrameNumber()
-	rsp := make([]byte, 4)
-	binary.LittleEndian.PutUint32(rsp, currentFrame)
+	// 成功: [success:1=1][frame:4][roomId:4]
+	rsp := make([]byte, 9)
+	rsp[0] = 1 // success
+	binary.LittleEndian.PutUint32(rsp[1:5], currentFrame)
+	binary.LittleEndian.PutUint32(rsp[5:9], uint32(room.ID))
 
 	if lastFrame > 0 && lastFrame < currentFrame {
 		go func() {

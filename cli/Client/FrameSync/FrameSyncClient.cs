@@ -54,10 +54,13 @@ namespace BoomNetwork.Client.FrameSync
 
         public ConnectionManager ConnectionManager => _connectionManager;
 
-        public FrameSyncClient(NetworkSession session, ConnectionManager connectionManager)
+        private bool _skipAutoSessionBind;
+
+        public FrameSyncClient(NetworkSession session, ConnectionManager connectionManager, bool skipAutoSessionBind = false)
         {
             _session = session;
             _connectionManager = connectionManager;
+            _skipAutoSessionBind = skipAutoSessionBind;
 
             // 监听 Session 消息（帧数据由 Session 的 OnMessage 抛上来）
             _session.OnMessage += HandleMessage;
@@ -109,6 +112,13 @@ namespace BoomNetwork.Client.FrameSync
 
         private void OnConnectionEstablished()
         {
+            if (_skipAutoSessionBind)
+            {
+                // 重连模式：不发 SessionBind，由 Person 发 Reconnect
+                CurrentState = State.WaitingStart;
+                return;
+            }
+
             // 首次连接成功 → 发 SessionBind
             CurrentState = State.Binding;
 
