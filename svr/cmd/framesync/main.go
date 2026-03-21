@@ -17,9 +17,10 @@ import (
 )
 
 var (
-	addr  = flag.String("addr", ":9000", "listen address")
-	proto = flag.String("proto", "tcp", "protocol: tcp or kcp")
-	ppr   = flag.Int("ppr", 4, "default players per room")
+	addr      = flag.String("addr", ":9000", "listen address")
+	proto     = flag.String("proto", "tcp", "protocol: tcp or kcp")
+	ppr       = flag.Int("ppr", 4, "default players per room")
+	authToken = flag.String("token", "", "auth token (empty = no auth)")
 )
 
 var roomMgr = framesync.NewRoomManager()
@@ -51,11 +52,24 @@ func main() {
 
 	server := transport.NewServer(*proto, router.AsTransportHandler())
 	server.SetOnDisconnect(onClientDisconnect)
+
+	// 安全配置
+	secCfg := transport.DefaultSecurityConfig()
+	if *authToken != "" {
+		secCfg.RequireAuth = true
+		secCfg.AuthToken = *authToken
+	}
+	server.SetSecurity(secCfg)
+
 	if err := server.Listen(*addr); err != nil {
 		log.Fatalf("Failed: %v", err)
 		os.Exit(1)
 	}
-	log.Printf("[FrameSync Server] Running on %s (proto=%s, ppr=%d)\n", *addr, *proto, *ppr)
+	authInfo := ""
+	if secCfg.RequireAuth {
+		authInfo = ", auth=required"
+	}
+	log.Printf("[FrameSync Server] Running on %s (proto=%s, ppr=%d%s)\n", *addr, *proto, *ppr, authInfo)
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
@@ -117,6 +131,18 @@ func onClientDisconnect(conn *transport.Conn) {
 // ===================== 帧同步 Handler =====================
 
 func handleSessionBind(conn *transport.Conn, msg *codec.Message) *codec.Message {
+	// Token 鉴权（如果启用）
+	if *authToken != "" {
+		clientToken := ""
+		if msg.Data != nil && len(msg.Data) > 0 {
+			clientToken = string(msg.Data)
+		}
+		if clientToken != *authToken {
+			log.Printf("[Server] Auth failed for conn %d (bad token)\n", conn.ID)
+			return &codec.Message{Cmd: framesync.CmdSessionBindRsp, Data: []byte{0, 0, 0, 0}} // playerId=0 表示失败
+		}
+	}
+
 	playerId := nextPlayerId()
 
 	// 记录映射

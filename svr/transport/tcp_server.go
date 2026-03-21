@@ -11,10 +11,11 @@ import (
 
 // Conn 代表一个客户端连接
 type Conn struct {
-	ID     int
-	conn   net.Conn
-	writer *codec.FrameWriter
-	mu     sync.Mutex
+	ID          int
+	conn        net.Conn
+	writer      *codec.FrameWriter
+	mu          sync.Mutex
+	rateLimiter *RateLimiter
 }
 
 // Send 发送一条消息给该连接
@@ -59,10 +60,17 @@ type TcpServer struct {
 	listener     net.Listener
 	handler      Handler
 	config       ServerConfig
+	security     SecurityConfig
 	nextID       int
 	mu           sync.Mutex
 	conns        map[int]*Conn
 	onDisconnect func(*Conn)
+}
+
+// SetSecurity 设置安全配置
+func (s *TcpServer) SetSecurity(cfg SecurityConfig) {
+	s.security = cfg
+	codec.MaxMessageSize = cfg.MaxMessageSize
 }
 
 // SetOnDisconnect 设置断开连接回调
@@ -77,9 +85,10 @@ func NewTcpServer(handler Handler, configs ...ServerConfig) *TcpServer {
 		cfg = configs[0]
 	}
 	return &TcpServer{
-		handler: handler,
-		config:  cfg,
-		conns:   make(map[int]*Conn),
+		handler:  handler,
+		config:   cfg,
+		security: DefaultSecurityConfig(),
+		conns:    make(map[int]*Conn),
 	}
 }
 
@@ -132,9 +141,10 @@ func (s *TcpServer) acceptLoop() {
 		s.mu.Lock()
 		s.nextID++
 		c := &Conn{
-			ID:     s.nextID,
-			conn:   raw,
-			writer: codec.NewFrameWriter(raw),
+			ID:          s.nextID,
+			conn:        raw,
+			writer:      codec.NewFrameWriter(raw),
+			rateLimiter: NewRateLimiter(s.security.MaxMessagesPerSec),
 		}
 		s.conns[c.ID] = c
 		s.mu.Unlock()
@@ -157,6 +167,9 @@ func (s *TcpServer) handleConn(c *Conn) {
 	}()
 
 	reader := codec.NewFrameReader(c.conn)
+	if s.security.MaxMessageSize > 0 {
+		reader.SetMaxMessageSize(s.security.MaxMessageSize)
+	}
 
 	for {
 		// 设置读超时
@@ -168,6 +181,13 @@ func (s *TcpServer) handleConn(c *Conn) {
 		if err != nil {
 			return
 		}
+
+		// 速率限制
+		if c.rateLimiter != nil && !c.rateLimiter.Allow() {
+			fmt.Printf("[Server] Client %d rate limited, disconnecting\n", c.ID)
+			return
+		}
+
 		s.handler(c, msg)
 	}
 }

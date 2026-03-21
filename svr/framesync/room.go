@@ -1,6 +1,7 @@
 package framesync
 
 import (
+	"log"
 	"sync"
 	"time"
 
@@ -286,6 +287,15 @@ func (r *Room) OnInput(playerId int32, data []byte) {
 }
 
 func (r *Room) tickLoop() {
+	defer func() {
+		if rec := recover(); rec != nil {
+			log.Printf("[Room %d] PANIC recovered: %v\n", r.ID, rec)
+			r.mu.Lock()
+			r.running = false
+			r.mu.Unlock()
+		}
+	}()
+
 	ticker := time.NewTicker(r.frameInterval)
 	defer ticker.Stop()
 

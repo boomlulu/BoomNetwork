@@ -7,19 +7,29 @@ import (
 	"io"
 )
 
+// MaxMessageSize 默认最大消息大小（64KB）
+var MaxMessageSize = 65536
+
 // FrameReader 带缓冲的帧读取器，复用内部 buffer 减少分配
 type FrameReader struct {
-	reader    *bufio.Reader
-	headerBuf [5]byte     // 最大: FlagsCmd(1) + BodyLen(4) = 5
-	frameBuf  []byte      // 复用 frame buffer，按需扩容
+	reader         *bufio.Reader
+	headerBuf      [5]byte // 最大: FlagsCmd(1) + BodyLen(4) = 5
+	frameBuf       []byte  // 复用 frame buffer，按需扩容
+	maxMessageSize int
 }
 
 // NewFrameReader 创建帧读取器
 func NewFrameReader(r io.Reader) *FrameReader {
 	return &FrameReader{
-		reader:   bufio.NewReaderSize(r, 8192),
-		frameBuf: make([]byte, 1024),
+		reader:         bufio.NewReaderSize(r, 8192),
+		frameBuf:       make([]byte, 1024),
+		maxMessageSize: MaxMessageSize,
 	}
+}
+
+// SetMaxMessageSize 设置最大消息大小
+func (fr *FrameReader) SetMaxMessageSize(size int) {
+	fr.maxMessageSize = size
 }
 
 // ReadFrame 读取一个完整帧（复用内部 buffer，零分配热路径）
@@ -49,8 +59,8 @@ func (fr *FrameReader) ReadFrame() ([]byte, error) {
 		bodyLen = int(binary.LittleEndian.Uint16(fr.headerBuf[1:]))
 	}
 
-	if bodyLen > 1<<20 {
-		return nil, fmt.Errorf("body too large: %d", bodyLen)
+	if bodyLen > fr.maxMessageSize {
+		return nil, fmt.Errorf("body too large: %d (max %d)", bodyLen, fr.maxMessageSize)
 	}
 
 	headerSize := 1 + lenFieldSize
@@ -158,8 +168,8 @@ func ReadFrame(r io.Reader) ([]byte, error) {
 		bodyLen = int(binary.LittleEndian.Uint16(lenBuf))
 	}
 
-	if bodyLen > 1<<20 {
-		return nil, fmt.Errorf("body too large: %d", bodyLen)
+	if bodyLen > MaxMessageSize {
+		return nil, fmt.Errorf("body too large: %d (max %d)", bodyLen, MaxMessageSize)
 	}
 
 	headerSize := 1 + lenFieldSize

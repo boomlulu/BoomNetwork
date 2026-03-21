@@ -15,6 +15,7 @@ type KcpServer struct {
 	listener     *kcp.Listener
 	handler      Handler
 	config       ServerConfig
+	security     SecurityConfig
 	nextID       int
 	mu           sync.Mutex
 	conns        map[int]*Conn
@@ -24,6 +25,12 @@ type KcpServer struct {
 // SetOnDisconnect 设置断开连接回调
 func (s *KcpServer) SetOnDisconnect(fn func(*Conn)) {
 	s.onDisconnect = fn
+}
+
+// SetSecurity 设置安全配置
+func (s *KcpServer) SetSecurity(cfg SecurityConfig) {
+	s.security = cfg
+	codec.MaxMessageSize = cfg.MaxMessageSize
 }
 
 // NewKcpServer 创建 KCP 服务器
@@ -136,6 +143,7 @@ type Server interface {
 	Close()
 	ConnCount() int
 	SetOnDisconnect(fn func(*Conn))
+	SetSecurity(cfg SecurityConfig)
 }
 
 // 确保 TcpServer 和 KcpServer 都实现 Server 接口
