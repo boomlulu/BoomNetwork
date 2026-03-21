@@ -74,6 +74,25 @@ namespace BoomNetwork.Client.FrameSync
         }
 
         /// <summary>
+        /// 从外部恢复到 Syncing 状态（重连后调用）
+        /// </summary>
+        public void ResumeAsSyncing(int playerId)
+        {
+            _playerId = playerId;
+            _frameSyncStarted = true;
+            CurrentState = State.Syncing;
+        }
+
+        /// <summary>
+        /// 从外部恢复到 WaitingStart 状态（重连后房间未开始）
+        /// </summary>
+        public void ResumeAsWaiting(int playerId)
+        {
+            _playerId = playerId;
+            CurrentState = State.WaitingStart;
+        }
+
+        /// <summary>
         /// 连接并绑定
         /// </summary>
         public void Connect(string host, int port)
