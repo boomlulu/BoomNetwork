@@ -38,6 +38,7 @@ func main() {
 	router := session.NewRouter()
 	// 帧同步
 	router.On(framesync.CmdSessionBind, handleSessionBind)
+	router.On(framesync.CmdRequestStart, handleRequestStart)
 	router.On(framesync.CmdFrameInput, handleFrameInput)
 	router.On(framesync.CmdHeartbeat, handleHeartbeat)
 	router.On(framesync.CmdReconnect, handleReconnect)
@@ -108,7 +109,6 @@ func handleSessionBind(conn *transport.Conn, msg *codec.Message) *codec.Message 
 	fmt.Printf("[Server] Player %d bound (conn %d, room %d, online=%d)\n",
 		playerId, conn.ID, room.ID, room.PlayerCount())
 
-	tryStartRoom(room)
 	return &codec.Message{Cmd: framesync.CmdSessionBindRsp, Data: rsp}
 }
 
@@ -224,7 +224,6 @@ func handleJoinRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	// 通知同房其他玩家
 	broadcastToRoom(room, playerId, framesync.CmdPlayerJoined, framesync.EncodePlayerId(playerId))
 
-	tryStartRoom(room)
 	return &codec.Message{Cmd: framesync.CmdJoinRoomRsp, Data: framesync.EncodeJoinRoomRsp(playerId, room.ID)}
 }
 
@@ -259,13 +258,33 @@ func bindPlayerToRoom(playerId int32, conn *transport.Conn, room *framesync.Room
 	room.AddPlayer(playerId, conn)
 }
 
-func tryStartRoom(room *framesync.Room) {
-	if room.PlayerCount() >= room.MaxPlayers() && !room.IsRunning() {
-		go func() {
-			time.Sleep(10 * time.Millisecond) // 确保 response 先到达
-			room.Start()
-		}()
+func handleRequestStart(conn *transport.Conn, msg *codec.Message) *codec.Message {
+	val, ok := connPlayerMap.Load(conn.ID)
+	if !ok {
+		return nil
 	}
+	playerId := val.(int32)
+
+	roomVal, ok := playerRoomMap.Load(playerId)
+	if !ok {
+		fmt.Printf("[Server] RequestStart failed: player %d not in room\n", playerId)
+		return nil
+	}
+	room := roomVal.(*framesync.Room)
+
+	if room.IsRunning() {
+		fmt.Printf("[Server] RequestStart: room %d already running\n", room.ID)
+		return nil
+	}
+
+	fmt.Printf("[Server] Player %d requested start room %d (online=%d)\n",
+		playerId, room.ID, room.PlayerCount())
+
+	go func() {
+		time.Sleep(10 * time.Millisecond) // 确保本消息处理完
+		room.Start()
+	}()
+	return nil
 }
 
 func broadcastToRoom(room *framesync.Room, excludePlayerId int32, cmd byte, data []byte) {

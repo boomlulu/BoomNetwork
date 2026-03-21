@@ -12,8 +12,9 @@ namespace BoomNetwork.Core.FrameSync
         public const byte SessionBind       = 1;
         public const byte SessionBindRsp    = 2;
 
-        public const byte StartFrameSync   = 3;
-        public const byte StopFrameSync    = 4;
+        public const byte RequestStart     = 3;  // 客户端 → 服务器：请求开始帧同步
+        public const byte StartFrameSync  = 4;  // 服务器 → 客户端：帧同步开始（广播）
+        public const byte StopFrameSync   = 21; // 服务器 → 客户端：帧同步结束
 
         public const byte FrameInput       = 5;
         public const byte PushFrames       = 6;

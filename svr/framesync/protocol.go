@@ -8,8 +8,9 @@ import (
 const (
 	CmdSessionBind    = 1
 	CmdSessionBindRsp = 2
-	CmdStartFrameSync = 3
-	CmdStopFrameSync  = 4
+	CmdRequestStart   = 3  // 客户端 → 服务器：请求开始
+	CmdStartFrameSync = 4  // 服务器 → 客户端：帧同步开始（广播）
+	CmdStopFrameSync  = 21 // 服务器 → 客户端：帧同步结束
 	CmdFrameInput     = 5
 	CmdPushFrames     = 6
 
