@@ -258,6 +258,24 @@ func handleJoinRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	// 通知同房其他玩家
 	broadcastToRoom(room, playerId, framesync.CmdPlayerJoined, framesync.EncodePlayerId(playerId))
 
+	// 如果房间已在运行，给新人补发 StartFrameSync
+	if room.IsRunning() {
+		go func() {
+			time.Sleep(10 * time.Millisecond) // 确保 JoinRoomRsp 先到达
+			initData := framesync.InitData{
+				FrameRate:     room.FrameRate(),
+				FrameInterval: 1000 / room.FrameRate(),
+				StartTime:     room.StartTime(),
+			}
+			conn.Send(&codec.Message{
+				Cmd:  framesync.CmdStartFrameSync,
+				Data: framesync.EncodeInitData(&initData),
+			})
+			log.Printf("[Server] Sent StartFrameSync to late-join player %d (room %d, frame %d)\n",
+				playerId, room.ID, room.CurrentFrameNumber())
+		}()
+	}
+
 	return &codec.Message{Cmd: framesync.CmdJoinRoomRsp, Data: framesync.EncodeJoinRoomRsp(playerId, room.ID)}
 }
 

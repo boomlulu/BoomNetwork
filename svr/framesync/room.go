@@ -163,6 +163,18 @@ func (r *Room) MaxPlayers() int {
 	return r.config.MaxPlayers
 }
 
+// FrameRate 帧率
+func (r *Room) FrameRate() int32 {
+	return r.frameRate
+}
+
+// StartTime 开始时间戳（毫秒）
+func (r *Room) StartTime() int64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.startTime
+}
+
 // GetRoomInfo 获取房间信息快照
 func (r *Room) GetRoomInfo() RoomInfo {
 	return RoomInfo{
