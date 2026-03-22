@@ -69,6 +69,13 @@ namespace BoomNetwork.Core.Prediction
 
         private bool _started;
 
+        /// <summary>
+        /// 服务器帧间隔（毫秒）。预测帧率 = 1000 / FrameIntervalMs。
+        /// 必须和服务器一致（默认 50ms = 20fps）。
+        /// </summary>
+        public float FrameIntervalMs { get; set; } = 50f;
+        private float _predictionAccumulator;
+
         public PredictionManager(ISimulation simulation, int inputBufferCapacity = 128, int snapshotBufferCapacity = 32)
         {
             _simulation = simulation;
@@ -106,31 +113,57 @@ namespace BoomNetwork.Core.Prediction
         }
 
         /// <summary>
-        /// 喂入本地玩家输入并预测执行一帧
+        /// 每帧调用，传入 deltaTime 和当前本地输入。
+        /// 内部按 FrameIntervalMs 节流，只在到达帧间隔时才预测执行。
+        /// </summary>
+        /// <param name="deltaTimeMs">Unity deltaTime * 1000</param>
+        /// <param name="localInput">当前本地输入（每帧都传，内部决定何时消费）</param>
+        /// <returns>本帧是否执行了预测</returns>
+        public bool UpdatePrediction(float deltaTimeMs, byte[] localInput)
+        {
+            if (!_started) return false;
+
+            _predictionAccumulator += deltaTimeMs;
+            bool predicted = false;
+
+            // 按服务器帧率节流（可能一次追多帧，但通常只执行 0-1 帧）
+            while (_predictionAccumulator >= FrameIntervalMs)
+            {
+                _predictionAccumulator -= FrameIntervalMs;
+
+                if (AheadFrames >= MaxPredictionFrames) break;
+
+                PredictSingleFrame(localInput);
+                predicted = true;
+            }
+
+            return predicted;
+        }
+
+        /// <summary>
+        /// 直接预测一帧（不经过节流，供高级用途或测试）
         /// </summary>
         public void PredictFrame(byte[] localInput)
         {
             if (!_started) return;
-
-            // 超过最大预测窗口则暂停预测，等服务器确认
             if (AheadFrames >= MaxPredictionFrames) return;
+            PredictSingleFrame(localInput);
+        }
 
+        private void PredictSingleFrame(byte[] localInput)
+        {
             uint nextFrame = PredictedFrame + 1;
 
-            // 存本地输入
             _inputBuffer.Set(nextFrame, _localPlayerId, localInput);
 
-            // 预测远程玩家输入（沿用上一帧）
             foreach (var pid in _playerIds)
             {
                 if (pid == _localPlayerId) continue;
                 _inputBuffer.PredictRemote(nextFrame, pid);
             }
 
-            // 保存当前状态快照（执行前的状态）
             _snapshotBuffer.Save(nextFrame, _simulation.SaveState());
 
-            // 执行一帧
             var allInputs = _inputBuffer.GetAll(nextFrame);
             _simulation.Simulate(allInputs);
             PredictedFrame = nextFrame;

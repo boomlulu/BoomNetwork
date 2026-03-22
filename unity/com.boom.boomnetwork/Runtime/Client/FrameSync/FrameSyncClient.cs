@@ -73,14 +73,18 @@ namespace BoomNetwork.Client.FrameSync
         public PredictionManager? Prediction { get; set; }
 
         /// <summary>
-        /// 预测模式下每帧调用：喂入本地输入并预测执行
-        /// 传统模式无效
+        /// 预测模式下每帧调用：喂入本地输入并预测执行。
+        /// 内部按服务器帧率节流，不会每个 Unity Update 都预测。
+        /// 传统模式无效。
         /// </summary>
-        public void PredictWithInput(byte[] localInput)
+        /// <param name="deltaTimeMs">Unity deltaTime * 1000</param>
+        /// <param name="localInput">当前本地输入</param>
+        public void PredictWithInput(float deltaTimeMs, byte[] localInput)
         {
             if (CurrentState != State.Syncing || Prediction == null) return;
-            Prediction.PredictFrame(localInput);
-            SendInput(localInput);
+            bool predicted = Prediction.UpdatePrediction(deltaTimeMs, localInput);
+            if (predicted)
+                SendInput(localInput);
         }
 
         // --- 内部 ---
