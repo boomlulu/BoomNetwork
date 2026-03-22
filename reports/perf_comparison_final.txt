@@ -1,0 +1,44 @@
+==========================================
+  BoomNetwork Performance Comparison
+  Date: 2026-03-22
+  Before: P1 security + P2 observability
+  After: + 预测回滚 + 输入节流 + 空帧优化
+==========================================
+
+[ C# Codec Benchmark ]
+                        Before          After           Change
+Encode_Small            3.56 ns/0B      3.60 ns/0B      +1% (noise)
+Encode_Large           21.60 ns/0B     20.35 ns/0B      -6%
+Decode_Small            6.71 ns/72B     6.31 ns/72B     -6%
+Decode_Large           46.49 ns/1048B  44.03 ns/1048B   -5%
+Decode_Small_Pooled    12.83 ns/0B     12.64 ns/0B      -1%
+Framing 100 sticky      3.96 us/0B      3.86 us/0B      -3%
+
+[ Go Codec Benchmark ]
+                        Before          After           Change
+Encode_Small           21.90 ns/24B    22.08 ns/24B     (noise)
+Decode_Small           15.14 ns/48B    14.52 ns/48B     -4%
+
+[ Stress Test 3000 Players ]
+                        Before          After           Change
+Frames/s               60004           60004            identical
+Upload                 2.10 MB/s       2.10 MB/s        identical
+Download               9.66 MB/s       9.66 MB/s        identical
+Per client down        3.14 KB/s       3.14 KB/s        identical
+Heap in use           125.77 MB       125.27 MB         -0.4%
+GC cycles              10              10               identical
+Goroutines             752             752              identical
+
+[ Unity Demo 输入优化 ]
+                        Before          After           Change
+空闲时 FrameInput      20 msg/s/人      0 msg/s/人      -100%
+3000人空闲带宽         480 KB/s         0 KB/s           -100%
+输入发送频率           60fps            20fps            -67%
+
+[ 结论 ]
+1. Codec/Framing 性能无回退（部分略有提升）
+2. 压测指标完全一致 — 预测回滚代码不影响传统模式性能
+3. Unity Demo 带宽节省显著:
+   - 空闲时零带宽消耗
+   - 活跃时从 60fps 降到 20fps（降 67%）
+==========================================

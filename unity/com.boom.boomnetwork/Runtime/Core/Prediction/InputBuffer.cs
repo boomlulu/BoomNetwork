@@ -27,19 +27,50 @@ namespace BoomNetwork.Core.Prediction
 
         private int RingIndex(uint frame) => (int)(frame % _capacity);
 
+        // 预分配的 byte[] 池，避免每次 Set 都 new
+        private readonly Queue<byte[]> _bufferPool = new();
+        private int _defaultInputSize = 8;
+
+        private byte[] RentBuffer(int size)
+        {
+            if (_bufferPool.Count > 0)
+            {
+                var buf = _bufferPool.Dequeue();
+                if (buf.Length >= size) return buf;
+                // 大小不匹配，丢弃（罕见）
+            }
+            return new byte[Math.Max(size, _defaultInputSize)];
+        }
+
+        private void ReturnBuffer(byte[] buf)
+        {
+            if (buf != null && buf.Length > 0)
+                _bufferPool.Enqueue(buf);
+        }
+
         /// <summary>
-        /// 设置某帧某玩家的输入（复制数据，不持有外部引用）
+        /// 设置某帧某玩家的输入（复制数据，使用缓冲池）
         /// </summary>
         public void Set(uint frame, int playerId, byte[] input)
         {
+            var dict = _frames[RingIndex(frame)];
             if (input == null || input.Length == 0)
             {
-                _frames[RingIndex(frame)][playerId] = Array.Empty<byte>();
+                if (dict.TryGetValue(playerId, out var old) && old.Length > 0)
+                    ReturnBuffer(old);
+                dict[playerId] = Array.Empty<byte>();
                 return;
             }
-            var copy = new byte[input.Length];
+            // 尝试复用已有的 buffer
+            if (dict.TryGetValue(playerId, out var existing) && existing != null && existing.Length >= input.Length)
+            {
+                Buffer.BlockCopy(input, 0, existing, 0, input.Length);
+                return; // 原地更新，零分配
+            }
+            // 从池中租借
+            var copy = RentBuffer(input.Length);
             Buffer.BlockCopy(input, 0, copy, 0, input.Length);
-            _frames[RingIndex(frame)][playerId] = copy;
+            dict[playerId] = copy;
         }
 
         /// <summary>
