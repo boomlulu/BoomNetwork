@@ -33,6 +33,10 @@ const (
 	// 服务器推送
 	CmdPlayerJoined = 19
 	CmdPlayerLeft   = 20
+
+	// 快照
+	CmdUploadSnapshot    = 22 // 客户端 → 服务器：上传快照
+	CmdUploadSnapshotRsp = 23 // 服务器 → 客户端：上传确认
 )
 
 // InitData 帧同步初始化数据
@@ -186,5 +190,38 @@ func EncodeJoinRoomRsp(playerId int32, roomId int32) []byte {
 func EncodePlayerId(playerId int32) []byte {
 	buf := make([]byte, 4)
 	binary.LittleEndian.PutUint32(buf[0:], uint32(playerId))
+	return buf
+}
+
+// DecodeUploadSnapshot 解码客户端上传的快照
+// Wire: [FrameNumber:4][SnapshotData:N]
+func DecodeUploadSnapshot(data []byte) (frameNumber uint32, snapshotData []byte) {
+	if len(data) < 4 {
+		return 0, nil
+	}
+	frameNumber = binary.LittleEndian.Uint32(data[0:4])
+	if len(data) > 4 {
+		snapshotData = make([]byte, len(data)-4)
+		copy(snapshotData, data[4:])
+	}
+	return
+}
+
+// EncodeReconnectRspWithSnapshot 编码带快照的重连响应
+// Wire: [Success:1][RoomId:4][ServerFrame:4][SnapshotFrame:4][SnapshotData:N]
+func EncodeReconnectRspWithSnapshot(success bool, roomId int32, serverFrame uint32, snapshotFrame uint32, snapshotData []byte) []byte {
+	headerSize := 1 + 4 + 4 + 4 // success + roomId + serverFrame + snapshotFrame
+	buf := make([]byte, headerSize+len(snapshotData))
+
+	if success {
+		buf[0] = 1
+	}
+	binary.LittleEndian.PutUint32(buf[1:], uint32(roomId))
+	binary.LittleEndian.PutUint32(buf[5:], serverFrame)
+	binary.LittleEndian.PutUint32(buf[9:], snapshotFrame)
+
+	if len(snapshotData) > 0 {
+		copy(buf[13:], snapshotData)
+	}
 	return buf
 }

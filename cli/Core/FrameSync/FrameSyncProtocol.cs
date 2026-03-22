@@ -38,6 +38,10 @@ namespace BoomNetwork.Core.FrameSync
         // 服务器推送
         public const byte PlayerJoined     = 19;
         public const byte PlayerLeft       = 20;
+
+        // 快照
+        public const byte UploadSnapshot    = 22;  // 客户端 → 服务器：上传快照
+        public const byte UploadSnapshotRsp = 23;  // 服务器 → 客户端：上传确认
     }
 
     /// <summary>
@@ -254,6 +258,65 @@ namespace BoomNetwork.Core.FrameSync
         public static int DecodePlayerId(ReadOnlySpan<byte> buf)
         {
             return BinaryPrimitives.ReadInt32LittleEndian(buf);
+        }
+    }
+
+    /// <summary>
+    /// 游戏层实现此接口，库只管传输不关心快照内容
+    /// </summary>
+    public interface ISnapshotable
+    {
+        /// <summary>
+        /// 序列化当前游戏状态（帧执行完毕后调用）
+        /// </summary>
+        byte[] TakeSnapshot();
+
+        /// <summary>
+        /// 从快照恢复游戏状态
+        /// 加载后帧同步从 snapshotFrame+1 继续执行
+        /// </summary>
+        void LoadSnapshot(byte[] data);
+    }
+
+    /// <summary>
+    /// 快照编解码
+    /// </summary>
+    public static class SnapshotCodec
+    {
+        // === UploadSnapshot ===
+        // Wire: [FrameNumber:4][SnapshotData:N]
+
+        public static byte[] EncodeUploadSnapshot(uint frameNumber, byte[] snapshotData)
+        {
+            var buf = new byte[4 + snapshotData.Length];
+            BinaryPrimitives.WriteUInt32LittleEndian(buf, frameNumber);
+            Buffer.BlockCopy(snapshotData, 0, buf, 4, snapshotData.Length);
+            return buf;
+        }
+
+        // === ReconnectRsp (扩展版，带快照) ===
+        // Wire: [Success:1][RoomId:4][ServerFrame:4][SnapshotFrame:4][SnapshotData:N]
+
+        public static (bool success, int roomId, uint serverFrame, uint snapshotFrame, byte[]? snapshotData)
+            DecodeReconnectRspWithSnapshot(ReadOnlySpan<byte> buf)
+        {
+            if (buf.Length < 1) return (false, 0, 0, 0, null);
+
+            bool success = buf[0] != 0;
+            if (!success || buf.Length < 13)
+                return (success, 0, 0, 0, null);
+
+            int roomId = BinaryPrimitives.ReadInt32LittleEndian(buf.Slice(1));
+            uint serverFrame = BinaryPrimitives.ReadUInt32LittleEndian(buf.Slice(5));
+            uint snapshotFrame = BinaryPrimitives.ReadUInt32LittleEndian(buf.Slice(9));
+
+            byte[]? snapshotData = null;
+            if (buf.Length > 13 && snapshotFrame > 0)
+            {
+                snapshotData = buf.Slice(13).ToArray();
+            }
+
+            return (success, roomId, serverFrame, snapshotFrame, snapshotData);
         }
     }
 }

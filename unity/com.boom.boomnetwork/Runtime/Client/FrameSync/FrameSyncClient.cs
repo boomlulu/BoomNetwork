@@ -47,6 +47,24 @@ namespace BoomNetwork.Client.FrameSync
         public event Action? OnReconnected;
         public event Action<NetworkError>? OnError;
 
+        // --- 快照 ---
+        /// <summary>
+        /// 快照间隔（每 N 帧上传一次，0=不自动上传）
+        /// </summary>
+        public uint SnapshotInterval { get; set; } = 100;
+
+        /// <summary>
+        /// 游戏层实现：创建快照
+        /// </summary>
+        public Func<byte[]?>? OnTakeSnapshot;
+
+        /// <summary>
+        /// 游戏层实现：加载快照
+        /// </summary>
+        public Action<byte[]>? OnLoadSnapshot;
+
+        private uint _lastSnapshotFrame;
+
         // --- 内部 ---
         private int _playerId;
         private bool _frameSyncStarted;
@@ -71,25 +89,6 @@ namespace BoomNetwork.Client.FrameSync
             _connectionManager.OnReconnected += OnConnectionReconnected;
             _connectionManager.OnError += (err) => OnError?.Invoke(err);
             _connectionManager.OnLog += (msg) => { /* 日志级别，不作为错误传播 */ };
-        }
-
-        /// <summary>
-        /// 从外部恢复到 Syncing 状态（重连后调用）
-        /// </summary>
-        public void ResumeAsSyncing(int playerId)
-        {
-            _playerId = playerId;
-            _frameSyncStarted = true;
-            CurrentState = State.Syncing;
-        }
-
-        /// <summary>
-        /// 从外部恢复到 WaitingStart 状态（重连后房间未开始）
-        /// </summary>
-        public void ResumeAsWaiting(int playerId)
-        {
-            _playerId = playerId;
-            CurrentState = State.WaitingStart;
         }
 
         /// <summary>
@@ -231,6 +230,20 @@ namespace BoomNetwork.Client.FrameSync
             LastFrameNumber = frame.FrameNumber;
             _connectionManager.UpdateFrameNumber(frame.FrameNumber);
             OnFrame?.Invoke(frame);
+            CheckSnapshotUpload(frame.FrameNumber);
+        }
+
+        private void CheckSnapshotUpload(uint frameNumber)
+        {
+            if (SnapshotInterval == 0 || OnTakeSnapshot == null) return;
+            if (frameNumber - _lastSnapshotFrame < SnapshotInterval) return;
+
+            var data = OnTakeSnapshot();
+            if (data == null || data.Length == 0) return;
+
+            _lastSnapshotFrame = frameNumber;
+            var encoded = SnapshotCodec.EncodeUploadSnapshot(frameNumber, data);
+            _session.Send(FrameSyncCmd.UploadSnapshot, encoded);
         }
 
         private void HandleStopFrameSync()

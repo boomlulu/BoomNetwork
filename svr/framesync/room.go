@@ -78,6 +78,10 @@ type Room struct {
 	// 复用的编码缓冲区和广播玩家列表
 	frameBuf       []byte
 	broadcastSlice []*Player
+
+	// 快照存储
+	snapshotFrame uint32
+	snapshotData  []byte
 }
 
 // NewRoom 创建帧同步房间
@@ -213,6 +217,23 @@ func (r *Room) CurrentFrameNumber() uint32 {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.frameNumber
+}
+
+// UpdateSnapshot 更新房间快照
+func (r *Room) UpdateSnapshot(frameNumber uint32, data []byte) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.snapshotFrame = frameNumber
+	r.snapshotData = make([]byte, len(data))
+	copy(r.snapshotData, data)
+	log.Printf("[Room %d] Snapshot updated at frame %d (%d bytes)\n", r.ID, frameNumber, len(data))
+}
+
+// GetSnapshot 获取最新快照
+func (r *Room) GetSnapshot() (frameNumber uint32, data []byte) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.snapshotFrame, r.snapshotData
 }
 
 // GetFramesSince 获取 afterFrame 之后的所有缓冲帧

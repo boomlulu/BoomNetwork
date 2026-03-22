@@ -47,6 +47,24 @@ namespace BoomNetwork.Client.FrameSync
         public event Action? OnReconnected;
         public event Action<NetworkError>? OnError;
 
+        // --- 快照 ---
+        /// <summary>
+        /// 快照间隔（每 N 帧上传一次，0=不自动上传）
+        /// </summary>
+        public uint SnapshotInterval { get; set; } = 100;
+
+        /// <summary>
+        /// 游戏层实现：创建快照
+        /// </summary>
+        public Func<byte[]?>? OnTakeSnapshot;
+
+        /// <summary>
+        /// 游戏层实现：加载快照
+        /// </summary>
+        public Action<byte[]>? OnLoadSnapshot;
+
+        private uint _lastSnapshotFrame;
+
         // --- 内部 ---
         private int _playerId;
         private bool _frameSyncStarted;
@@ -212,6 +230,20 @@ namespace BoomNetwork.Client.FrameSync
             LastFrameNumber = frame.FrameNumber;
             _connectionManager.UpdateFrameNumber(frame.FrameNumber);
             OnFrame?.Invoke(frame);
+            CheckSnapshotUpload(frame.FrameNumber);
+        }
+
+        private void CheckSnapshotUpload(uint frameNumber)
+        {
+            if (SnapshotInterval == 0 || OnTakeSnapshot == null) return;
+            if (frameNumber - _lastSnapshotFrame < SnapshotInterval) return;
+
+            var data = OnTakeSnapshot();
+            if (data == null || data.Length == 0) return;
+
+            _lastSnapshotFrame = frameNumber;
+            var encoded = SnapshotCodec.EncodeUploadSnapshot(frameNumber, data);
+            _session.Send(FrameSyncCmd.UploadSnapshot, encoded);
         }
 
         private void HandleStopFrameSync()
