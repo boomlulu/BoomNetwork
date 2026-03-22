@@ -18,7 +18,7 @@ type SecurityConfig struct {
 func DefaultSecurityConfig() SecurityConfig {
 	return SecurityConfig{
 		MaxMessageSize:    65536, // 64KB
-		MaxMessagesPerSec: 100,   // 每秒最多 100 条消息
+		MaxMessagesPerSec: 200,   // 每秒最多 200 条消息（含突发容忍）
 		RequireAuth:       false,
 		AuthTimeout:       5 * time.Second,
 		AuthToken:         "",
