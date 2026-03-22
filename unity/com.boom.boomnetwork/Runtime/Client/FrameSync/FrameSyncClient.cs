@@ -2,6 +2,7 @@ using System;
 using System.Buffers.Binary;
 using BoomNetwork.Core;
 using BoomNetwork.Core.FrameSync;
+using BoomNetwork.Core.Prediction;
 
 using BoomNetwork.Client.Session;
 using BoomNetwork.Client.Connection;
@@ -65,6 +66,23 @@ namespace BoomNetwork.Client.FrameSync
 
         private uint _lastSnapshotFrame;
 
+        // --- 预测回滚 ---
+        /// <summary>
+        /// 预测管理器（设置后启用预测模式，不设则为传统帧同步）
+        /// </summary>
+        public PredictionManager? Prediction { get; set; }
+
+        /// <summary>
+        /// 预测模式下每帧调用：喂入本地输入并预测执行
+        /// 传统模式无效
+        /// </summary>
+        public void PredictWithInput(byte[] localInput)
+        {
+            if (CurrentState != State.Syncing || Prediction == null) return;
+            Prediction.PredictFrame(localInput);
+            SendInput(localInput);
+        }
+
         // --- 内部 ---
         private int _playerId;
         private bool _frameSyncStarted;
@@ -105,6 +123,7 @@ namespace BoomNetwork.Client.FrameSync
         public void Tick(float deltaTimeMs)
         {
             _connectionManager.Tick(deltaTimeMs);
+            Prediction?.ProcessServerFrames();
         }
 
         /// <summary>
@@ -227,10 +246,24 @@ namespace BoomNetwork.Client.FrameSync
         {
             if (!_frameSyncStarted || msg.DataLength == 0) return;
             var frame = FrameDataCodec.Decode(msg.DataSpan);
-            LastFrameNumber = frame.FrameNumber;
-            _connectionManager.UpdateFrameNumber(frame.FrameNumber);
-            OnFrame?.Invoke(frame);
-            CheckSnapshotUpload(frame.FrameNumber);
+
+            if (Prediction != null)
+            {
+                // 预测模式：交给 PredictionManager 处理（可能触发回滚）
+                Prediction.OnServerFrame(frame);
+                // 更新帧号为预测帧号（比服务器确认的更靠前）
+                LastFrameNumber = Prediction.PredictedFrame;
+                _connectionManager.UpdateFrameNumber(Prediction.ConfirmedFrame);
+            }
+            else
+            {
+                // 传统模式：直接执行
+                LastFrameNumber = frame.FrameNumber;
+                _connectionManager.UpdateFrameNumber(frame.FrameNumber);
+                OnFrame?.Invoke(frame);
+            }
+
+            CheckSnapshotUpload(Prediction?.ConfirmedFrame ?? frame.FrameNumber);
         }
 
         private void CheckSnapshotUpload(uint frameNumber)
