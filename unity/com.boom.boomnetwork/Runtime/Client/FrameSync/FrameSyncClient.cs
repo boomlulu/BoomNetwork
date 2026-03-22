@@ -145,6 +145,25 @@ namespace BoomNetwork.Client.FrameSync
             CurrentState = State.Disconnected;
         }
 
+        /// <summary>
+        /// 重连后恢复为 Syncing 状态（由 Person 在重连成功后调用）
+        /// </summary>
+        public void ResumeAsSyncing(int playerId)
+        {
+            _playerId = playerId;
+            _frameSyncStarted = true;
+            CurrentState = State.Syncing;
+        }
+
+        /// <summary>
+        /// 重连后恢复为 WaitingStart 状态
+        /// </summary>
+        public void ResumeAsWaiting(int playerId)
+        {
+            _playerId = playerId;
+            CurrentState = State.WaitingStart;
+        }
+
         #region ConnectionManager Callbacks
 
         private void OnConnectionEstablished()
