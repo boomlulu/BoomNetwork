@@ -26,6 +26,7 @@ var (
 	metricsAddr = flag.String("metrics", ":9090", "prometheus metrics address (empty = disabled)")
 	configFile  = flag.String("config", "", "JSON config file path (overrides flags)")
 	genConfig   = flag.Bool("gen-config", false, "generate default config.json and exit")
+	autoRoom    = flag.Bool("autoroom", false, "auto-assign room on SessionBind (for legacy/stress tests)")
 )
 
 var roomMgr = framesync.NewRoomManager()
@@ -188,16 +189,18 @@ func handleSessionBind(conn *transport.Conn, msg *codec.Message) *codec.Message 
 	connPlayerMap.Store(conn.ID, playerId)
 	playerConnMap.Store(playerId, conn)
 
-	// 自动分配房间（FrameSyncClient 模式）
-	// Demo 的 CreateRoom+JoinRoom 流程不走这里
-	room := roomMgr.AutoAssignRoom(*ppr)
-	bindPlayerToRoom(playerId, conn, room)
+	// autoroom 模式：SessionBind 时自动分房（兼容压测和旧版 FrameSyncExample）
+	if *autoRoom {
+		room := roomMgr.AutoAssignRoom(*ppr)
+		bindPlayerToRoom(playerId, conn, room)
+		log.Printf("[Server] Player %d bound (conn %d, auto room %d, online=%d)\n",
+			playerId, conn.ID, room.ID, room.PlayerCount())
+	} else {
+		log.Printf("[Server] Player %d bound (conn %d)\n", playerId, conn.ID)
+	}
 
 	rsp := make([]byte, 4)
 	binary.LittleEndian.PutUint32(rsp, uint32(playerId))
-
-	log.Printf("[Server] Player %d bound (conn %d, room %d, online=%d)\n",
-		playerId, conn.ID, room.ID, room.PlayerCount())
 
 	return &codec.Message{Cmd: framesync.CmdSessionBindRsp, Data: rsp}
 }
