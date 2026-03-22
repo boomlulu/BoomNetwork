@@ -28,11 +28,18 @@ namespace BoomNetwork.Core.Prediction
         private int RingIndex(uint frame) => (int)(frame % _capacity);
 
         /// <summary>
-        /// 设置某帧某玩家的输入
+        /// 设置某帧某玩家的输入（复制数据，不持有外部引用）
         /// </summary>
         public void Set(uint frame, int playerId, byte[] input)
         {
-            _frames[RingIndex(frame)][playerId] = input;
+            if (input == null || input.Length == 0)
+            {
+                _frames[RingIndex(frame)][playerId] = Array.Empty<byte>();
+                return;
+            }
+            var copy = new byte[input.Length];
+            Buffer.BlockCopy(input, 0, copy, 0, input.Length);
+            _frames[RingIndex(frame)][playerId] = copy;
         }
 
         /// <summary>
@@ -58,13 +65,13 @@ namespace BoomNetwork.Core.Prediction
         }
 
         /// <summary>
-        /// 预测远程玩家输入（用上一帧的输入）
+        /// 预测远程玩家输入（用上一帧的输入的副本）
         /// </summary>
         public void PredictRemote(uint frame, int playerId)
         {
             var lastInput = Get(frame - 1, playerId);
-            if (lastInput != null)
-                Set(frame, playerId, lastInput);
+            if (lastInput != null && lastInput.Length > 0)
+                Set(frame, playerId, lastInput); // Set 内部会复制
         }
 
         /// <summary>
