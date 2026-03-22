@@ -162,18 +162,24 @@ namespace BoomNetwork.Core.Prediction
             }
         }
 
+        // 复用集合避免每帧分配
+        private readonly HashSet<int> _serverInputPlayers = new();
+
         private void ProcessSingleServerFrame(FrameData serverFrame)
         {
             uint frame = serverFrame.FrameNumber;
 
             // 存储服务器确认的输入
             bool needRollback = false;
+            _serverInputPlayers.Clear();
+
             if (serverFrame.Inputs != null)
             {
                 for (int i = 0; i < serverFrame.Inputs.Length; i++)
                 {
                     int pid = serverFrame.Inputs[i].PlayerId;
                     byte[] serverInput = serverFrame.Inputs[i].Data;
+                    _serverInputPlayers.Add(pid);
 
                     // 检查预测是否正确
                     if (frame <= PredictedFrame && !_inputBuffer.Matches(frame, pid, serverInput))
@@ -183,6 +189,26 @@ namespace BoomNetwork.Core.Prediction
 
                     // 用服务器的真实输入覆盖
                     _inputBuffer.Set(frame, pid, serverInput);
+                }
+            }
+
+            // 检查: 客户端预测了某个远程玩家有输入，但服务器帧里没有该玩家
+            // 说明该玩家实际没输入，但我们沿用了上一帧的输入 → 预测错误
+            if (frame <= PredictedFrame)
+            {
+                foreach (var pid in _playerIds)
+                {
+                    if (pid == _localPlayerId) continue;
+                    if (_serverInputPlayers.Contains(pid)) continue; // 服务器有这个玩家的输入，已在上面比对过
+
+                    // 服务器没有这个玩家的输入 = 该玩家本帧无操作
+                    var predicted = _inputBuffer.Get(frame, pid);
+                    if (predicted != null && predicted.Length > 0)
+                    {
+                        // 我们预测了有输入，但实际没有 → 回滚
+                        needRollback = true;
+                        _inputBuffer.Set(frame, pid, Array.Empty<byte>()); // 清空为无输入
+                    }
                 }
             }
 
