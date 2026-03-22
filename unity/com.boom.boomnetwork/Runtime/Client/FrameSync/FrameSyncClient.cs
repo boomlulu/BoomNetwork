@@ -274,9 +274,10 @@ namespace BoomNetwork.Client.FrameSync
             {
                 // 预测模式：交给 PredictionManager 处理（可能触发回滚）
                 Prediction.OnServerFrame(frame);
-                // 更新帧号为预测帧号（比服务器确认的更靠前）
                 LastFrameNumber = Prediction.PredictedFrame;
                 _connectionManager.UpdateFrameNumber(Prediction.ConfirmedFrame);
+                // 透传 OnFrame 给订阅者（非 authority 的 Person 也能收到帧事件）
+                OnFrame?.Invoke(frame);
             }
             else
             {

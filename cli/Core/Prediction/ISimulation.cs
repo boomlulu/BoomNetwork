@@ -14,7 +14,8 @@ namespace BoomNetwork.Core.Prediction
         /// 执行一帧游戏逻辑
         /// </summary>
         /// <param name="inputs">本帧所有玩家的输入</param>
-        void Simulate(FrameInput[] inputs);
+        /// <param name="inputCount">有效输入数量（inputs 数组可能更大，只处理前 inputCount 个）</param>
+        void Simulate(FrameInput[] inputs, int inputCount);
 
         /// <summary>
         /// 保存当前游戏状态快照

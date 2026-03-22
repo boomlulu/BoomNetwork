@@ -82,10 +82,28 @@ namespace BoomNetwork.Core.Prediction
             return data;
         }
 
+        // 复用数组避免每帧分配
+        private FrameInput[] _getAllResult = new FrameInput[16];
+
         /// <summary>
-        /// 获取某帧所有玩家的输入
+        /// 获取某帧所有玩家的输入（复用内部数组，调用者不要持有引用）
         /// </summary>
-        public FrameInput[] GetAll(uint frame)
+        public FrameInput[] GetAll(uint frame, out int count)
+        {
+            var dict = _frames[RingIndex(frame)];
+            count = dict.Count;
+            if (_getAllResult.Length < count)
+                _getAllResult = new FrameInput[count * 2];
+            int i = 0;
+            foreach (var kvp in dict)
+                _getAllResult[i++] = new FrameInput(kvp.Key, kvp.Value);
+            return _getAllResult;
+        }
+
+        /// <summary>
+        /// 获取某帧所有玩家的输入（分配新数组版本，供不频繁调用的场景）
+        /// </summary>
+        public FrameInput[] GetAllCopy(uint frame)
         {
             var dict = _frames[RingIndex(frame)];
             var result = new FrameInput[dict.Count];

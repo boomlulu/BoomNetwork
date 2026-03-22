@@ -17,6 +17,7 @@ namespace BoomNetwork.Core.Prediction
         {
             public uint Frame;
             public byte[] Data;
+            public int DataLength;
             public bool Valid;
         }
 
@@ -29,18 +30,33 @@ namespace BoomNetwork.Core.Prediction
         private int RingIndex(uint frame) => (int)(frame % _capacity);
 
         /// <summary>
-        /// 保存快照
+        /// 保存快照（复用已有 entry 的 buffer 避免分配）
         /// </summary>
         public void Save(uint frame, byte[] snapshot)
         {
             var idx = RingIndex(frame);
-            _entries[idx].Frame = frame;
-            _entries[idx].Data = snapshot;
-            _entries[idx].Valid = true;
+            ref var entry = ref _entries[idx];
+
+            // 复用已有的 byte[]（如果大小够的话）
+            if (entry.Data != null && entry.Data.Length >= snapshot.Length)
+            {
+                Buffer.BlockCopy(snapshot, 0, entry.Data, 0, snapshot.Length);
+                entry.DataLength = snapshot.Length;
+            }
+            else
+            {
+                entry.Data = new byte[snapshot.Length];
+                Buffer.BlockCopy(snapshot, 0, entry.Data, 0, snapshot.Length);
+                entry.DataLength = snapshot.Length;
+            }
+            entry.Frame = frame;
+            entry.Valid = true;
         }
 
         /// <summary>
         /// 获取某帧的快照（没有或已被覆盖则返回 null）
+        /// 注意: 返回的 byte[] 可能比实际数据大（复用 buffer），
+        /// 调用者应依赖数据内部的长度字段而非 array.Length。
         /// </summary>
         public byte[]? Get(uint frame)
         {
@@ -59,7 +75,8 @@ namespace BoomNetwork.Core.Prediction
             for (int i = 0; i < _capacity; i++)
             {
                 _entries[i].Valid = false;
-                _entries[i].Data = null;
+                // 保留 Data 引用以便复用，不设 null
+                _entries[i].DataLength = 0;
                 _entries[i].Frame = 0;
             }
         }

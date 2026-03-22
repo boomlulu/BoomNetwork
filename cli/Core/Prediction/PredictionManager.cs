@@ -105,11 +105,30 @@ namespace BoomNetwork.Core.Prediction
         }
 
         /// <summary>
-        /// 停止预测
+        /// 停止预测并清理状态
         /// </summary>
         public void Stop()
         {
             _started = false;
+            _serverFrameQueue.Clear();
+            _predictionAccumulator = 0;
+        }
+
+        /// <summary>
+        /// 动态添加玩家（中途加入房间）
+        /// </summary>
+        public void AddPlayer(int playerId)
+        {
+            if (!_playerIds.Contains(playerId))
+                _playerIds.Add(playerId);
+        }
+
+        /// <summary>
+        /// 动态移除玩家（中途离开房间）
+        /// </summary>
+        public void RemovePlayer(int playerId)
+        {
+            _playerIds.Remove(playerId);
         }
 
         /// <summary>
@@ -164,8 +183,8 @@ namespace BoomNetwork.Core.Prediction
 
             _snapshotBuffer.Save(nextFrame, _simulation.SaveState());
 
-            var allInputs = _inputBuffer.GetAll(nextFrame);
-            _simulation.Simulate(allInputs);
+            var allInputs = _inputBuffer.GetAll(nextFrame, out int inputCount);
+            _simulation.Simulate(allInputs, inputCount);
             PredictedFrame = nextFrame;
 
             OnFrameSimulated?.Invoke(nextFrame, false);
@@ -250,8 +269,8 @@ namespace BoomNetwork.Core.Prediction
             {
                 // 没有预测过这帧，直接执行
                 _snapshotBuffer.Save(frame, _simulation.SaveState());
-                var allInputs = _inputBuffer.GetAll(frame);
-                _simulation.Simulate(allInputs);
+                var allInputs = _inputBuffer.GetAll(frame, out int cnt);
+                _simulation.Simulate(allInputs, cnt);
                 PredictedFrame = frame;
                 ConfirmedFrame = frame;
                 OnFrameSimulated?.Invoke(frame, false);
@@ -291,8 +310,8 @@ namespace BoomNetwork.Core.Prediction
                 if (f > fromFrame)
                     _snapshotBuffer.Save(f, _simulation.SaveState());
 
-                var allInputs = _inputBuffer.GetAll(f);
-                _simulation.Simulate(allInputs);
+                var allInputs = _inputBuffer.GetAll(f, out int cnt);
+                _simulation.Simulate(allInputs, cnt);
                 OnFrameSimulated?.Invoke(f, true);
             }
         }
