@@ -49,6 +49,8 @@ namespace BoomNetwork.Client.FrameSync
         public event Action<NetworkError>? OnError;
         public event Action<int>? OnPlayerJoined;
         public event Action<int>? OnPlayerLeft;
+        public event Action<int>? OnPlayerOffline;
+        public event Action<int>? OnPlayerOnline;
 
         // --- 快照 ---
         /// <summary>
@@ -276,6 +278,16 @@ namespace BoomNetwork.Client.FrameSync
                 case FrameSyncCmd.PlayerLeft:
                     if (msg.DataLength >= 4)
                         OnPlayerLeft?.Invoke(BinaryPrimitives.ReadInt32LittleEndian(msg.DataSpan));
+                    break;
+
+                case FrameSyncCmd.PlayerOffline:
+                    if (msg.DataLength >= 4)
+                        OnPlayerOffline?.Invoke(BinaryPrimitives.ReadInt32LittleEndian(msg.DataSpan));
+                    break;
+
+                case FrameSyncCmd.PlayerOnline:
+                    if (msg.DataLength >= 4)
+                        OnPlayerOnline?.Invoke(BinaryPrimitives.ReadInt32LittleEndian(msg.DataSpan));
                     break;
 
                 case FrameSyncCmd.PushFrames:

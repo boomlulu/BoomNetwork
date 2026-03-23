@@ -38,6 +38,8 @@ namespace BoomNetwork.Core.FrameSync
         // 服务器推送
         public const byte PlayerJoined     = 19;
         public const byte PlayerLeft       = 20;
+        public const byte PlayerOffline    = 24;  // 玩家临时掉线
+        public const byte PlayerOnline     = 25;  // 玩家恢复在线（重连成功）
 
         // 快照
         public const byte UploadSnapshot    = 22;  // 客户端 → 服务器：上传快照

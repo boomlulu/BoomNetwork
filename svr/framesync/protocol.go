@@ -31,8 +31,10 @@ const (
 	CmdLeaveRoomRsp  = 18
 
 	// 服务器推送
-	CmdPlayerJoined = 19
-	CmdPlayerLeft   = 20
+	CmdPlayerJoined  = 19
+	CmdPlayerLeft    = 20
+	CmdPlayerOffline = 24 // 玩家断线（临时，可能重连）
+	CmdPlayerOnline  = 25 // 玩家恢复在线（重连成功）
 
 	// 快照
 	CmdUploadSnapshot    = 22 // 客户端 → 服务器：上传快照

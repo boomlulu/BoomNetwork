@@ -51,6 +51,8 @@ public enum PersonState { Idle, Connecting, Connected, InRoom, Syncing, Disconne
 | `OnFrame` | `Action<Person, FrameData>` | 收到服务器帧 |
 | `OnRemotePlayerJoined` | `Action<Person, int>` | 其他玩家加入房间（playerId） |
 | `OnRemotePlayerLeft` | `Action<Person, int>` | 其他玩家离开房间（playerId） |
+| `OnRemotePlayerOffline` | `Action<Person, int>` | 其他玩家临时掉线（playerId） |
+| `OnRemotePlayerOnline` | `Action<Person, int>` | 其他玩家恢复在线（playerId） |
 | `OnReconnected` | `Action<Person>` | 重连成功 |
 | `OnDisconnected` | `Action<Person>` | 断开连接 |
 | `OnLeftRoom` | `Action<Person, int>` | 离开房间（oldPlayerId） |
@@ -111,6 +113,8 @@ public enum State { Disconnected, Binding, WaitingStart, Syncing, Stopped }
 | `OnFrameSyncStop` | `Action` | 帧同步结束 |
 | `OnPlayerJoined` | `Action<int>` | 玩家加入（服务器推送） |
 | `OnPlayerLeft` | `Action<int>` | 玩家离开（服务器推送） |
+| `OnPlayerOffline` | `Action<int>` | 玩家临时掉线 |
+| `OnPlayerOnline` | `Action<int>` | 玩家恢复在线 |
 | `OnReconnected` | `Action` | 重连成功 |
 | `OnDisconnected` | `Action` | 断开 |
 | `OnError` | `Action<NetworkError>` | 错误 |
@@ -260,4 +264,6 @@ interface ISnapshotable
 | 20 | PlayerLeft | S→C | 推送：玩家离开 |
 | 21 | StopFrameSync | S→C | 帧同步结束 |
 | 22 | UploadSnapshot | C→S | 上传快照 |
+| 24 | PlayerOffline | S→C | 推送：玩家临时掉线 |
+| 25 | PlayerOnline | S→C | 推送：玩家恢复在线 |
 | 23 | UploadSnapshotRsp | S→C | 上传确认 |
