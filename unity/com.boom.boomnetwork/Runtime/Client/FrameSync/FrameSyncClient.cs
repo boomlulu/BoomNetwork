@@ -282,8 +282,23 @@ namespace BoomNetwork.Client.FrameSync
 
             _frameSyncStarted = true;
             LastFrameNumber = 0;
+            _lastSnapshotFrame = 0;
             CurrentState = State.Syncing;
             OnFrameSyncStart?.Invoke(init);
+
+            // 初始快照：游戏层在 OnFrameSyncStart 中完成初始化后，立即上传 frame 0 快照
+            // 确保帧同步刚开始就有基线快照，避免早期断线时服务器无快照可用
+            UploadInitialSnapshot();
+        }
+
+        private void UploadInitialSnapshot()
+        {
+            if (OnTakeSnapshot == null) return;
+            var data = OnTakeSnapshot();
+            if (data == null || data.Length == 0) return;
+
+            var encoded = SnapshotCodec.EncodeUploadSnapshot(0, data);
+            _session.Send(FrameSyncCmd.UploadSnapshot, encoded);
         }
 
         private void HandlePushFrames(Message msg)
