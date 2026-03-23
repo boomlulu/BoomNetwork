@@ -368,11 +368,14 @@ func handleJoinRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 		return &codec.Message{Cmd: framesync.CmdJoinRoomRsp, Data: make([]byte, 8)}
 	}
 
+	// 先取已有玩家列表（新人加入前）
+	existingPlayers := room.GetPlayerIds()
+
 	playerId := nextPlayerId()
 	bindPlayerToRoom(playerId, conn, room)
 
-	log.Printf("[Server] Player %d joined room %d (online=%d/%d)\n",
-		playerId, room.ID, room.PlayerCount(), room.MaxPlayers())
+	log.Printf("[Server] Player %d joined room %d (online=%d/%d, existing=%v)\n",
+		playerId, room.ID, room.PlayerCount(), room.MaxPlayers(), existingPlayers)
 
 	// 通知同房其他玩家
 	broadcastToRoom(room, playerId, framesync.CmdPlayerJoined, framesync.EncodePlayerId(playerId))
@@ -397,7 +400,7 @@ func handleJoinRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 		}()
 	}
 
-	return &codec.Message{Cmd: framesync.CmdJoinRoomRsp, Data: framesync.EncodeJoinRoomRsp(playerId, room.ID)}
+	return &codec.Message{Cmd: framesync.CmdJoinRoomRsp, Data: framesync.EncodeJoinRoomRsp(playerId, room.ID, existingPlayers)}
 }
 
 func handleLeaveRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {

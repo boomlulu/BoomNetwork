@@ -264,13 +264,27 @@ namespace BoomNetwork.Core.FrameSync
         }
 
         // === JoinRoomRsp ===
-        // Wire: [PlayerId:4][RoomId:4]
+        // Wire: [PlayerId:4][RoomId:4][PlayerCount:2][PlayerIds:4×N]
 
-        public static (int playerId, int roomId) DecodeJoinRoomRsp(ReadOnlySpan<byte> buf)
+        public static (int playerId, int roomId, int[] existingPlayers) DecodeJoinRoomRsp(ReadOnlySpan<byte> buf)
         {
             int playerId = BinaryPrimitives.ReadInt32LittleEndian(buf);
             int roomId = BinaryPrimitives.ReadInt32LittleEndian(buf.Slice(4));
-            return (playerId, roomId);
+
+            int[] existingPlayers = Array.Empty<int>();
+            if (buf.Length >= 10)
+            {
+                int count = BinaryPrimitives.ReadUInt16LittleEndian(buf.Slice(8));
+                existingPlayers = new int[count];
+                int offset = 10;
+                for (int i = 0; i < count && offset + 4 <= buf.Length; i++)
+                {
+                    existingPlayers[i] = BinaryPrimitives.ReadInt32LittleEndian(buf.Slice(offset));
+                    offset += 4;
+                }
+            }
+
+            return (playerId, roomId, existingPlayers);
         }
 
         // === PlayerJoined / PlayerLeft (服务器推送) ===

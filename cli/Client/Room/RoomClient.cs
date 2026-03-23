@@ -77,13 +77,14 @@ namespace BoomNetwork.Client.Room
         /// <summary>
         /// 加入房间
         /// </summary>
-        public void JoinRoom(int roomId, Action<int, int>? onJoined = null)
+        /// <param name="onJoined">回调: (playerId, roomId, existingPlayerIds)</param>
+        public void JoinRoom(int roomId, Action<int, int, int[]>? onJoined = null)
         {
             var data = RoomCodec.EncodeJoinRoom(roomId);
             _session.SendAsync(FrameSyncCmd.JoinRoom, data, 5000,
                 onResponse: msg =>
                 {
-                    var (playerId, rspRoomId) = RoomCodec.DecodeJoinRoomRsp(msg.DataSpan);
+                    var (playerId, rspRoomId, existingPlayers) = RoomCodec.DecodeJoinRoomRsp(msg.DataSpan);
                     if (playerId == 0)
                     {
                         OnError?.Invoke(new NetworkError(ErrorCode.JoinRoomFailed, $"Join room {roomId} failed"));
@@ -91,7 +92,7 @@ namespace BoomNetwork.Client.Room
                     }
                     MyPlayerId = playerId;
                     CurrentRoomId = rspRoomId;
-                    onJoined?.Invoke(playerId, rspRoomId);
+                    onJoined?.Invoke(playerId, rspRoomId, existingPlayers);
                 },
                 onTimeout: err =>
                 {

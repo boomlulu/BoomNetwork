@@ -193,11 +193,17 @@ func EncodeRoomList(rooms []RoomInfo) []byte {
 }
 
 // EncodeJoinRoomRsp 编码加入房间响应
-// Wire: [PlayerId:4][RoomId:4]
-func EncodeJoinRoomRsp(playerId int32, roomId int32) []byte {
-	buf := make([]byte, 8)
+// Wire: [PlayerId:4][RoomId:4][PlayerCount:2][PlayerIds:4×N]
+func EncodeJoinRoomRsp(playerId int32, roomId int32, existingPlayerIds []int32) []byte {
+	buf := make([]byte, 8+2+len(existingPlayerIds)*4)
 	binary.LittleEndian.PutUint32(buf[0:], uint32(playerId))
 	binary.LittleEndian.PutUint32(buf[4:], uint32(roomId))
+	binary.LittleEndian.PutUint16(buf[8:], uint16(len(existingPlayerIds)))
+	offset := 10
+	for _, pid := range existingPlayerIds {
+		binary.LittleEndian.PutUint32(buf[offset:], uint32(pid))
+		offset += 4
+	}
 	return buf
 }
 

@@ -143,5 +143,55 @@ namespace BoomNetwork.Tests
             Assert.That(encoded[4], Is.EqualTo(1));
             Assert.That(encoded[8], Is.EqualTo(5));
         }
+
+        [Test]
+        public void JoinRoomRsp_WithExistingPlayers()
+        {
+            // 模拟: [PlayerId:4][RoomId:4][PlayerCount:2][P10:4][P20:4]
+            var buf = new byte[18];
+            BitConverter.TryWriteBytes(buf.AsSpan(0), 5);         // playerId
+            BitConverter.TryWriteBytes(buf.AsSpan(4), 42);        // roomId
+            BitConverter.TryWriteBytes(buf.AsSpan(8), (ushort)2); // count
+            BitConverter.TryWriteBytes(buf.AsSpan(10), 10);       // P10
+            BitConverter.TryWriteBytes(buf.AsSpan(14), 20);       // P20
+
+            var (playerId, roomId, existing) = RoomCodec.DecodeJoinRoomRsp(buf);
+
+            Assert.That(playerId, Is.EqualTo(5));
+            Assert.That(roomId, Is.EqualTo(42));
+            Assert.That(existing.Length, Is.EqualTo(2));
+            Assert.That(existing[0], Is.EqualTo(10));
+            Assert.That(existing[1], Is.EqualTo(20));
+        }
+
+        [Test]
+        public void JoinRoomRsp_NoExistingPlayers()
+        {
+            var buf = new byte[10];
+            BitConverter.TryWriteBytes(buf.AsSpan(0), 1);
+            BitConverter.TryWriteBytes(buf.AsSpan(4), 2);
+            BitConverter.TryWriteBytes(buf.AsSpan(8), (ushort)0);
+
+            var (playerId, roomId, existing) = RoomCodec.DecodeJoinRoomRsp(buf);
+
+            Assert.That(playerId, Is.EqualTo(1));
+            Assert.That(roomId, Is.EqualTo(2));
+            Assert.That(existing.Length, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void JoinRoomRsp_LegacyCompat_8Bytes()
+        {
+            // 旧服务器只发 8 字节，无 PlayerCount 字段
+            var buf = new byte[8];
+            BitConverter.TryWriteBytes(buf.AsSpan(0), 3);
+            BitConverter.TryWriteBytes(buf.AsSpan(4), 7);
+
+            var (playerId, roomId, existing) = RoomCodec.DecodeJoinRoomRsp(buf);
+
+            Assert.That(playerId, Is.EqualTo(3));
+            Assert.That(roomId, Is.EqualTo(7));
+            Assert.That(existing.Length, Is.EqualTo(0));
+        }
     }
 }

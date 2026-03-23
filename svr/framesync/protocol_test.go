@@ -2,6 +2,7 @@ package framesync
 
 import (
 	"bytes"
+	"encoding/binary"
 	"testing"
 )
 
@@ -83,5 +84,48 @@ func TestEncodeReconnectRsp_Fail(t *testing.T) {
 	buf := EncodeReconnectRsp(ReconnectFail, 0, 0, 0, nil)
 	if buf[0] != ReconnectFail {
 		t.Errorf("Result: got %d, want %d", buf[0], ReconnectFail)
+	}
+}
+
+func TestEncodeJoinRoomRsp_WithExistingPlayers(t *testing.T) {
+	existing := []int32{10, 20, 30}
+	buf := EncodeJoinRoomRsp(5, 42, existing)
+
+	// [PlayerId:4][RoomId:4][PlayerCount:2][PlayerIds:4×3] = 8+2+12 = 22
+	if len(buf) != 22 {
+		t.Fatalf("Length: got %d, want 22", len(buf))
+	}
+
+	pid := int32(binary.LittleEndian.Uint32(buf[0:]))
+	rid := int32(binary.LittleEndian.Uint32(buf[4:]))
+	count := int(binary.LittleEndian.Uint16(buf[8:]))
+
+	if pid != 5 {
+		t.Errorf("PlayerId: got %d, want 5", pid)
+	}
+	if rid != 42 {
+		t.Errorf("RoomId: got %d, want 42", rid)
+	}
+	if count != 3 {
+		t.Errorf("PlayerCount: got %d, want 3", count)
+	}
+
+	for i, expected := range existing {
+		got := int32(binary.LittleEndian.Uint32(buf[10+i*4:]))
+		if got != expected {
+			t.Errorf("Player[%d]: got %d, want %d", i, got, expected)
+		}
+	}
+}
+
+func TestEncodeJoinRoomRsp_NoExistingPlayers(t *testing.T) {
+	buf := EncodeJoinRoomRsp(1, 2, nil)
+	// [PlayerId:4][RoomId:4][PlayerCount:2] = 10
+	if len(buf) != 10 {
+		t.Fatalf("Length: got %d, want 10", len(buf))
+	}
+	count := int(binary.LittleEndian.Uint16(buf[8:]))
+	if count != 0 {
+		t.Errorf("PlayerCount: got %d, want 0", count)
 	}
 }

@@ -164,6 +164,17 @@ func (r *Room) TotalPlayerCount() int {
 	return len(r.players)
 }
 
+// GetPlayerIds 获取所有玩家 ID（含断线保留的）
+func (r *Room) GetPlayerIds() []int32 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	ids := make([]int32, 0, len(r.players))
+	for id := range r.players {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
 // IsRunning 帧同步是否正在运行
 func (r *Room) IsRunning() bool {
 	r.mu.Lock()
