@@ -46,32 +46,53 @@ namespace BoomNetwork.Core.FrameSync
 
     /// <summary>
     /// 帧同步初始化数据（StartFrameSync 携带）
-    /// Wire: [FrameRate:4][FrameInterval:4][StartTime:8]
+    /// Wire: [FrameRate:4][FrameInterval:4][StartTime:8][SnapshotInterval:4][QuickReconnectMaxMs:4]
     /// </summary>
     public struct FrameSyncInitData
     {
-        public const int Size = 16;
+        public const int Size = 24;
+        public const int LegacySize = 16;
 
-        public int FrameRate;       // 帧率（如 20）
-        public int FrameInterval;   // 帧间隔 ms（如 50）
-        public long StartTime;      // 服务器开始时间戳 ms
+        public int FrameRate;               // 帧率（如 20）
+        public int FrameInterval;           // 帧间隔 ms（如 50）
+        public long StartTime;              // 服务器开始时间戳 ms
+        public int SnapshotInterval;        // 快照间隔（帧数），服务器下发
+        public int QuickReconnectMaxMs;     // 快速重连最长重试时间（ms），服务器下发
 
         public void WriteTo(Span<byte> buf)
         {
             BinaryPrimitives.WriteInt32LittleEndian(buf, FrameRate);
             BinaryPrimitives.WriteInt32LittleEndian(buf.Slice(4), FrameInterval);
             BinaryPrimitives.WriteInt64LittleEndian(buf.Slice(8), StartTime);
+            BinaryPrimitives.WriteInt32LittleEndian(buf.Slice(16), SnapshotInterval);
+            BinaryPrimitives.WriteInt32LittleEndian(buf.Slice(20), QuickReconnectMaxMs);
         }
 
         public static FrameSyncInitData ReadFrom(ReadOnlySpan<byte> buf)
         {
-            return new FrameSyncInitData
+            var data = new FrameSyncInitData
             {
                 FrameRate = BinaryPrimitives.ReadInt32LittleEndian(buf),
                 FrameInterval = BinaryPrimitives.ReadInt32LittleEndian(buf.Slice(4)),
                 StartTime = BinaryPrimitives.ReadInt64LittleEndian(buf.Slice(8)),
             };
+            if (buf.Length >= Size)
+            {
+                data.SnapshotInterval = BinaryPrimitives.ReadInt32LittleEndian(buf.Slice(16));
+                data.QuickReconnectMaxMs = BinaryPrimitives.ReadInt32LittleEndian(buf.Slice(20));
+            }
+            return data;
         }
+    }
+
+    /// <summary>
+    /// 重连结果码（ReconnectRsp 第一个字节）
+    /// </summary>
+    public static class ReconnectResult
+    {
+        public const byte Fail = 0;             // 通用失败
+        public const byte Success = 1;          // 成功
+        public const byte BufferStale = 2;      // 帧缓冲区过期，客户端应降级到快照重连
     }
 
     /// <summary>
@@ -294,17 +315,18 @@ namespace BoomNetwork.Core.FrameSync
             return buf;
         }
 
-        // === ReconnectRsp (扩展版，带快照) ===
-        // Wire: [Success:1][RoomId:4][ServerFrame:4][SnapshotFrame:4][SnapshotData:N]
+        // === ReconnectRsp ===
+        // Wire: [Result:1][RoomId:4][ServerFrame:4][SnapshotFrame:4][SnapshotData:N]
+        // Result: 0=失败, 1=成功, 2=缓冲区过期(需降级到快照重连)
 
-        public static (bool success, int roomId, uint serverFrame, uint snapshotFrame, byte[]? snapshotData)
-            DecodeReconnectRspWithSnapshot(ReadOnlySpan<byte> buf)
+        public static (byte result, int roomId, uint serverFrame, uint snapshotFrame, byte[]? snapshotData)
+            DecodeReconnectRsp(ReadOnlySpan<byte> buf)
         {
-            if (buf.Length < 1) return (false, 0, 0, 0, null);
+            if (buf.Length < 1) return (ReconnectResult.Fail, 0, 0, 0, null);
 
-            bool success = buf[0] != 0;
-            if (!success || buf.Length < 13)
-                return (success, 0, 0, 0, null);
+            byte result = buf[0];
+            if (buf.Length < 13)
+                return (result, 0, 0, 0, null);
 
             int roomId = BinaryPrimitives.ReadInt32LittleEndian(buf.Slice(1));
             uint serverFrame = BinaryPrimitives.ReadUInt32LittleEndian(buf.Slice(5));
@@ -316,7 +338,7 @@ namespace BoomNetwork.Core.FrameSync
                 snapshotData = buf.Slice(13).ToArray();
             }
 
-            return (success, roomId, serverFrame, snapshotFrame, snapshotData);
+            return (result, roomId, serverFrame, snapshotFrame, snapshotData);
         }
     }
 }

@@ -35,6 +35,18 @@ namespace BoomNetwork.Client.Connection
             _chain = chain;
         }
 
+        /// <summary>
+        /// 设置快速重连策略的超时时间（由服务器下发）
+        /// </summary>
+        public void SetQuickReconnectTimeout(int timeoutMs)
+        {
+            foreach (var (strategy, _) in _chain)
+            {
+                if (strategy is QuickReconnectStrategy quick)
+                    quick.TimeoutMs = timeoutMs;
+            }
+        }
+
         public void Attempt(NetworkSession session, string host, int port,
             ReconnectContext context, Action onSuccess, Action<NetworkError> onFail)
         {

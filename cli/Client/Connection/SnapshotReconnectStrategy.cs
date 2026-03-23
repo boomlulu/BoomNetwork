@@ -42,14 +42,21 @@ namespace BoomNetwork.Client.Connection
                     {
                         if (_cancelled) return;
 
-                        if (msg.DataLength >= 4)
+                        var (result, roomId, serverFrame, snapshotFrame, snapshotData) =
+                            SnapshotCodec.DecodeReconnectRsp(msg.DataSpan);
+
+                        if (result != ReconnectResult.Success)
                         {
-                            context.ServerFrameNumber = BinaryPrimitives.ReadUInt32LittleEndian(msg.DataSpan);
+                            onFail(new NetworkError(ErrorCode.ReconnectFailed, "SnapshotReconnect: server rejected"));
+                            return;
                         }
-                        // 如果服务器返回了快照数据（帧号之后的部分）
-                        if (msg.DataLength > 4)
+
+                        context.ServerFrameNumber = serverFrame;
+                        context.SnapshotFrame = snapshotFrame;
+
+                        if (snapshotData != null && snapshotData.Length > 0)
                         {
-                            context.SnapshotData = msg.DataSpan.Slice(4).ToArray();
+                            context.SnapshotData = snapshotData;
                             context.IsSnapshotRestore = true;
                         }
                         else

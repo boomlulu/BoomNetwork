@@ -18,6 +18,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
+var cfg ServerConfig
+
 var (
 	addr      = flag.String("addr", ":9000", "listen address")
 	proto     = flag.String("proto", "tcp", "protocol: tcp or kcp")
@@ -29,7 +31,7 @@ var (
 	autoRoom    = flag.Bool("autoroom", false, "auto-assign room on SessionBind (for legacy/stress tests)")
 )
 
-var roomMgr = framesync.NewRoomManager()
+var roomMgr *framesync.RoomManager
 
 // 映射关系
 var connPlayerMap sync.Map // connID → int32(playerId)
@@ -45,19 +47,30 @@ func main() {
 
 	// 生成默认配置文件
 	if *genConfig {
-		SaveDefaultConfig("config.json")
+		SaveDefaultConfig("config.yaml")
 		return
 	}
 
 	// 加载配置文件（如果指定，覆盖命令行参数）
+	cfg = DefaultConfig()
 	if *configFile != "" {
-		cfg := LoadConfig(*configFile)
-		*addr = cfg.Addr
-		*proto = cfg.Proto
-		*ppr = cfg.PlayersPerRoom
-		*authToken = cfg.AuthToken
-		*metricsAddr = cfg.MetricsAddr
+		cfg = LoadConfig(*configFile)
 	}
+	*addr = cfg.Addr
+	*proto = cfg.Proto
+	*ppr = cfg.PlayersPerRoom
+	*authToken = cfg.AuthToken
+	*metricsAddr = cfg.MetricsAddr
+
+	// 用配置初始化 RoomManager
+	roomMgr = framesync.NewRoomManager(framesync.RoomConfig{
+		FrameRate:              int32(cfg.FrameRate),
+		MaxPlayers:             cfg.PlayersPerRoom,
+		FrameBufferSize:        cfg.FrameBufferSize,
+		DisconnectKeepAlive:    time.Duration(cfg.DisconnectKeepSec) * time.Second,
+		SnapshotIntervalFrames: int32(cfg.SnapshotIntervalFrames),
+		QuickReconnectMaxMs:    int32(cfg.QuickReconnectMaxMs),
+	})
 
 	router := session.NewRouter()
 	// 帧同步
@@ -228,8 +241,7 @@ func handleHeartbeat(conn *transport.Conn, msg *codec.Message) *codec.Message {
 
 func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	if len(msg.Data) < 4 {
-		// 失败: [success:1=0][frame:4=0]
-		rsp := make([]byte, 5)
+		rsp := framesync.EncodeReconnectRsp(framesync.ReconnectFail, 0, 0, 0, nil)
 		return &codec.Message{Cmd: framesync.CmdReconnectRsp, Data: rsp}
 	}
 
@@ -242,7 +254,7 @@ func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	roomVal, ok := playerRoomMap.Load(playerId)
 	if !ok {
 		log.Printf("[Server] Reconnect failed: player %d not found in any room\n", playerId)
-		rsp := make([]byte, 5)
+		rsp := framesync.EncodeReconnectRsp(framesync.ReconnectFail, 0, 0, 0, nil)
 		return &codec.Message{Cmd: framesync.CmdReconnectRsp, Data: rsp}
 	}
 	room := roomVal.(*framesync.Room)
@@ -251,8 +263,23 @@ func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	if roomMgr.GetRoom(room.ID) == nil {
 		log.Printf("[Server] Reconnect failed: player %d room %d already cleaned up\n", playerId, room.ID)
 		playerRoomMap.Delete(playerId)
-		rsp := make([]byte, 5)
+		rsp := framesync.EncodeReconnectRsp(framesync.ReconnectFail, 0, 0, 0, nil)
 		return &codec.Message{Cmd: framesync.CmdReconnectRsp, Data: rsp}
+	}
+
+	currentFrame := room.CurrentFrameNumber()
+	snapshotFrame, snapshotData := room.GetSnapshot()
+
+	// 快速重连路径: lastFrame > 0，检查是否还在环形缓冲区内
+	if lastFrame > 0 {
+		oldestFrame := room.OldestBufferedFrame()
+		if oldestFrame > 0 && lastFrame < oldestFrame {
+			// lastFrame 已超出缓冲区 → 返回 BufferStale，客户端降级到快照重连
+			log.Printf("[Server] Reconnect buffer stale: player %d lastFrame=%d < oldest=%d\n",
+				playerId, lastFrame, oldestFrame)
+			rsp := framesync.EncodeReconnectRsp(framesync.ReconnectFailBufferStale, room.ID, currentFrame, 0, nil)
+			return &codec.Message{Cmd: framesync.CmdReconnectRsp, Data: rsp}
+		}
 	}
 
 	// 更新连接映射
@@ -260,27 +287,26 @@ func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	playerConnMap.Store(playerId, conn)
 	room.AddPlayer(playerId, conn)
 
-	currentFrame := room.CurrentFrameNumber()
-	snapshotFrame, snapshotData := room.GetSnapshot()
-
 	// 决定从哪帧开始补帧
 	var replayFrom uint32
-	if snapshotFrame > 0 && snapshotFrame > lastFrame {
-		// 有快照且比客户端更新 → 用快照 + 从快照帧之后补帧
-		replayFrom = snapshotFrame
-	} else if lastFrame > 0 {
-		// 没有有效快照，从客户端最后帧补
+	if lastFrame > 0 {
+		// 快速重连: 从客户端最后帧补
 		replayFrom = lastFrame
 		snapshotFrame = 0
 		snapshotData = nil
+	} else if snapshotFrame > 0 {
+		// 快照重连: 用快照 + 从快照帧之后补帧
+		replayFrom = snapshotFrame
 	} else {
 		// 都没有，不补帧
 		snapshotFrame = 0
 		snapshotData = nil
 	}
 
-	// 编码响应: [Success:1][RoomId:4][ServerFrame:4][SnapshotFrame:4][SnapshotData:N]
-	rsp := framesync.EncodeReconnectRspWithSnapshot(true, room.ID, currentFrame, snapshotFrame, snapshotData)
+	rsp := framesync.EncodeReconnectRsp(framesync.ReconnectSuccess, room.ID, currentFrame, snapshotFrame, snapshotData)
+
+	// 通知同房其他玩家
+	broadcastToRoom(room, playerId, framesync.CmdPlayerJoined, framesync.EncodePlayerId(playerId))
 
 	// 异步补帧
 	if replayFrom > 0 && replayFrom < currentFrame {
@@ -356,9 +382,11 @@ func handleJoinRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 		go func() {
 			time.Sleep(10 * time.Millisecond) // 确保 JoinRoomRsp 先到达
 			initData := framesync.InitData{
-				FrameRate:     room.FrameRate(),
-				FrameInterval: 1000 / room.FrameRate(),
-				StartTime:     room.StartTime(),
+				FrameRate:           room.FrameRate(),
+				FrameInterval:       1000 / room.FrameRate(),
+				StartTime:           room.StartTime(),
+				SnapshotInterval:    int32(cfg.SnapshotIntervalFrames),
+				QuickReconnectMaxMs: int32(cfg.QuickReconnectMaxMs),
 			}
 			conn.Send(&codec.Message{
 				Cmd:  framesync.CmdStartFrameSync,
@@ -446,23 +474,24 @@ func broadcastToRoom(room *framesync.Room, excludePlayerId int32, cmd byte, data
 func handleUploadSnapshot(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	val, ok := connPlayerMap.Load(conn.ID)
 	if !ok {
-		return &codec.Message{Cmd: framesync.CmdUploadSnapshotRsp}
+		return &codec.Message{Cmd: framesync.CmdUploadSnapshotRsp, Data: []byte{0}}
 	}
 	playerId := val.(int32)
 
 	roomVal, ok := playerRoomMap.Load(playerId)
 	if !ok {
-		return &codec.Message{Cmd: framesync.CmdUploadSnapshotRsp}
+		return &codec.Message{Cmd: framesync.CmdUploadSnapshotRsp, Data: []byte{0}}
 	}
 	room := roomVal.(*framesync.Room)
 
 	frameNumber, snapshotData := framesync.DecodeUploadSnapshot(msg.Data)
 	if snapshotData == nil {
-		return &codec.Message{Cmd: framesync.CmdUploadSnapshotRsp}
+		return &codec.Message{Cmd: framesync.CmdUploadSnapshotRsp, Data: []byte{0}}
 	}
 
-	room.UpdateSnapshot(frameNumber, snapshotData)
-
-	// 响应: [Success:1]
-	return &codec.Message{Cmd: framesync.CmdUploadSnapshotRsp, Data: []byte{1}}
+	accepted := room.UpdateSnapshot(frameNumber, snapshotData)
+	if accepted {
+		return &codec.Message{Cmd: framesync.CmdUploadSnapshotRsp, Data: []byte{1}}
+	}
+	return &codec.Message{Cmd: framesync.CmdUploadSnapshotRsp, Data: []byte{0}}
 }

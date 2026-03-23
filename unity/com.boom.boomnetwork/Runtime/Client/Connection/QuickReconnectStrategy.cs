@@ -42,10 +42,22 @@ namespace BoomNetwork.Client.Connection
                     {
                         if (_cancelled) return;
 
-                        if (msg.DataLength >= 4)
+                        var (result, roomId, serverFrame, snapshotFrame, snapshotData) =
+                            SnapshotCodec.DecodeReconnectRsp(msg.DataSpan);
+
+                        if (result == ReconnectResult.BufferStale)
                         {
-                            context.ServerFrameNumber = BinaryPrimitives.ReadUInt32LittleEndian(msg.DataSpan);
+                            // 帧缓冲区过期 → 快速重连失败，由 Composite 降级到快照重连
+                            onFail(new NetworkError(ErrorCode.ReconnectFailed, "QuickReconnect: buffer stale, need snapshot"));
+                            return;
                         }
+                        if (result != ReconnectResult.Success)
+                        {
+                            onFail(new NetworkError(ErrorCode.ReconnectFailed, "QuickReconnect: server rejected"));
+                            return;
+                        }
+
+                        context.ServerFrameNumber = serverFrame;
                         context.IsSnapshotRestore = false;
 
                         // 服务器会异步重发缺失帧，客户端这边重发未确认的消息

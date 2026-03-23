@@ -37,19 +37,23 @@ type CachedFrame struct {
 
 // RoomConfig 房间配置
 type RoomConfig struct {
-	FrameRate           int32
-	MaxPlayers          int
-	FrameBufferSize     int           // 环形缓冲区大小
-	DisconnectKeepAlive time.Duration
+	FrameRate              int32
+	MaxPlayers             int
+	FrameBufferSize        int           // 环形缓冲区大小
+	DisconnectKeepAlive    time.Duration
+	SnapshotIntervalFrames int32         // 快照间隔（帧数），下发给客户端
+	QuickReconnectMaxMs    int32         // 快速重连最长重试时间（ms），下发给客户端
 }
 
 // DefaultRoomConfig 默认配置
 func DefaultRoomConfig() RoomConfig {
 	return RoomConfig{
-		FrameRate:           20,
-		MaxPlayers:          4,
-		FrameBufferSize:     200,
-		DisconnectKeepAlive: 30 * time.Second,
+		FrameRate:              20,
+		MaxPlayers:             4,
+		FrameBufferSize:        2400,
+		DisconnectKeepAlive:    120 * time.Second,
+		SnapshotIntervalFrames: 100,
+		QuickReconnectMaxMs:    5000,
 	}
 }
 
@@ -82,6 +86,10 @@ type Room struct {
 	// 快照存储
 	snapshotFrame uint32
 	snapshotData  []byte
+
+	// 快照新鲜度监控: 连续 3 个快照间隔未收到快照 → 暂停帧同步
+	snapshotStaleFrames uint32 // 自上次快照以来经过的帧数
+	snapshotPaused      bool   // 是否因快照过期而暂停
 }
 
 // NewRoom 创建帧同步房间
@@ -219,14 +227,25 @@ func (r *Room) CurrentFrameNumber() uint32 {
 	return r.frameNumber
 }
 
-// UpdateSnapshot 更新房间快照
-func (r *Room) UpdateSnapshot(frameNumber uint32, data []byte) {
+// UpdateSnapshot 更新房间快照（只接受比当前更新的帧号）
+func (r *Room) UpdateSnapshot(frameNumber uint32, data []byte) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if frameNumber <= r.snapshotFrame {
+		return false
+	}
 	r.snapshotFrame = frameNumber
 	r.snapshotData = make([]byte, len(data))
 	copy(r.snapshotData, data)
+	r.snapshotStaleFrames = 0
+
+	if r.snapshotPaused {
+		r.snapshotPaused = false
+		log.Printf("[Room %d] Snapshot received, resuming frame sync\n", r.ID)
+	}
+
 	log.Printf("[Room %d] Snapshot updated at frame %d (%d bytes)\n", r.ID, frameNumber, len(data))
+	return true
 }
 
 // GetSnapshot 获取最新快照
@@ -258,6 +277,24 @@ func (r *Room) GetFramesSince(afterFrame uint32) []CachedFrame {
 	return result
 }
 
+// OldestBufferedFrame 环形缓冲区中最旧帧号（0 表示缓冲区为空）
+func (r *Room) OldestBufferedFrame() uint32 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.frameRingLen == 0 {
+		return 0
+	}
+	idx := (r.frameRingPos - r.frameRingLen + len(r.frameRing)) % len(r.frameRing)
+	return r.frameRing[idx].FrameNumber
+}
+
+// IsSnapshotPaused 是否因快照过期而暂停
+func (r *Room) IsSnapshotPaused() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.snapshotPaused
+}
+
 // Start 开始帧同步
 func (r *Room) Start() {
 	r.mu.Lock()
@@ -270,13 +307,17 @@ func (r *Room) Start() {
 	r.startTime = time.Now().UnixMilli()
 	r.frameRingPos = 0
 	r.frameRingLen = 0
+	r.snapshotStaleFrames = 0
+	r.snapshotPaused = false
 	r.stopCh = make(chan struct{})
 	r.mu.Unlock()
 
 	initData := &InitData{
-		FrameRate:     r.frameRate,
-		FrameInterval: int32(r.frameInterval.Milliseconds()),
-		StartTime:     r.startTime,
+		FrameRate:           r.frameRate,
+		FrameInterval:       int32(r.frameInterval.Milliseconds()),
+		StartTime:           r.startTime,
+		SnapshotInterval:    r.config.SnapshotIntervalFrames,
+		QuickReconnectMaxMs: r.config.QuickReconnectMaxMs,
 	}
 	r.broadcast(CmdStartFrameSync, EncodeInitData(initData))
 
@@ -338,6 +379,24 @@ func (r *Room) tickLoop() {
 
 func (r *Room) stepFrame() {
 	r.mu.Lock()
+
+	// 快照新鲜度检查: 连续 3 个快照间隔未收到快照 → 暂停
+	if r.config.SnapshotIntervalFrames > 0 && r.frameNumber > 0 {
+		r.snapshotStaleFrames++
+		staleLimit := uint32(r.config.SnapshotIntervalFrames * 3)
+		if r.snapshotStaleFrames >= staleLimit && !r.snapshotPaused {
+			r.snapshotPaused = true
+			log.Printf("[Room %d] WARNING: No snapshot for %d frames (limit=%d), pausing frame sync\n",
+				r.ID, r.snapshotStaleFrames, staleLimit)
+			r.mu.Unlock()
+			return
+		}
+		if r.snapshotPaused {
+			r.mu.Unlock()
+			return
+		}
+	}
+
 	r.frameNumber++
 	frameNum := r.frameNumber
 

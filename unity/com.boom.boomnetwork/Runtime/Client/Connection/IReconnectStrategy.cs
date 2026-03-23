@@ -46,6 +46,11 @@ namespace BoomNetwork.Client.Connection
         public uint ServerFrameNumber { get; set; }
 
         /// <summary>
+        /// 快照对应的帧号（超时重连时由策略填写）
+        /// </summary>
+        public uint SnapshotFrame { get; set; }
+
+        /// <summary>
         /// 重连成功后服务器返回的快照数据（超时重连时由策略填写）
         /// </summary>
         public byte[]? SnapshotData { get; set; }

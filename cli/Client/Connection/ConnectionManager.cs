@@ -33,6 +33,23 @@ namespace BoomNetwork.Client.Connection
         public float HeartbeatIntervalMs { get; set; } = 3000;
         public float HeartbeatTimeoutMs { get; set; } = 10000;
 
+        /// <summary>
+        /// 快速重连最长重试时间（ms），由服务器通过 StartFrameSync 下发
+        /// 会传递给 QuickReconnectStrategy.TimeoutMs
+        /// </summary>
+        public int QuickReconnectMaxMs
+        {
+            get => _quickReconnectMaxMs;
+            set
+            {
+                _quickReconnectMaxMs = value;
+                // 传递给策略链中的 QuickReconnectStrategy
+                if (_reconnectStrategy is CompositeReconnectStrategy composite)
+                    composite.SetQuickReconnectTimeout(value);
+            }
+        }
+        private int _quickReconnectMaxMs = 5000;
+
         // --- 状态 ---
         public State CurrentState { get; private set; } = State.Disconnected;
 

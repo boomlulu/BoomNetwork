@@ -214,7 +214,18 @@ namespace BoomNetwork.Client.FrameSync
 
         private void OnConnectionReconnected(ReconnectContext context)
         {
-            LastFrameNumber = context.ServerFrameNumber;
+            if (context.IsSnapshotRestore && context.SnapshotData != null)
+            {
+                // 快照重连：加载快照，从 SnapshotFrame 开始，后续补帧由 OnFrame 处理
+                OnLoadSnapshot?.Invoke(context.SnapshotData);
+                LastFrameNumber = context.SnapshotFrame;
+                _lastSnapshotFrame = context.SnapshotFrame;
+            }
+            else
+            {
+                // 快速重连：帧号保持，等异步补帧
+                LastFrameNumber = context.ServerFrameNumber;
+            }
 
             if (_frameSyncStarted)
             {
@@ -257,12 +268,20 @@ namespace BoomNetwork.Client.FrameSync
 
         private void HandleStartFrameSync(Message msg)
         {
-            if (msg.DataLength >= FrameSyncInitData.Size)
+            if (msg.DataLength >= FrameSyncInitData.LegacySize)
                 InitData = FrameSyncInitData.ReadFrom(msg.DataSpan);
+
+            // 应用服务器下发的配置
+            var init = InitData ?? default;
+            if (init.SnapshotInterval > 0)
+                SnapshotInterval = (uint)init.SnapshotInterval;
+            if (init.QuickReconnectMaxMs > 0)
+                _connectionManager.QuickReconnectMaxMs = init.QuickReconnectMaxMs;
+
             _frameSyncStarted = true;
             LastFrameNumber = 0;
             CurrentState = State.Syncing;
-            OnFrameSyncStart?.Invoke(InitData ?? default);
+            OnFrameSyncStart?.Invoke(init);
         }
 
         private void HandlePushFrames(Message msg)

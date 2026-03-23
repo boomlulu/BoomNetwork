@@ -40,30 +40,46 @@ const (
 )
 
 // InitData 帧同步初始化数据
-// Wire: [FrameRate:4][FrameInterval:4][StartTime:8]
+// Wire: [FrameRate:4][FrameInterval:4][StartTime:8][SnapshotInterval:4][QuickReconnectMaxMs:4]
 type InitData struct {
-	FrameRate     int32
-	FrameInterval int32 // ms
-	StartTime     int64 // ms timestamp
+	FrameRate            int32
+	FrameInterval        int32 // ms
+	StartTime            int64 // ms timestamp
+	SnapshotInterval     int32 // 快照间隔（帧数），客户端按此频率上传快照
+	QuickReconnectMaxMs  int32 // 快速重连最长重试时间（ms），超时后客户端降级到快照重连
 }
 
-const InitDataSize = 16
+const InitDataSize = 24
 
 func EncodeInitData(d *InitData) []byte {
 	buf := make([]byte, InitDataSize)
 	binary.LittleEndian.PutUint32(buf[0:], uint32(d.FrameRate))
 	binary.LittleEndian.PutUint32(buf[4:], uint32(d.FrameInterval))
 	binary.LittleEndian.PutUint64(buf[8:], uint64(d.StartTime))
+	binary.LittleEndian.PutUint32(buf[16:], uint32(d.SnapshotInterval))
+	binary.LittleEndian.PutUint32(buf[20:], uint32(d.QuickReconnectMaxMs))
 	return buf
 }
 
 func DecodeInitData(buf []byte) *InitData {
-	return &InitData{
+	d := &InitData{
 		FrameRate:     int32(binary.LittleEndian.Uint32(buf[0:])),
 		FrameInterval: int32(binary.LittleEndian.Uint32(buf[4:])),
 		StartTime:     int64(binary.LittleEndian.Uint64(buf[8:])),
 	}
+	if len(buf) >= InitDataSize {
+		d.SnapshotInterval = int32(binary.LittleEndian.Uint32(buf[16:]))
+		d.QuickReconnectMaxMs = int32(binary.LittleEndian.Uint32(buf[20:]))
+	}
+	return d
 }
+
+// ReconnectResult 重连结果码
+const (
+	ReconnectSuccess         byte = 1 // 成功
+	ReconnectFail            byte = 0 // 通用失败
+	ReconnectFailBufferStale byte = 2 // lastFrame 已超出环形缓冲区，需要降级到快照重连
+)
 
 // PlayerInput 单个玩家输入
 type PlayerInput struct {
@@ -207,15 +223,14 @@ func DecodeUploadSnapshot(data []byte) (frameNumber uint32, snapshotData []byte)
 	return
 }
 
-// EncodeReconnectRspWithSnapshot 编码带快照的重连响应
-// Wire: [Success:1][RoomId:4][ServerFrame:4][SnapshotFrame:4][SnapshotData:N]
-func EncodeReconnectRspWithSnapshot(success bool, roomId int32, serverFrame uint32, snapshotFrame uint32, snapshotData []byte) []byte {
-	headerSize := 1 + 4 + 4 + 4 // success + roomId + serverFrame + snapshotFrame
+// EncodeReconnectRsp 编码重连响应
+// Wire: [Result:1][RoomId:4][ServerFrame:4][SnapshotFrame:4][SnapshotData:N]
+// Result: 0=失败, 1=成功, 2=缓冲区过期(需降级到快照重连)
+func EncodeReconnectRsp(result byte, roomId int32, serverFrame uint32, snapshotFrame uint32, snapshotData []byte) []byte {
+	headerSize := 1 + 4 + 4 + 4 // result + roomId + serverFrame + snapshotFrame
 	buf := make([]byte, headerSize+len(snapshotData))
 
-	if success {
-		buf[0] = 1
-	}
+	buf[0] = result
 	binary.LittleEndian.PutUint32(buf[1:], uint32(roomId))
 	binary.LittleEndian.PutUint32(buf[5:], serverFrame)
 	binary.LittleEndian.PutUint32(buf[9:], snapshotFrame)
