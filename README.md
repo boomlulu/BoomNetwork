@@ -181,6 +181,7 @@ cd svr && go run ./cmd/framesync/ -gen-config
 ## 文档
 
 - [Unity 集成指南](doc/unity-integration.md) — 从零接入，30 行代码跑通
+- [API Reference](doc/api-reference.md) — Person / FrameSyncClient / RoomClient 全接口 + 协议命令表
 - [服务器部署指南](doc/deployment.md) — Docker / 二进制 / systemd
 - [框架路线图](TODO/framework-roadmap.md) — 四象限规划
 
