@@ -308,19 +308,19 @@ namespace BoomNetwork.Client.FrameSync
                 OnFrame?.Invoke(frame);
             }
 
-            CheckSnapshotUpload(Prediction?.ConfirmedFrame ?? frame.FrameNumber);
+            CheckSnapshotUpload();
         }
 
-        private void CheckSnapshotUpload(uint frameNumber)
+        private void CheckSnapshotUpload()
         {
             if (SnapshotInterval == 0 || OnTakeSnapshot == null) return;
-            if (frameNumber - _lastSnapshotFrame < SnapshotInterval) return;
+            if (LastFrameNumber - _lastSnapshotFrame < SnapshotInterval) return;
 
             var data = OnTakeSnapshot();
             if (data == null || data.Length == 0) return;
 
-            _lastSnapshotFrame = frameNumber;
-            var encoded = SnapshotCodec.EncodeUploadSnapshot(frameNumber, data);
+            _lastSnapshotFrame = LastFrameNumber;
+            var encoded = SnapshotCodec.EncodeUploadSnapshot(LastFrameNumber, data);
             _session.Send(FrameSyncCmd.UploadSnapshot, encoded);
         }
 
