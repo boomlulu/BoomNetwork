@@ -227,8 +227,10 @@ namespace BoomNetwork.Client.FrameSync
                 LastFrameNumber = context.ServerFrameNumber;
             }
 
-            if (_frameSyncStarted)
+            // 服务器返回的帧号 > 0 说明帧同步仍在运行，恢复为 Syncing
+            if (_frameSyncStarted || context.ServerFrameNumber > 0)
             {
+                _frameSyncStarted = true;
                 CurrentState = State.Syncing;
             }
             else

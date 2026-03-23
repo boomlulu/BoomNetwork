@@ -1,0 +1,15 @@
+# 集成测试配置 — 小缓冲区，用于测试快照重连降级
+addr: ":9000"
+proto: "tcp"
+authToken: ""
+metricsAddr: ""
+playersPerRoom: 4
+frameRate: 20
+# 小缓冲区: 40帧 = 2秒，快速重连能成功，长时间断线会溢出
+frameBufferSize: 40
+snapshotIntervalFrames: 20
+quickReconnectMaxMs: 3000
+disconnectKeepSec: 120
+roomCleanupSec: 30
+maxMessageSize: 65536
+maxMessagesPerSec: 100
