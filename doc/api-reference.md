@@ -266,4 +266,5 @@ interface ISnapshotable
 | 22 | UploadSnapshot | C→S | 上传快照 |
 | 24 | PlayerOffline | S→C | 推送：玩家临时掉线 |
 | 25 | PlayerOnline | S→C | 推送：玩家恢复在线 |
+| 26 | RoomSnapshot | S→C | 推送：房间快照（迟到者加入） |
 | 23 | UploadSnapshotRsp | S→C | 上传确认 |

@@ -380,10 +380,23 @@ func handleJoinRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	// 通知同房其他玩家
 	broadcastToRoom(room, playerId, framesync.CmdPlayerJoined, framesync.EncodePlayerId(playerId))
 
-	// 如果房间已在运行，给新人补发 StartFrameSync
+	// 如果房间已在运行，给迟到者：快照 → StartFrameSync → 补帧
 	if room.IsRunning() {
+		snapshotFrame, snapshotData := room.GetSnapshot()
+		currentFrame := room.CurrentFrameNumber()
+
 		go func() {
 			time.Sleep(10 * time.Millisecond) // 确保 JoinRoomRsp 先到达
+
+			// 1. 下发快照（迟到者用来初始化世界状态）
+			if snapshotData != nil && len(snapshotData) > 0 {
+				snapshotMsg := framesync.EncodeSnapshot(snapshotFrame, snapshotData)
+				conn.Send(&codec.Message{Cmd: framesync.CmdRoomSnapshot, Data: snapshotMsg})
+				log.Printf("[Server] Sent room snapshot to late-join player %d (frame %d, %d bytes)\n",
+					playerId, snapshotFrame, len(snapshotData))
+			}
+
+			// 2. StartFrameSync
 			initData := framesync.InitData{
 				FrameRate:           room.FrameRate(),
 				FrameInterval:       1000 / room.FrameRate(),
@@ -395,8 +408,20 @@ func handleJoinRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 				Cmd:  framesync.CmdStartFrameSync,
 				Data: framesync.EncodeInitData(&initData),
 			})
-			log.Printf("[Server] Sent StartFrameSync to late-join player %d (room %d, frame %d)\n",
-				playerId, room.ID, room.CurrentFrameNumber())
+
+			// 3. 补帧（从快照帧到当前帧）
+			replayFrom := snapshotFrame
+			if replayFrom > 0 && replayFrom < currentFrame {
+				frames := room.GetFramesSince(replayFrom)
+				for _, cf := range frames {
+					conn.Send(&codec.Message{Cmd: framesync.CmdPushFrames, Data: cf.EncodedData})
+				}
+				log.Printf("[Server] Late-join player %d: replayed %d frames (%d→%d)\n",
+					playerId, len(frames), replayFrom+1, currentFrame)
+			}
+
+			log.Printf("[Server] Late-join player %d ready (room %d, frame %d)\n",
+				playerId, room.ID, currentFrame)
 		}()
 	}
 

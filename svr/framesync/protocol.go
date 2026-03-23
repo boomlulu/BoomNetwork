@@ -35,6 +35,7 @@ const (
 	CmdPlayerLeft    = 20
 	CmdPlayerOffline = 24 // 玩家断线（临时，可能重连）
 	CmdPlayerOnline  = 25 // 玩家恢复在线（重连成功）
+	CmdRoomSnapshot  = 26 // 服务器 → 客户端：下发房间快照（迟到者加入用）
 
 	// 快照
 	CmdUploadSnapshot    = 22 // 客户端 → 服务器：上传快照
@@ -214,6 +215,15 @@ func EncodeJoinRoomRsp(playerId int32, roomId int32, existingPlayerIds []int32) 
 func EncodePlayerId(playerId int32) []byte {
 	buf := make([]byte, 4)
 	binary.LittleEndian.PutUint32(buf[0:], uint32(playerId))
+	return buf
+}
+
+// EncodeSnapshot 编码快照（服务器下发 RoomSnapshot 也复用此格式）
+// Wire: [FrameNumber:4][SnapshotData:N]
+func EncodeSnapshot(frameNumber uint32, snapshotData []byte) []byte {
+	buf := make([]byte, 4+len(snapshotData))
+	binary.LittleEndian.PutUint32(buf[0:], frameNumber)
+	copy(buf[4:], snapshotData)
 	return buf
 }
 

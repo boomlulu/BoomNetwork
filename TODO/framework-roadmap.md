@@ -20,7 +20,7 @@
 | 9 | **License** | 无 | MIT / Apache 2.0，开源推广必须有 |
 | 10 | **自动化测试 CI** | 有本地测试脚本 | GitHub Actions: Go test + C# test + Unity EditMode test |
 | 11 | **版本号 + CHANGELOG** | package.json 有 version 但无记录 | 语义化版本 + 每版变更记录 |
-| 12 | **迟到者加入（Late-Join）** | 协议已设计未实现 | JoinRoom 时下发快照+补帧，复用重连链路 |
+| 12 | ~~迟到者加入（Late-Join）~~ | **已完成** | JoinRoom 时下发 RoomSnapshot+补帧，复用重连链路 |
 
 ## 三、紧急不重要（快速解决，提升第一印象）
 

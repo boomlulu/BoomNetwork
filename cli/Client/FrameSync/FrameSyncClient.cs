@@ -290,6 +290,10 @@ namespace BoomNetwork.Client.FrameSync
                         OnPlayerOnline?.Invoke(BinaryPrimitives.ReadInt32LittleEndian(msg.DataSpan));
                     break;
 
+                case FrameSyncCmd.RoomSnapshot:
+                    HandleRoomSnapshot(msg);
+                    break;
+
                 case FrameSyncCmd.PushFrames:
                     HandlePushFrames(msg);
                     break;
@@ -299,6 +303,22 @@ namespace BoomNetwork.Client.FrameSync
                     break;
 
                 // HeartbeatRsp 由 ConnectionManager 处理，不到这里
+            }
+        }
+
+        private void HandleRoomSnapshot(Message msg)
+        {
+            // Wire: [FrameNumber:4][SnapshotData:N]（与 UploadSnapshot 格式相同）
+            if (msg.DataLength < 4) return;
+
+            uint snapshotFrame = BinaryPrimitives.ReadUInt32LittleEndian(msg.DataSpan);
+            byte[] snapshotData = msg.DataSpan.Slice(4).ToArray();
+
+            if (snapshotData.Length > 0)
+            {
+                OnLoadSnapshot?.Invoke(snapshotData);
+                LastFrameNumber = snapshotFrame;
+                _lastSnapshotFrame = snapshotFrame;
             }
         }
 
