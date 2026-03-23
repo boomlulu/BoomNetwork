@@ -2,52 +2,81 @@
 
 ## 一、紧急且重要（立即做，阻断别人使用）
 
-| # | 任务 | 现状 | 目标 |
+| # | 任务 | 状态 | 说明 |
 |---|------|------|------|
-| 1 | **README + Quick Start** | 无 | 5 分钟跑通：克隆→启动服务器→Unity 连接→看到方块移动 |
-| 2 | **Unity 集成指南** | 无 | 最小接入代码：添加 UPM 包→创建 Person→连接→收帧→渲染 |
-| 3 | **服务器部署** | 只有 go run | Dockerfile + docker-compose + 编译好的二进制发布 |
-| 4 | **API Reference** | 代码注释散落 | Person / FrameSyncClient / RoomClient 关键接口 + 事件 + 生命周期 |
+| 1 | README + Quick Start | **已完成** | 5 分钟跑通：克隆→启动服务器→Unity 连接→方块移动 |
+| 2 | Unity 集成指南 | **已完成** | 30 行代码接入，Person 生命周期 + 事件一览 |
+| 3 | 服务器部署 | **已完成** | Dockerfile + docker-compose + 二进制编译 + systemd |
+| 4 | API Reference | **已完成** | Person / FrameSyncClient / RoomClient 全接口 + 26 条协议命令表 |
 
 ## 二、重要不紧急（质量保障，早做少踩坑）
 
-| # | 任务 | 现状 | 目标 |
+| # | 任务 | 状态 | 说明 |
 |---|------|------|------|
-| 5 | **协议文档** | Wire format 在代码注释中 | Cmd 列表 + 二进制格式表，非 C# 客户端可据此接入 |
-| 6 | **生命周期流程图** | 讨论过未落地 | 连接→房间→帧同步→断线→重连 完整状态机图（Mermaid） |
-| 7 | **错误码文档** | ErrorCode 枚举散落 | 所有错误码 + 触发场景 + 客户端推荐处理方式 |
-| 8 | **config.yaml 参数文档** | 文件内有注释 | 独立文档：参数含义、推荐值、参数间关系、调优指南 |
-| 9 | **License** | 无 | MIT / Apache 2.0，开源推广必须有 |
-| 10 | **自动化测试 CI** | 有本地测试脚本 | GitHub Actions: Go test + C# test + Unity EditMode test |
-| 11 | **版本号 + CHANGELOG** | package.json 有 version 但无记录 | 语义化版本 + 每版变更记录 |
-| 12 | ~~迟到者加入（Late-Join）~~ | **已完成** | JoinRoom 时下发 RoomSnapshot+补帧，复用重连链路 |
+| 5 | 协议文档 | 待做 | Cmd 列表 + 二进制 Wire format，非 C# 客户端可据此接入 |
+| 6 | 生命周期流程图 | 待做 | 连接→房间→帧同步→断线→重连 完整状态机（Mermaid） |
+| 7 | 错误码文档 | 待做 | 所有 ErrorCode + 触发场景 + 客户端推荐处理方式 |
+| 8 | config.yaml 参数文档 | 待做 | 独立文档：参数含义、推荐值、参数间关系、调优指南 |
+| 9 | License | **已完成** | MIT |
+| 10 | 自动化测试 CI | 待做 | GitHub Actions: Go test + C# test + Unity EditMode test |
+| 11 | 版本号 + CHANGELOG | 待做 | 语义化版本 + 每版变更记录 |
+| 12 | 迟到者加入 (Late-Join) | **已完成** | JoinRoom 时下发 RoomSnapshot + 补帧 |
 
 ## 三、紧急不重要（快速解决，提升第一印象）
 
-| # | 任务 | 现状 | 目标 |
+| # | 任务 | 状态 | 说明 |
 |---|------|------|------|
-| 13 | **Demo 场景整理** | Demo01/Demo01.1/Demo02 混在一起 | 统一入口场景 + 场景切换菜单，新用户不迷路 |
-| 14 | **ServerWindow 优化** | 能用但粗糙 | 显示服务器运行状态、连接数、当前房间数 |
-| 15 | **HUD 美化** | OnGUI 硬编码 | 基础 UI 样式统一，不丢面子 |
+| 13 | Demo 场景整理 | **已完成** | DemoLauncher 入口 + 场景切换菜单 |
+| 14 | ServerWindow 优化 | **已完成** | TCP 探测显示 RUNNING/STOPPED + 按钮互斥 |
+| 15 | HUD 美化 | **已完成** | HUDStyles 共享样式 + 状态颜色语义化 + World Hash |
 
 ## 四、不紧急不重要（锦上添花，有余力再做）
 
-| # | 任务 | 说明 |
-|---|------|------|
-| 16 | 性能基准报告 | N 客户端、帧率、延迟、内存的量化数据 |
-| 17 | 多语言客户端示例 | TypeScript / Lua / Go 客户端（有协议文档就能做） |
-| 18 | 服务器集群方案 | 多房间服务器横向扩展、负载均衡 |
-| 19 | 加密传输 | TLS / KCP 加密选项 |
-| 20 | Demo02 预测回滚完善 | 目前只有框架代码，Demo 场景未完成 |
-| 21 | Web 管理后台 | 房间列表、玩家状态、实时监控面板 |
+| # | 任务 | 状态 | 说明 |
+|---|------|------|------|
+| 16 | 性能基准报告 | 待做 | N 客户端、帧率、延迟、内存的量化数据 |
+| 17 | 多语言客户端示例 | 待做 | TypeScript / Lua / Go 客户端 |
+| 18 | 服务器集群方案 | 待做 | 多房间服务器横向扩展、负载均衡 |
+| 19 | 加密传输 | 待做 | TLS / KCP 加密选项 |
+| 20 | Demo02 预测回滚完善 | 待做 | 目前只有框架代码，Demo 场景未完成 |
+| 21 | Web 管理后台 | 待做 | 房间列表、玩家状态、实时监控面板 |
 
 ---
 
-## 建议执行顺序
+# BoomNetwork 框架迭代 — 紧急重要四象限
 
-```
-第一批（1 天）: #1 README → #2 Unity 集成指南 → #9 License
-第二批（1 天）: #3 Dockerfile → #4 API Reference
-第三批（持续）: #5 协议文档 → #6 流程图 → #10 CI
-后续迭代:       #12 Late-Join → #7 错误码 → #11 CHANGELOG
-```
+## 一、紧急且重要（影响核心功能，必须优先）
+
+| # | 任务 | 说明 |
+|---|------|------|
+| F1 | **P1-3 帧号去重与快照冲突** | 同进程多 Person 时，快照加载后补帧被 `_lastProcessedFrame` 去重跳过，Entity 卡在快照位置。需要重新设计帧消费归属 |
+| F2 | **集成测试 Test10 稳定性** | 快照重连后 0 frames，多轮重连导致连接状态混乱。CompositeReconnectStrategy 在 Person 手动重连场景下的鲁棒性 |
+| F3 | **Late-Join 无快照时的兜底** | 迟到者加入时如果服务器还没有快照（没人上传过），只能从空状态开始。需要确保至少有初始快照 |
+
+## 二、重要不紧急（架构改进，提升健壮性）
+
+| # | 任务 | 说明 |
+|---|------|------|
+| F4 | **Person 重连流程收敛** | Person 自己管理重连（reconnectStrategy=null），绕过 CompositeReconnectStrategy。两套重连逻辑维护成本高，应统一 |
+| F5 | **服务器推送房间完整状态** | JoinRoomRsp 带 existingPlayers 但不带状态（在线/掉线）。后续应推送每个玩家的 online/offline 状态 |
+| F6 | **帧同步暂停/恢复机制** | 当前快照过期暂停是服务端静默停帧，客户端不知道。应通知客户端暂停原因 + 恢复事件 |
+| F7 | **KCP 传输层测试覆盖** | TCP 路径测试充分，KCP 路径未在集成测试和 Demo 中覆盖 |
+| F8 | **消息可靠性保障** | 快照上传、重连请求等关键消息无 ACK 重试机制，弱网下可能丢失 |
+
+## 三、紧急不重要（快速改善体验）
+
+| # | 任务 | 说明 |
+|---|------|------|
+| F9 | **Unity Demo 场景 Build Settings** | DemoLauncher 需要手动添加场景到 Build Settings，应自动化或在文档中说明 |
+| F10 | **ServerWindow 显示连接数/房间数** | 当前只显示 RUNNING/STOPPED，可通过 Prometheus metrics 或 API 拉取更多信息 |
+| F11 | **Drop 按钮可配置时长** | Drop1s/Drop8s 写死了，应支持 Inspector 输入自定义断线秒数 |
+
+## 四、不紧急不重要（技术债 + 优化）
+
+| # | 任务 | 说明 |
+|---|------|------|
+| F12 | FrameSyncClient 与 Person 职责边界清理 | FrameSyncClient 有 OnLoadSnapshot 但 Person 也直接调用，职责交叉 |
+| F13 | 重连时 ConnPlayerMap 多次 Store 问题 | 多次快速重连可能导致映射不一致，需要原子化处理 |
+| F14 | Room tickLoop panic 恢复后的状态一致性 | recover 后 running=false 但玩家还在房间里，需要通知客户端 |
+| F15 | 单元测试覆盖率提升 | 当前 Go 12 个 + C# 29 个，Room 的 stepFrame/broadcast 等热路径未覆盖 |
+| F16 | autoroom 模式整合到 YAML 配置 | 目前是命令行 flag，不在 config.yaml 中 |
