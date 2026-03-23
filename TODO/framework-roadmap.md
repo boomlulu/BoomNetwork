@@ -49,9 +49,9 @@
 
 | # | 任务 | 说明 |
 |---|------|------|
-| F1 | **P1-3 帧号去重与快照冲突** | 同进程多 Person 时，快照加载后补帧被 `_lastProcessedFrame` 去重跳过，Entity 卡在快照位置。需要重新设计帧消费归属 |
-| F2 | **集成测试 Test10 稳定性** | 快照重连后 0 frames，多轮重连导致连接状态混乱。CompositeReconnectStrategy 在 Person 手动重连场景下的鲁棒性 |
-| F3 | **Late-Join 无快照时的兜底** | 迟到者加入时如果服务器还没有快照（没人上传过），只能从空状态开始。需要确保至少有初始快照 |
+| F1 | ~~帧号去重与快照冲突~~ | **已修复** — LoadWorldSnapshot 重置 `_lastProcessedFrame=0` |
+| F2 | ~~集成测试 Test10 稳定性~~ | **已修复** — ConnectionManager 防止 Reconnecting 状态下重复触发重连，16/16 全过 |
+| F3 | ~~Late-Join 无快照兜底~~ | **已修复** — 无快照时从缓冲区最旧帧开始补帧（最佳努力） |
 
 ## 二、重要不紧急（架构改进，提升健壮性）
 

@@ -219,6 +219,13 @@ namespace BoomNetwork.Client.Connection
                 return;
             }
 
+            // 正在重连中再次断开 → 忽略，由当前策略处理
+            if (CurrentState == State.Reconnecting)
+            {
+                Log("Already reconnecting, ignoring disconnect");
+                return;
+            }
+
             // 被动断线 → 触发重连
             TransitionTo(State.Reconnecting);
 

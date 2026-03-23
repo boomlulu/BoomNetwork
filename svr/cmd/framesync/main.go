@@ -389,11 +389,21 @@ func handleJoinRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 			time.Sleep(10 * time.Millisecond) // 确保 JoinRoomRsp 先到达
 
 			// 1. 下发快照（迟到者用来初始化世界状态）
+			var replayFrom uint32
 			if snapshotData != nil && len(snapshotData) > 0 {
 				snapshotMsg := framesync.EncodeSnapshot(snapshotFrame, snapshotData)
 				conn.Send(&codec.Message{Cmd: framesync.CmdRoomSnapshot, Data: snapshotMsg})
+				replayFrom = snapshotFrame
 				log.Printf("[Server] Sent room snapshot to late-join player %d (frame %d, %d bytes)\n",
 					playerId, snapshotFrame, len(snapshotData))
+			} else {
+				// 无快照兜底：从缓冲区最旧帧开始补帧（最佳努力）
+				oldestFrame := room.OldestBufferedFrame()
+				if oldestFrame > 0 {
+					replayFrom = oldestFrame - 1 // GetFramesSince 是 afterFrame，所以 -1
+				}
+				log.Printf("[Server] WARNING: No snapshot for late-join player %d, replaying from oldest buffered frame %d\n",
+					playerId, oldestFrame)
 			}
 
 			// 2. StartFrameSync
@@ -409,8 +419,7 @@ func handleJoinRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 				Data: framesync.EncodeInitData(&initData),
 			})
 
-			// 3. 补帧（从快照帧到当前帧）
-			replayFrom := snapshotFrame
+			// 3. 补帧
 			if replayFrom > 0 && replayFrom < currentFrame {
 				frames := room.GetFramesSince(replayFrom)
 				for _, cf := range frames {
