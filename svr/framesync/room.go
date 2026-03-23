@@ -393,7 +393,11 @@ func (r *Room) tickLoop() {
 		case <-ticker.C:
 			r.stepFrame()
 		case <-cleanupTicker.C:
-			r.cleanupDisconnected()
+			removed := r.CleanupDisconnected()
+			for _, id := range removed {
+				r.broadcast(CmdPlayerLeft, EncodePlayerId(id))
+				log.Printf("[Room %d] Player %d removed (disconnect timeout)\n", r.ID, id)
+			}
 		}
 	}
 }
@@ -466,16 +470,20 @@ func (r *Room) stepFrame() {
 	}
 }
 
-func (r *Room) cleanupDisconnected() {
+// CleanupDisconnected 清理超时断线玩家，返回被移除的玩家 ID
+func (r *Room) CleanupDisconnected() []int32 {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	var removed []int32
 	now := time.Now()
 	for id, p := range r.players {
 		if p.State == PlayerDisconnected && now.Sub(p.DisconnectTime) > r.config.DisconnectKeepAlive {
 			delete(r.players, id)
+			removed = append(removed, id)
 		}
 	}
+	return removed
 }
 
 // broadcast 广播（用于非热路径：Start/Stop）

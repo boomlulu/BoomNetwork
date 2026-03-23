@@ -152,10 +152,10 @@ func onClientDisconnect(conn *transport.Conn) {
 	}
 	room := roomVal.(*framesync.Room)
 	room.DisconnectPlayer(playerId)
-	log.Printf("[Server] Player %d disconnected from room %d\n", playerId, room.ID)
+	log.Printf("[Server] Player %d disconnected from room %d (kept for reconnect)\n", playerId, room.ID)
 
-	// 通知同房其他玩家
-	broadcastToRoom(room, playerId, framesync.CmdPlayerLeft, framesync.EncodePlayerId(playerId))
+	// 不广播 PlayerLeft：断线是临时的，玩家保留在房间中等待重连
+	// PlayerLeft 仅在 LeaveRoom 或超时清理时广播
 
 	// 如果房间没有在线玩家了，延迟清理
 	if room.PlayerCount() == 0 {
