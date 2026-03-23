@@ -67,9 +67,9 @@
 
 | # | 任务 | 说明 |
 |---|------|------|
-| F9 | **Unity Demo 场景 Build Settings** | DemoLauncher 需要手动添加场景到 Build Settings，应自动化或在文档中说明 |
-| F10 | **ServerWindow 显示连接数/房间数** | 当前只显示 RUNNING/STOPPED，可通过 Prometheus metrics 或 API 拉取更多信息 |
-| F11 | **Drop 按钮可配置时长** | Drop1s/Drop8s 写死了，应支持 Inspector 输入自定义断线秒数 |
+| F9 | ~~Unity Demo 场景 Build Settings~~ | **已修复** — DemoSceneSetup.cs InitializeOnLoad 自动添加场景 |
+| F10 | ~~ServerWindow 显示连接数/房间数~~ | **已修复** — 通过 Prometheus metrics HTTP 拉取 connections + rooms |
+| F11 | ~~Drop 按钮可配置时长~~ | **已修复** — dropSeconds Inspector 字段，单个 Drop 按钮读取配置 |
 
 ## 四、不紧急不重要（技术债 + 优化）
 
