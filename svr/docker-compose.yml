@@ -1,0 +1,10 @@
+services:
+  framesync:
+    build: .
+    ports:
+      - "9000:9000"   # 帧同步
+      - "9090:9090"   # Prometheus metrics
+    volumes:
+      # 挂载自定义配置（可选，不挂则用默认）
+      - ./cmd/framesync/config.yaml:/etc/boomnetwork/config.yaml:ro
+    restart: unless-stopped
