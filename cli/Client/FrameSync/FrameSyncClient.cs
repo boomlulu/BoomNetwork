@@ -314,12 +314,16 @@ namespace BoomNetwork.Client.FrameSync
         private void CheckSnapshotUpload()
         {
             if (SnapshotInterval == 0 || OnTakeSnapshot == null) return;
-            if (LastFrameNumber - _lastSnapshotFrame < SnapshotInterval) return;
+
+            // 对齐到区间边界：frame 100, 200, 300...
+            // 避免因首次偏移导致后续全部偏移
+            uint boundary = (LastFrameNumber / SnapshotInterval) * SnapshotInterval;
+            if (boundary == 0 || boundary == _lastSnapshotFrame) return;
 
             var data = OnTakeSnapshot();
             if (data == null || data.Length == 0) return;
 
-            _lastSnapshotFrame = LastFrameNumber;
+            _lastSnapshotFrame = boundary;
             var encoded = SnapshotCodec.EncodeUploadSnapshot(LastFrameNumber, data);
             _session.Send(FrameSyncCmd.UploadSnapshot, encoded);
         }
