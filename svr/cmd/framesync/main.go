@@ -450,6 +450,12 @@ func handleRequestStart(conn *transport.Conn, msg *codec.Message) *codec.Message
 		return nil
 	}
 
+	// RequestStart 携带初始快照：在第一帧推送之前存好，避免早期断线无快照
+	if len(msg.Data) > 0 {
+		room.SetInitialSnapshot(msg.Data)
+		log.Printf("[Server] Initial snapshot stored for room %d (%d bytes)\n", room.ID, len(msg.Data))
+	}
+
 	log.Printf("[Server] Player %d requested start room %d (online=%d)\n",
 		playerId, room.ID, room.PlayerCount())
 

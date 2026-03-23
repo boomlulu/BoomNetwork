@@ -131,6 +131,16 @@ namespace BoomNetwork.Client.FrameSync
         }
 
         /// <summary>
+        /// 请求开始帧同步，携带初始快照
+        /// 快照在服务器存好后才广播 StartFrameSync，确保第一帧之前就有快照
+        /// </summary>
+        public void RequestStart(byte[]? initialSnapshot = null)
+        {
+            if (CurrentState != State.WaitingStart) return;
+            _session.Send(FrameSyncCmd.RequestStart, initialSnapshot);
+        }
+
+        /// <summary>
         /// 发送玩家输入
         /// </summary>
         public void SendInput(byte[] data, int dataLength = -1)
@@ -285,20 +295,6 @@ namespace BoomNetwork.Client.FrameSync
             _lastSnapshotFrame = 0;
             CurrentState = State.Syncing;
             OnFrameSyncStart?.Invoke(init);
-
-            // 初始快照：游戏层在 OnFrameSyncStart 中完成初始化后，立即上传 frame 0 快照
-            // 确保帧同步刚开始就有基线快照，避免早期断线时服务器无快照可用
-            UploadInitialSnapshot();
-        }
-
-        private void UploadInitialSnapshot()
-        {
-            if (OnTakeSnapshot == null) return;
-            var data = OnTakeSnapshot();
-            if (data == null || data.Length == 0) return;
-
-            var encoded = SnapshotCodec.EncodeUploadSnapshot(0, data);
-            _session.Send(FrameSyncCmd.UploadSnapshot, encoded);
         }
 
         private void HandlePushFrames(Message msg)

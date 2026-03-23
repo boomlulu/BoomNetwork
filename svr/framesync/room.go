@@ -227,6 +227,16 @@ func (r *Room) CurrentFrameNumber() uint32 {
 	return r.frameNumber
 }
 
+// SetInitialSnapshot 设置初始快照（frame 0，仅在帧同步开始前调用）
+func (r *Room) SetInitialSnapshot(data []byte) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.snapshotFrame = 0
+	r.snapshotData = make([]byte, len(data))
+	copy(r.snapshotData, data)
+	r.snapshotStaleFrames = 0
+}
+
 // UpdateSnapshot 更新房间快照（只接受比当前更新的帧号）
 func (r *Room) UpdateSnapshot(frameNumber uint32, data []byte) bool {
 	r.mu.Lock()
