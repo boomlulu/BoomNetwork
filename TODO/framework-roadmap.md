@@ -27,7 +27,7 @@
 | # | 任务 | 状态 | 说明 |
 |---|------|------|------|
 | 13 | Demo 场景整理 | **已完成** | DemoLauncher 入口 + 场景切换菜单 |
-| 14 | ServerWindow 优化 | **已完成** | TCP 探测显示 RUNNING/STOPPED + 按钮互斥 |
+| 14 | ServerWindow 优化 | **已完成** | HTTP /health 探测（零游戏日志）+ 流量统计面板 + 迁入 GM 工具包 |
 | 15 | HUD 美化 | **已完成** | HUDStyles 共享样式 + 状态颜色语义化 + World Hash |
 
 ## 四、不紧急不重要（锦上添花，有余力再做）
@@ -39,7 +39,7 @@
 | 18 | 服务器集群方案 | 待做 | 多房间服务器横向扩展、负载均衡 |
 | 19 | 加密传输 | 待做 | TLS / KCP 加密选项 |
 | 20 | Demo02 预测回滚完善 | 待做 | 目前只有框架代码，Demo 场景未完成 |
-| 21 | Web 管理后台 | 待做 | 房间列表、玩家状态、实时监控面板 |
+| 21 | Web 管理后台 | **部分完成** | Admin HTTP (:9091) + /health + /stats + GM 工具包。待做：/rooms、/kick、鉴权中间件 |
 
 ---
 
@@ -57,7 +57,7 @@
 
 | # | 任务 | 说明 |
 |---|------|------|
-| F4 | **Person 重连流程收敛** | Person 自己管理重连（reconnectStrategy=null），绕过 CompositeReconnectStrategy。两套重连逻辑维护成本高，应统一 |
+| F4 | ~~Person 重连流程收敛~~ | **已完成** — FrameSyncClient 内置 CompositeReconnectStrategy，Person 瘦身为纯适配器，不再自己管理重连 |
 | F5 | **服务器推送房间完整状态** | JoinRoomRsp 带 existingPlayers 但不带状态（在线/掉线）。后续应推送每个玩家的 online/offline 状态 |
 | F6 | **帧同步暂停/恢复机制** | 当前快照过期暂停是服务端静默停帧，客户端不知道。应通知客户端暂停原因 + 恢复事件 |
 | F7 | **KCP 传输层测试覆盖** | TCP 路径测试充分，KCP 路径未在集成测试和 Demo 中覆盖 |
@@ -75,7 +75,7 @@
 
 | # | 任务 | 说明 |
 |---|------|------|
-| F12 | FrameSyncClient 与 Person 职责边界清理 | FrameSyncClient 有 OnLoadSnapshot 但 Person 也直接调用，职责交叉 |
+| F12 | ~~FrameSyncClient 与 Person 职责边界清理~~ | **已完成** — FrameSyncClient 长生命周期拥有完整网络栈，Person 为纯代理适配器，快照回调统一由 FrameSyncClient 管理 |
 | F13 | 重连时 ConnPlayerMap 多次 Store 问题 | 多次快速重连可能导致映射不一致，需要原子化处理 |
 | F14 | Room tickLoop panic 恢复后的状态一致性 | recover 后 running=false 但玩家还在房间里，需要通知客户端 |
 | F15 | 单元测试覆盖率提升 | 当前 Go 12 个 + C# 29 个，Room 的 stepFrame/broadcast 等热路径未覆盖 |

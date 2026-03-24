@@ -91,13 +91,17 @@ Seq 管理、请求/响应匹配、超时检测。维护已发送消息缓冲区
 - `SnapshotReconnectStrategy` — 全量重置 + 请求快照恢复
 - `CompositeReconnectStrategy` — 按顺序尝试，先快速后降级为快照
 
-### FrameSyncClient — 帧同步
+### FrameSyncClient — 帧同步客户端（长生命周期）
 
-只管帧逻辑。不管连接、心跳、重连（SRP）。
+拥有完整网络栈（Transport + Session + ConnectionManager + RoomClient），一次创建、全程复用。
 
-- `Connect()` → 自动走 连接 → Bind → 等待开始 → 同步中
+- 内置连接、心跳、断线自动重连（CompositeReconnectStrategy）
+- 内置房间管理：CreateRoom / JoinRoom / LeaveRoom
+- 内置快照：定时上传 + 重连恢复 + 迟到者加入
+- `Connect(host, port)` → 创建网络栈 → SessionBind → Connected
 - `SendInput(data)` → 发送玩家输入
 - `OnFrame` → 收到帧数据回调
+- 状态机：`Disconnected → Connecting → Connected → InRoom → Syncing → Reconnecting`
 
 ### Room (Go) — 帧同步房间
 
@@ -108,30 +112,24 @@ Seq 管理、请求/响应匹配、超时检测。维护已发送消息缓冲区
 ## 快速跑起来
 
 ```bash
-# 1. TCP 帧同步服务器
-cd svr && go run ./cmd/framesync/ :9000
+# 1. 用配置文件启动（推荐）
+cd svr && go run ./cmd/framesync/ -config=cmd/framesync/config.yaml
 
-# 2. KCP 帧同步服务器
-cd svr && go run ./cmd/framesync/ -proto=kcp :9000
+# 2. 用命令行参数启动
+cd svr && go run ./cmd/framesync/ -addr=:9000 -proto=tcp -ppr=4
 
-# 3. C# 帧同步客户端测试
+# 3. Admin HTTP 端点验证
+curl http://127.0.0.1:9091/health    # 健康检查
+curl http://127.0.0.1:9091/stats     # 流量统计
+
+# 4. C# 帧同步集成测试
 cd cli && dotnet run --project FrameSyncExample
 
-# 4. 一键全量测试
+# 5. 一键全量测试 (7 项)
 ./test.sh
 
-# 5. 性能基准
+# 6. 性能基准
 ./bench.sh
-
-# 6. TCP 压测 (3000 人)
-cd svr && go run ./cmd/stress/ -rooms=750 -players=4 -duration=10s
-
-# 7. KCP 压测 (1000 人)
-cd svr && go run ./cmd/kcpstress/ -rooms=250 -players=4 -duration=10s
-
-# 8. KCP 单元测试
-cd svr && go run ./cmd/echo/ -proto=kcp :9000 &
-cd cli && dotnet run --project KcpTest
 ```
 
 ---
@@ -139,18 +137,26 @@ cd cli && dotnet run --project KcpTest
 ## C# 接入示例
 
 ```csharp
-// TCP
-var transport = new TcpClientTransport();
-// 或 KCP — 一行切换，其余不变
-// var transport = new KcpClientTransport();
+// 一行创建，内部自动构建 Transport + Session + ConnectionManager + 重连策略
+var client = new FrameSyncClient(heartbeatIntervalMs: 3000, heartbeatTimeoutMs: 10000);
 
-var session = new NetworkSession(transport);
-var reconnect = CompositeReconnectStrategy.Default();
-var connMgr = new ConnectionManager(session, reconnect);
-var client = new FrameSyncClient(session, connMgr);
-
+// 注册事件
+client.OnConnected += () => Console.WriteLine($"Connected as Player {client.PlayerId}");
+client.OnJoinedRoom += (roomId, existing) => Console.WriteLine($"Joined room {roomId}");
+client.OnFrameSyncStart += data => Console.WriteLine($"Syncing at {data.FrameRate} fps");
 client.OnFrame += frame => GameLogic.Execute(frame);
+client.OnReconnected += () => Console.WriteLine("Reconnected automatically");
+
+// 快照回调（重连 + 迟到者加入时恢复状态）
+client.OnTakeSnapshot = () => SerializeGameState();
+client.OnLoadSnapshot = data => RestoreGameState(data);
+
+// 连接 → 建房 → 开始
 client.Connect("127.0.0.1", 9000);
+// ...等 OnConnected 后：
+client.CreateAndJoinRoom(4);
+// ...等 OnJoinedRoom 后：
+client.RequestStart();
 
 // 游戏主循环
 while (running)
@@ -158,6 +164,17 @@ while (running)
     client.Tick(16);
     client.SendInput(myInputData);
 }
+```
+
+### Unity 接入（通过 Person 薄适配器）
+
+```csharp
+// Person 是游戏层的薄包装，内部持有 FrameSyncClient
+var person = new Person();
+person.Connect(networkConfig);
+person.OnConnected += p => Debug.Log($"Player {p.PlayerId} connected");
+person.CreateAndJoinRoom(4);
+person.RequestStart();
 ```
 
 ---
@@ -182,39 +199,37 @@ while (running)
 ## 项目结构
 
 ```
-BoomNetwork/                         8041 行代码 (C# 5737 + Go 2304)
+BoomNetwork/
 ├── cli/                             C# 客户端
-│   ├── Core/                        共享核心
-│   │   ├── Message.cs               消息结构体 (动态包头)
-│   │   ├── Codec/MessageCodec.cs    编解码 (Span, ArrayPool)
-│   │   ├── Framing/                 LengthPrefixFraming + RingBuffer
-│   │   ├── FrameSync/               协议定义 + 帧数据编解码
-│   │   └── Transport/ITransport.cs  传输层接口
+│   ├── Core/                        共享核心（Codec/Framing/FrameSync/Transport）
 │   ├── Client/                      客户端实现
 │   │   ├── Transport/               TcpClientTransport + KcpClientTransport
 │   │   ├── Session/                 NetworkSession (Seq/超时/缓冲)
-│   │   ├── Connection/              ConnectionManager + 3 个重连策略
-│   │   └── FrameSync/               FrameSyncClient
-│   ├── Example/                     Echo 联调测试
-│   ├── FrameSyncExample/            帧同步联调 (心跳+重连)
+│   │   ├── Connection/              ConnectionManager + 重连策略
+│   │   ├── Room/                    RoomClient
+│   │   └── FrameSync/              FrameSyncClient（长生命周期，拥有完整网络栈）
+│   ├── FrameSyncExample/            帧同步集成测试 (15 项)
+│   ├── StressTest/                  压力测试客户端
 │   ├── KcpTest/                     KCP 单元测试 (7 项)
-│   ├── Benchmark/                   BenchmarkDotNet 性能基准
-│   └── Tests/                       单元测试 (19 项) + 跨语言兼容
+│   └── Tests/                       单元测试 (29 项) + 跨语言兼容
 │
 ├── svr/                             Go 服务器
-│   ├── codec/                       编解码 + 帧读写 + 基准测试
+│   ├── codec/                       编解码 + 帧读写
 │   ├── transport/                   TcpServer + KcpServer
 │   ├── session/                     Router 消息路由
-│   ├── framesync/                   协议定义 + Room
-│   └── cmd/
-│       ├── echo/                    Echo 服务器 (TCP/KCP)
-│       ├── framesync/               帧同步服务器 (TCP/KCP)
-│       ├── stress/                  TCP 压测 (3000人)
-│       └── kcpstress/               KCP 压测 (1000人)
+│   ├── framesync/                   协议定义 + Room + RoomManager
+│   └── cmd/framesync/               帧同步服务器
+│       ├── main.go                  消息处理 + 路由
+│       ├── admin.go                 Admin HTTP（/health /stats）
+│       └── stats.go                 流量统计（环形缓冲区）
 │
-├── testdata/                        跨语言兼容 fixture
-├── reports/                         性能报告归档
+├── unity/
+│   ├── com.boom.boomnetwork/        核心 UPM 包（生产用）
+│   │   └── Runtime/Client/          FrameSyncClient + BoomNetworkManager
+│   └── com.boom.boomnetwork.gm/    GM 工具 UPM 包（Editor-only，开发用）
+│       └── Editor/                  AdminClient + ServerWindow
+│
 ├── doc/                             文档
-├── test.sh                          一键全量测试
+├── test.sh                          一键全量测试 (7/7)
 └── bench.sh                         一键性能报告
 ```

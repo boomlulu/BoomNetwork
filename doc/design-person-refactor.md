@@ -1,6 +1,17 @@
 # Person 与 FrameSyncClient 职责边界重构设计
 
-## 现状问题
+> **状态：已实施（2026-03-24）**
+>
+> 本文档为历史设计提案。方案已全部落地：
+> - FrameSyncClient 重构为长生命周期，拥有完整网络栈 → `cli/Client/FrameSync/FrameSyncClient.cs`
+> - Person 瘦身为纯适配器（~80 行）→ `BoomNetworkUnity/Assets/Scripts/Demo/Network/Person.cs`
+> - 集成测试 7/7 通过，FrameSync 15/15
+>
+> 如需了解当前 API，请查阅 [api-reference.md](api-reference.md)
+
+---
+
+## 现状问题（重构前）
 
 ### 1. 每次连接重建整个网络栈
 

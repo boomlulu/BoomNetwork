@@ -153,30 +153,40 @@ KCP 内存高因为每连接维护收发窗口缓冲区。如果连接数 > 3000
 
 ---
 
+## Go 服务端 Admin HTTP
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `adminAddr` | string | `:9091` | Admin HTTP 地址（健康检查 / GM / 流量统计）。空字符串 = 不启用 |
+
+```yaml
+# config.yaml
+adminAddr: ":9091"    # GET /health, GET /stats
+```
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/health` | GET | `{"status":"ok","rooms":N,"players":N,"uptime":"5m3s"}` |
+| `/stats` | GET | 流量统计：`{rx_total_bytes, tx_total_bytes, rx_1min_bytes, tx_1min_bytes, rx_5sec_bytes, tx_5sec_bytes}` |
+
+---
+
 ## 完整配置示例
 
 ```csharp
-// === 生产环境配置 ===
-var transport = new TcpClientTransport();          // 或 KcpClientTransport
-var session = new NetworkSession(transport);
-session.SentBufferCapacity = 512;                  // 保留 25 秒消息缓冲
-
-var strategy = new CompositeReconnectStrategy(
-    (new QuickReconnectStrategy { TimeoutMs = 5000 }, 3),
-    (new SnapshotReconnectStrategy { TimeoutMs = 10000 }, 2)
+// === 生产环境 ===
+// FrameSyncClient 内部自动创建 Transport + Session + ConnectionManager + 重连策略
+var client = new FrameSyncClient(
+    heartbeatIntervalMs: 3000,   // 每 3 秒发心跳
+    heartbeatTimeoutMs: 10000    // 10 秒无回复触发重连
 );
-
-var cm = new ConnectionManager(session, strategy);
-cm.HeartbeatIntervalMs = 3000;
-cm.HeartbeatTimeoutMs = 10000;
-
-var client = new FrameSyncClient(session, cm);
 client.Connect("game.example.com", 9000);
 ```
 
 ```csharp
-// === 测试环境配置（加速验证）===
-var cm = new ConnectionManager(session, strategy);
-cm.HeartbeatIntervalMs = 500;     // 0.5 秒心跳
-cm.HeartbeatTimeoutMs = 2000;     // 2 秒超时
+// === 测试环境（加速验证）===
+var client = new FrameSyncClient(
+    heartbeatIntervalMs: 500,    // 0.5 秒心跳
+    heartbeatTimeoutMs: 2000     // 2 秒超时
+);
 ```

@@ -7,48 +7,71 @@
 Unity Package Manager → Add package from git URL:
 
 ```
-https://github.com/luwenyiCC/BoomNetwork.git?path=unity/com.boom.boomnetwork
+https://github.com/luwenyiCC/BoomNetwork.git?path=unity/com.boom.boomnetwork#dev1.0
 ```
 
-或者本地安装：Add package from disk → 选择 `unity/com.boom.boomnetwork/package.json`
+### GM 工具包（可选，Editor-only）
 
-## 快速接入
+开发期使用，不进客户端 build。提供 ServerWindow（服务器控制 + 流量统计）等 Editor 工具。
 
-1. 创建空 GameObject
-2. 添加 `BoomNetworkManager` 组件
-3. Inspector 中设置 Host / Port / Transport Type
-4. 通过代码注册事件和发送输入：
+```
+https://github.com/luwenyiCC/BoomNetwork.git?path=unity/com.boom.boomnetwork.gm#dev1.0
+```
+
+## 两种接入方式
+
+### 方式一：BoomNetworkManager（拖组件）
 
 ```csharp
 var network = GetComponent<BoomNetworkManager>();
-
-// 注册帧回调
-network.Client.OnFrame += frame => {
-    // 执行游戏逻辑
-};
-
-// 连接
+network.Client.OnFrame += frame => { /* 执行游戏逻辑 */ };
 network.Connect();
-
-// 发送输入
 network.SendInput(myInputBytes);
 ```
 
-## Inspector 参数
+Inspector 参数：
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | Host | 127.0.0.1 | 服务器地址 |
 | Port | 9000 | 服务器端口 |
-| Transport Type | TCP | TCP 或 KCP |
 | Heartbeat Interval | 3000ms | 心跳发送间隔 |
 | Heartbeat Timeout | 10000ms | 心跳超时判定断线 |
-| Quick Reconnect Attempts | 3 | 快速重连尝试次数 |
-| Snapshot Reconnect Attempts | 2 | 快照重连尝试次数 |
 | Log Enabled | true | 是否输出 Debug.Log |
+
+### 方式二：Person 薄适配器（推荐用于 Demo / 多客户端）
+
+```csharp
+var person = new Person();
+person.Connect(networkConfig);
+person.OnConnected += p => Debug.Log($"Player {p.PlayerId}");
+person.OnFrame += (p, frame) => ApplyFrame(frame);
+person.CreateAndJoinRoom(4);
+person.RequestStart();
+
+// 游戏循环
+person.Tick(Time.deltaTime * 1000f);
+person.SendInput(inputBytes);
+```
+
+Person 是纯代理，所有网络能力来自内部的 FrameSyncClient。
 
 ## 服务器
 
 ```bash
-cd svr && go run ./cmd/framesync/ :9000
+# 用配置文件启动（推荐）
+cd svr && go run ./cmd/framesync/ -config=cmd/framesync/config.yaml
+
+# 验证 Admin HTTP
+curl http://127.0.0.1:9091/health
+curl http://127.0.0.1:9091/stats
 ```
+
+## GM 工具包
+
+安装 `com.boom.boomnetwork.gm` 后，菜单栏出现 **BoomNetwork / Server Window**：
+
+- 服务器状态：RUNNING / STOPPED + 房间数 + 玩家数 + 运行时长
+- 流量统计：总量 / 近 1 分钟 / 近 5 秒速率
+- 一键启动 / 停止服务器
+- 通过 HTTP /health 探测，不走 TCP 游戏协议，零日志噪声

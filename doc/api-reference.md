@@ -35,7 +35,8 @@ public enum PersonState { Idle, Connecting, Connected, InRoom, Syncing, Disconne
 | `SimulateNetworkDrop()` | 测试用：只断 TCP，保留身份，触发断线流程 |
 | `Disconnect()` | 断开连接，保留身份（可重连） |
 | `DisconnectAndClear()` | 断开连接，清除身份（不可重连） |
-| `GetRoomClient()` | 获取底层 RoomClient（高级用法） |
+| `GetRooms(Action<RoomInfo[]>)` | 获取房间列表 |
+| `CreateRoom(int maxPlayers, Action<int>)` | 创建房间，回调返回 roomId |
 | `GetFrameSyncInitData()` | 获取服务器下发的帧同步配置 |
 | `SetPrediction(PredictionManager)` | 设置预测管理器（启用预测模式） |
 | `ClearPrediction()` | 关闭预测模式 |
@@ -67,16 +68,23 @@ public enum PersonState { Idle, Connecting, Connected, InRoom, Syncing, Disconne
 
 ---
 
-## FrameSyncClient（底层组件）
+## FrameSyncClient（核心组件）
 
-帧同步状态机，管理 SessionBind、帧接收、输入发送、快照上传。
+长生命周期的帧同步客户端，拥有完整网络栈。一次创建、全程复用，不因断线重建。
 
-> 通常通过 Person 使用，不直接操作。
+> 直接使用或通过 Person 薄适配器使用。
+
+### 构造函数
+
+```csharp
+// 内部自动创建 Transport + Session + ConnectionManager + CompositeReconnectStrategy + RoomClient
+var client = new FrameSyncClient(heartbeatIntervalMs: 3000, heartbeatTimeoutMs: 10000);
+```
 
 ### 状态
 
 ```csharp
-public enum State { Disconnected, Binding, WaitingStart, Syncing, Stopped }
+public enum State { Disconnected, Connecting, Connected, InRoom, Syncing, Reconnecting }
 ```
 
 ### 属性
@@ -84,62 +92,61 @@ public enum State { Disconnected, Binding, WaitingStart, Syncing, Stopped }
 | 属性 | 类型 | 说明 |
 |------|------|------|
 | `CurrentState` | `State` | 当前状态 |
-| `PlayerId` | `int` | 绑定的玩家 ID |
+| `PlayerId` | `int` | SessionBind 分配的玩家 ID |
+| `RoomId` | `int` | 当前房间 ID |
 | `InitData` | `FrameSyncInitData?` | 服务器下发的帧同步配置 |
 | `LastFrameNumber` | `uint` | 最后处理的帧号 |
 | `SnapshotInterval` | `uint` | 快照上传间隔（帧数），由服务器下发覆盖 |
+| `HasPreviousIdentity` | `bool` | 断线后是否保留身份（PlayerId > 0 且 RoomId > 0） |
 | `Prediction` | `PredictionManager?` | 预测管理器（null=传统模式） |
 
 ### 方法
 
 | 方法 | 说明 |
 |------|------|
-| `Connect(string host, int port)` | 连接并自动 SessionBind |
-| `Tick(float deltaTimeMs)` | 每帧调用 |
-| `RequestStart(byte[]? initialSnapshot)` | 请求开始，携带初始快照 |
-| `SendInput(byte[] data, int dataLength)` | 发送输入 |
-| `Disconnect()` | 断开 |
-| `ResumeAsSyncing(int playerId)` | 重连后恢复为 Syncing |
-| `ResumeAsWaiting(int playerId)` | 重连后恢复为 WaitingStart |
+| **生命周期** | |
+| `Connect(string host, int port)` | 连接服务器（首次创建网络栈，后续复用） |
+| `Tick(float deltaTimeMs)` | **每帧调用**，驱动网络收发和心跳 |
+| `Disconnect()` | 断开连接，保留身份（可重连） |
+| `DisconnectAndClear()` | 断开连接，清除身份（不可重连） |
+| `SimulateNetworkDrop()` | 测试用：只断 TCP，触发正常断线→重连 |
+| **房间** | |
+| `GetRooms(Action<RoomInfo[]>)` | 获取房间列表 |
+| `CreateRoom(int maxPlayers, Action<int>?)` | 创建房间 |
+| `JoinRoom(int roomId)` | 加入指定房间 |
+| `CreateAndJoinRoom(int maxPlayers)` | 创建并加入（二合一） |
+| `LeaveRoom()` | 离开当前房间 |
+| **帧同步** | |
+| `RequestStart()` | 请求开始帧同步（自动携带初始快照） |
+| `SendInput(byte[] data, int dataLength)` | 发送玩家输入 |
 | `PredictWithInput(float deltaTimeMs, byte[] localInput)` | 预测模式每帧调用 |
 
 ### 事件
 
-| 事件 | 签名 | 说明 |
-|------|------|------|
-| `OnBound` | `Action<int>` | SessionBind 成功（playerId） |
+| 事件 | 签名 | 触发时机 |
+|------|------|---------|
+| `OnConnected` | `Action` | SessionBind 成功 |
+| `OnJoinedRoom` | `Action<int, int[]>` | 加入房间（roomId, existingPlayerIds） |
+| `OnReady` | `Action` | 首次加入 或 重连成功（统一入口） |
 | `OnFrameSyncStart` | `Action<FrameSyncInitData>` | 帧同步开始 |
-| `OnFrame` | `Action<FrameData>` | 收到帧 |
+| `OnFrame` | `Action<FrameData>` | 收到服务器帧 |
 | `OnFrameSyncStop` | `Action` | 帧同步结束 |
-| `OnPlayerJoined` | `Action<int>` | 玩家加入（服务器推送） |
-| `OnPlayerLeft` | `Action<int>` | 玩家离开（服务器推送） |
-| `OnPlayerOffline` | `Action<int>` | 玩家临时掉线 |
-| `OnPlayerOnline` | `Action<int>` | 玩家恢复在线 |
-| `OnReconnected` | `Action` | 重连成功 |
-| `OnDisconnected` | `Action` | 断开 |
+| `OnPlayerJoined` | `Action<int>` | 其他玩家加入 |
+| `OnPlayerLeft` | `Action<int>` | 其他玩家离开 |
+| `OnPlayerOffline` | `Action<int>` | 其他玩家临时掉线 |
+| `OnPlayerOnline` | `Action<int>` | 其他玩家恢复在线 |
+| `OnReconnected` | `Action` | 断线自动重连成功 |
+| `OnDisconnected` | `Action` | 连接断开（所有策略耗尽） |
+| `OnLeftRoom` | `Action<int>` | 离开房间（oldPlayerId） |
 | `OnError` | `Action<NetworkError>` | 错误 |
+| `OnLog` | `Action<string>` | 内部日志（含 ConnectionManager） |
 
----
+### 快照回调
 
-## RoomClient（底层组件）
-
-房间 CRUD，通常通过 Person 使用。
-
-### 方法
-
-| 方法 | 签名 | 说明 |
+| 回调 | 类型 | 说明 |
 |------|------|------|
-| `GetRooms` | `(Action<RoomInfo[]> onResult)` | 获取房间列表 |
-| `CreateRoom` | `(int maxPlayers, Action<int>? onCreated)` | 创建房间，回调返回 roomId |
-| `JoinRoom` | `(int roomId, Action<int, int, int[]>? onJoined)` | 加入房间，回调返回 (playerId, roomId, existingPlayerIds) |
-| `LeaveRoom` | `(Action? onLeft)` | 离开房间 |
-
-### 属性
-
-| 属性 | 说明 |
-|------|------|
-| `CurrentRoomId` | 当前房间 ID |
-| `MyPlayerId` | 本客户端玩家 ID |
+| `OnTakeSnapshot` | `Func<byte[]?>` | 序列化当前状态。自动按服务器配置的间隔调用 |
+| `OnLoadSnapshot` | `Action<byte[]>` | 恢复状态。重连 / 迟到加入时调用 |
 
 ---
 
