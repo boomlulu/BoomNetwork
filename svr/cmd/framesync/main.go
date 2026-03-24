@@ -96,7 +96,13 @@ func main() {
 	// 快照
 	router.On(framesync.CmdUploadSnapshot, handleUploadSnapshot)
 
-	server := transport.NewServer(*proto, router.AsTransportHandler())
+	// 在 router 外层包一层 RX 计数
+	baseHandler := router.AsTransportHandler()
+	rxHandler := func(conn *transport.Conn, msg *codec.Message) {
+		Stats.RecordRx(int64(len(msg.Data)))
+		baseHandler(conn, msg)
+	}
+	server := transport.NewServer(*proto, rxHandler)
 	server.SetOnDisconnect(onClientDisconnect)
 
 	// 安全配置
@@ -327,7 +333,7 @@ func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
 		go func() {
 			frames := room.GetFramesSince(replayFrom)
 			for _, cf := range frames {
-				conn.Send(&codec.Message{Cmd: framesync.CmdPushFrames, Data: cf.EncodedData})
+				sendMsg(conn, &codec.Message{Cmd: framesync.CmdPushFrames, Data: cf.EncodedData})
 			}
 			log.Printf("[Server] Player %d replayed %d frames (%d→%d)\n", playerId, len(frames), replayFrom+1, currentFrame)
 		}()
@@ -412,7 +418,7 @@ func handleJoinRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 			var replayFrom uint32
 			if snapshotData != nil && len(snapshotData) > 0 {
 				snapshotMsg := framesync.EncodeSnapshot(snapshotFrame, snapshotData)
-				conn.Send(&codec.Message{Cmd: framesync.CmdRoomSnapshot, Data: snapshotMsg})
+				sendMsg(conn, &codec.Message{Cmd: framesync.CmdRoomSnapshot, Data: snapshotMsg})
 				replayFrom = snapshotFrame
 				log.Printf("[Server] Sent room snapshot to late-join player %d (frame %d, %d bytes)\n",
 					playerId, snapshotFrame, len(snapshotData))
@@ -434,7 +440,7 @@ func handleJoinRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 				SnapshotInterval:    int32(cfg.SnapshotIntervalFrames),
 				QuickReconnectMaxMs: int32(cfg.QuickReconnectMaxMs),
 			}
-			conn.Send(&codec.Message{
+			sendMsg(conn, &codec.Message{
 				Cmd:  framesync.CmdStartFrameSync,
 				Data: framesync.EncodeInitData(&initData),
 			})
@@ -443,7 +449,7 @@ func handleJoinRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 			if replayFrom > 0 && replayFrom < currentFrame {
 				frames := room.GetFramesSince(replayFrom)
 				for _, cf := range frames {
-					conn.Send(&codec.Message{Cmd: framesync.CmdPushFrames, Data: cf.EncodedData})
+					sendMsg(conn, &codec.Message{Cmd: framesync.CmdPushFrames, Data: cf.EncodedData})
 				}
 				log.Printf("[Server] Late-join player %d: replayed %d frames (%d→%d)\n",
 					playerId, len(frames), replayFrom+1, currentFrame)
@@ -523,10 +529,18 @@ func handleRequestStart(conn *transport.Conn, msg *codec.Message) *codec.Message
 	return nil
 }
 
+// sendMsg 发送消息并记录 TX 流量
+func sendMsg(conn framesync.PlayerConn, msg *codec.Message) {
+	Stats.RecordTx(int64(len(msg.Data)))
+	conn.Send(msg)
+}
+
 func broadcastToRoom(room *framesync.Room, excludePlayerId int32, cmd byte, data []byte) {
 	msg := &codec.Message{Cmd: cmd, Data: data}
+	n := int64(len(data))
 	room.ForEachOnlinePlayer(func(id int32, conn framesync.PlayerConn) {
 		if id != excludePlayerId {
+			Stats.RecordTx(n)
 			conn.Send(msg)
 		}
 	})
