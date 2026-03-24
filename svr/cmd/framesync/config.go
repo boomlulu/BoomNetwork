@@ -19,6 +19,9 @@ type ServerConfig struct {
 	// 监控
 	MetricsAddr string `yaml:"metricsAddr"`
 
+	// Admin HTTP 服务（健康检查 / GM 操作）
+	AdminAddr string `yaml:"adminAddr"`
+
 	// 房间
 	PlayersPerRoom int `yaml:"playersPerRoom"`
 
@@ -57,6 +60,7 @@ func DefaultConfig() ServerConfig {
 		Proto:          "tcp",
 		AuthToken:      "",
 		MetricsAddr:    ":9090",
+		AdminAddr:      ":9091",
 		PlayersPerRoom: 4,
 
 		FrameRate:              20,
@@ -106,6 +110,9 @@ authToken: ""         # 鉴权 token，空字符串 = 不鉴权
 
 # ===== 监控 =====
 metricsAddr: ":9090"  # Prometheus metrics 地址，空 = 不启用
+
+# ===== Admin HTTP =====
+adminAddr: ":9091"    # 健康检查 / GM 操作地址，空 = 不启用
 
 # ===== 房间 =====
 playersPerRoom: 4     # 默认每房间最大玩家数

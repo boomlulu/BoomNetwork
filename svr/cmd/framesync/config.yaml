@@ -10,6 +10,10 @@ authToken: ""         # 鉴权 token，空字符串 = 不鉴权
 # ===== 监控 =====
 metricsAddr: ":9090"  # Prometheus metrics 地址，空 = 不启用
 
+# ===== Admin HTTP =====
+adminAddr: ":9091"    # 健康检查 / GM 操作地址（空 = 不启用）
+                      # GET /health → 服务器状态 JSON
+
 # ===== 房间 =====
 playersPerRoom: 4     # 默认每房间最大玩家数
 

@@ -21,11 +21,12 @@ import (
 var cfg ServerConfig
 
 var (
-	addr      = flag.String("addr", ":9000", "listen address")
-	proto     = flag.String("proto", "tcp", "protocol: tcp or kcp")
-	ppr       = flag.Int("ppr", 4, "default players per room")
+	addr        = flag.String("addr", ":9000", "listen address")
+	proto       = flag.String("proto", "tcp", "protocol: tcp or kcp")
+	ppr         = flag.Int("ppr", 4, "default players per room")
 	authToken   = flag.String("token", "", "auth token (empty = no auth)")
 	metricsAddr = flag.String("metrics", ":9090", "prometheus metrics address (empty = disabled)")
+	adminAddr   = flag.String("admin", ":9091", "admin HTTP address (empty = disabled)")
 	configFile  = flag.String("config", "", "JSON config file path (overrides flags)")
 	genConfig   = flag.Bool("gen-config", false, "generate default config.json and exit")
 	autoRoom    = flag.Bool("autoroom", false, "auto-assign room on SessionBind (for legacy/stress tests)")
@@ -55,17 +56,19 @@ func main() {
 	cfg = DefaultConfig()
 	if *configFile != "" {
 		cfg = LoadConfig(*configFile)
-		*addr = cfg.Addr
-		*proto = cfg.Proto
-		*ppr = cfg.PlayersPerRoom
-		*authToken = cfg.AuthToken
+		*addr        = cfg.Addr
+		*proto       = cfg.Proto
+		*ppr         = cfg.PlayersPerRoom
+		*authToken   = cfg.AuthToken
 		*metricsAddr = cfg.MetricsAddr
+		*adminAddr   = cfg.AdminAddr
 	} else {
-		cfg.Addr = *addr
-		cfg.Proto = *proto
+		cfg.Addr           = *addr
+		cfg.Proto          = *proto
 		cfg.PlayersPerRoom = *ppr
-		cfg.AuthToken = *authToken
-		cfg.MetricsAddr = *metricsAddr
+		cfg.AuthToken      = *authToken
+		cfg.MetricsAddr    = *metricsAddr
+		cfg.AdminAddr      = *adminAddr
 	}
 
 	// 用配置初始化 RoomManager
@@ -123,6 +126,11 @@ func main() {
 				log.Printf("[Metrics] Failed: %v\n", err)
 			}
 		}()
+	}
+
+	// Admin HTTP server (health check / GM)
+	if *adminAddr != "" {
+		go startAdminServer(*adminAddr)
 	}
 
 	sig := make(chan os.Signal, 1)
