@@ -83,18 +83,18 @@ func main() {
 
 	router := session.NewRouter()
 	// 帧同步
-	router.On(framesync.CmdSessionBind, handleSessionBind)
-	router.On(framesync.CmdRequestStart, handleRequestStart)
-	router.On(framesync.CmdFrameInput, handleFrameInput)
-	router.On(framesync.CmdHeartbeat, handleHeartbeat)
-	router.On(framesync.CmdReconnect, handleReconnect)
+	router.On(framesync.CmdSessionBind, txStats(handleSessionBind))
+	router.On(framesync.CmdRequestStart, txStats(handleRequestStart))
+	router.On(framesync.CmdFrameInput, txStats(handleFrameInput))
+	router.On(framesync.CmdHeartbeat, txStats(handleHeartbeat))
+	router.On(framesync.CmdReconnect, txStats(handleReconnect))
 	// 房间管理
-	router.On(framesync.CmdGetRooms, handleGetRooms)
-	router.On(framesync.CmdCreateRoom, handleCreateRoom)
-	router.On(framesync.CmdJoinRoom, handleJoinRoom)
-	router.On(framesync.CmdLeaveRoom, handleLeaveRoom)
+	router.On(framesync.CmdGetRooms, txStats(handleGetRooms))
+	router.On(framesync.CmdCreateRoom, txStats(handleCreateRoom))
+	router.On(framesync.CmdJoinRoom, txStats(handleJoinRoom))
+	router.On(framesync.CmdLeaveRoom, txStats(handleLeaveRoom))
 	// 快照
-	router.On(framesync.CmdUploadSnapshot, handleUploadSnapshot)
+	router.On(framesync.CmdUploadSnapshot, txStats(handleUploadSnapshot))
 
 	// 在 router 外层包一层 RX 计数
 	baseHandler := router.AsTransportHandler()
@@ -491,7 +491,7 @@ func bindPlayerToRoom(playerId int32, conn *transport.Conn, room *framesync.Room
 	connPlayerMap.Store(conn.ID, playerId)
 	playerRoomMap.Store(playerId, room)
 	playerConnMap.Store(playerId, conn)
-	room.AddPlayer(playerId, conn)
+	room.AddPlayer(playerId, &statsConn{inner: conn}) // 包装连接，自动计入帧推送 TX
 }
 
 func handleRequestStart(conn *transport.Conn, msg *codec.Message) *codec.Message {
@@ -537,11 +537,9 @@ func sendMsg(conn framesync.PlayerConn, msg *codec.Message) {
 
 func broadcastToRoom(room *framesync.Room, excludePlayerId int32, cmd byte, data []byte) {
 	msg := &codec.Message{Cmd: cmd, Data: data}
-	n := int64(len(data))
 	room.ForEachOnlinePlayer(func(id int32, conn framesync.PlayerConn) {
 		if id != excludePlayerId {
-			Stats.RecordTx(n)
-			conn.Send(msg)
+			conn.Send(msg) // TX 由 statsConn 自动计入
 		}
 	})
 }

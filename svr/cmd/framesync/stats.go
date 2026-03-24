@@ -4,6 +4,11 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/boom/boomnetwork/codec"
+	"github.com/boom/boomnetwork/framesync"
+	"github.com/boom/boomnetwork/session"
+	"github.com/boom/boomnetwork/transport"
 )
 
 // ringSize 决定滑动窗口精度：每个槽 = 1 秒，60 槽覆盖 60 秒
@@ -31,6 +36,27 @@ type TrafficTracker struct {
 
 // 全局单例
 var Stats = &TrafficTracker{}
+
+// txStats 包装 router handler，计入响应包的 TX 字节
+func txStats(h session.Handler) session.Handler {
+	return func(conn *transport.Conn, msg *codec.Message) *codec.Message {
+		rsp := h(conn, msg)
+		if rsp != nil {
+			Stats.RecordTx(int64(len(rsp.Data)))
+		}
+		return rsp
+	}
+}
+
+// statsConn 包装连接，自动计入 Send 的 TX 字节（用于 Room 内部帧推送）
+type statsConn struct {
+	inner framesync.PlayerConn
+}
+
+func (sc *statsConn) Send(msg *codec.Message) error {
+	Stats.RecordTx(int64(len(msg.Data)))
+	return sc.inner.Send(msg)
+}
 
 func (t *TrafficTracker) RecordRx(n int64) {
 	if n <= 0 {
