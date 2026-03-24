@@ -1,9 +1,4 @@
 using UnityEngine;
-using BoomNetwork.Core;
-using BoomNetwork.Core.FrameSync;
-using BoomNetwork.Client.Transport;
-using BoomNetwork.Client.Session;
-using BoomNetwork.Client.Connection;
 using BoomNetwork.Client.FrameSync;
 
 namespace BoomNetwork.Unity
@@ -16,7 +11,7 @@ namespace BoomNetwork.Unity
     /// 通过 Client 属性访问 FrameSyncClient 注册事件。
     ///
     /// 生命周期:
-    ///   Awake   → 创建网络组件
+    ///   Awake   → 创建 FrameSyncClient
     ///   Update  → 驱动 Tick
     ///   OnDestroy → 断开连接
     /// </summary>
@@ -25,44 +20,25 @@ namespace BoomNetwork.Unity
         [Header("Server")]
         [SerializeField] private string host = "127.0.0.1";
         [SerializeField] private int port = 9000;
-        [SerializeField] private TransportType transportType = TransportType.TCP;
 
         [Header("Heartbeat")]
         [SerializeField] private float heartbeatIntervalMs = 3000;
         [SerializeField] private float heartbeatTimeoutMs = 10000;
 
-        [Header("Reconnect")]
-        [SerializeField] private int quickReconnectAttempts = 3;
-        [SerializeField] private float quickReconnectTimeoutMs = 5000;
-        [SerializeField] private int snapshotReconnectAttempts = 2;
-        [SerializeField] private float snapshotReconnectTimeoutMs = 10000;
-
         [Header("Debug")]
         [SerializeField] private bool logEnabled = true;
-
-        public enum TransportType { TCP, KCP }
 
         // --- 公开属性 ---
 
         /// <summary>
-        /// 帧同步客户端（注册 OnFrame / OnBound / OnReconnected 等事件）
+        /// 帧同步客户端（注册 OnConnected / OnFrame / OnReconnected 等事件）
         /// </summary>
         public FrameSyncClient Client { get; private set; }
 
         /// <summary>
-        /// 连接管理器（查询连接状态）
-        /// </summary>
-        public ConnectionManager Connection { get; private set; }
-
-        /// <summary>
-        /// 网络会话（底层消息收发）
-        /// </summary>
-        public NetworkSession Session { get; private set; }
-
-        /// <summary>
         /// 是否已连接
         /// </summary>
-        public bool IsConnected => Connection?.CurrentState == ConnectionManager.State.Connected;
+        public bool IsConnected => Client?.CurrentState >= FrameSyncClient.State.Connected;
 
         /// <summary>
         /// 是否在帧同步中
@@ -71,7 +47,7 @@ namespace BoomNetwork.Unity
 
         private void Awake()
         {
-            CreateComponents();
+            CreateClient();
         }
 
         private void Update()
@@ -101,12 +77,12 @@ namespace BoomNetwork.Unity
             port = serverPort;
 
             if (Client == null)
-                CreateComponents();
+                CreateClient();
 
             Client.Connect(host, port);
 
             if (logEnabled)
-                Debug.Log($"[BoomNetwork] Connecting to {host}:{port} via {transportType}");
+                Debug.Log($"[BoomNetwork] Connecting to {host}:{port}");
         }
 
         /// <summary>
@@ -125,43 +101,22 @@ namespace BoomNetwork.Unity
             Client?.SendInput(data, dataLength);
         }
 
-        private void CreateComponents()
+        private void CreateClient()
         {
-            // Transport
-            Core.Transport.ITransport transport = transportType switch
-            {
-                TransportType.KCP => new KcpClientTransport(),
-                _ => new TcpClientTransport(),
-            };
+            Client = new FrameSyncClient(heartbeatIntervalMs, heartbeatTimeoutMs);
 
-            // Session
-            Session = new NetworkSession(transport);
-
-            // Reconnect Strategy
-            var strategy = new CompositeReconnectStrategy(
-                (new QuickReconnectStrategy { TimeoutMs = quickReconnectTimeoutMs }, quickReconnectAttempts),
-                (new SnapshotReconnectStrategy { TimeoutMs = snapshotReconnectTimeoutMs }, snapshotReconnectAttempts)
-            );
-
-            // ConnectionManager
-            Connection = new ConnectionManager(Session, strategy);
-            Connection.HeartbeatIntervalMs = heartbeatIntervalMs;
-            Connection.HeartbeatTimeoutMs = heartbeatTimeoutMs;
-
-            // FrameSyncClient
-            Client = new FrameSyncClient(Session, Connection);
-
-            // Debug logging
             if (logEnabled)
             {
-                Client.OnBound += id => Debug.Log($"[BoomNetwork] Bound as player {id}");
+                Client.OnConnected += () => Debug.Log($"[BoomNetwork] Connected (Player {Client.PlayerId})");
+                Client.OnJoinedRoom += (roomId, existing) =>
+                    Debug.Log($"[BoomNetwork] Joined room {roomId} (existing: [{string.Join(",", existing)}])");
                 Client.OnFrameSyncStart += data =>
                     Debug.Log($"[BoomNetwork] FrameSync started (rate={data.FrameRate}, interval={data.FrameInterval}ms)");
                 Client.OnFrameSyncStop += () => Debug.Log("[BoomNetwork] FrameSync stopped");
                 Client.OnReconnected += () => Debug.Log("[BoomNetwork] Reconnected");
                 Client.OnDisconnected += () => Debug.Log("[BoomNetwork] Disconnected");
                 Client.OnError += err => Debug.LogWarning($"[BoomNetwork] {err}");
-                Connection.OnLog += msg => Debug.Log(msg);
+                Client.OnLog += msg => Debug.Log(msg);
             }
         }
     }
