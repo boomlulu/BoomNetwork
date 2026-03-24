@@ -401,8 +401,9 @@ namespace BoomNetwork.GM.Editor
             try
             {
                 // 杀游戏端口 + admin 端口（同进程，双保险 + go run 子进程兜底）
-                var killCmd = $"lsof -ti:{gamePort},{adminPort} | sort -u | xargs kill -9 2>/dev/null; sleep 0.3; " +
-                              $"lsof -ti:{gamePort},{adminPort} | sort -u | xargs kill -9 2>/dev/null";
+                // -sTCP:LISTEN 只杀监听进程（服务器），不杀客户端连接
+                var killCmd = $"lsof -ti:{gamePort},{adminPort} -sTCP:LISTEN | sort -u | xargs kill -9 2>/dev/null; sleep 0.3; " +
+                              $"lsof -ti:{gamePort},{adminPort} -sTCP:LISTEN | sort -u | xargs kill -9 2>/dev/null";
                 Process.Start(new ProcessStartInfo
                 {
                     FileName = "/bin/bash",
