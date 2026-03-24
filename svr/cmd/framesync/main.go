@@ -385,7 +385,13 @@ func handleJoinRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	// 先取已有玩家列表（新人加入前）
 	existingPlayers := room.GetPlayerIds()
 
-	playerId := nextPlayerId()
+	// 复用 SessionBind 时分配的 playerId，不重新分配
+	val, ok := connPlayerMap.Load(conn.ID)
+	if !ok {
+		log.Printf("[Server] JoinRoom failed: conn %d not bound (SessionBind missing)\n", conn.ID)
+		return &codec.Message{Cmd: framesync.CmdJoinRoomRsp, Data: make([]byte, 8)}
+	}
+	playerId := val.(int32)
 	bindPlayerToRoom(playerId, conn, room)
 
 	log.Printf("[Server] Player %d joined room %d (online=%d/%d, existing=%v)\n",
