@@ -1,0 +1,14 @@
+{
+  "name": "com.boom.boomnetwork.gm",
+  "displayName": "BoomNetwork GM Tools",
+  "version": "0.1.0",
+  "description": "Server admin & GM tools for BoomNetwork (Editor-only). Health check, traffic stats, room management.",
+  "unity": "2021.3",
+  "dependencies": {
+    "com.boom.boomnetwork": "0.1.0"
+  },
+  "author": {
+    "name": "Boom",
+    "url": "https://github.com/luwenyiCC/BoomNetwork"
+  }
+}
