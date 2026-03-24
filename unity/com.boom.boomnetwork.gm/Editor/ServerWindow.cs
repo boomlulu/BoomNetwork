@@ -388,15 +388,39 @@ namespace BoomNetwork.GM.Editor
 
         void StopServer()
         {
-            var port = _addr.TrimStart(':');
+            // 从 adminUrl 提取 admin 端口（http://127.0.0.1:9091 → 9091）
+            var gamePort = _addr.TrimStart(':');
+            var adminPort = "9091";
             try
             {
+                var uri = new Uri(_adminUrl);
+                adminPort = uri.Port.ToString();
+            }
+            catch { }
+
+            try
+            {
+                // 杀游戏端口 + admin 端口（同进程，双保险 + go run 子进程兜底）
+                var killCmd = $"lsof -ti:{gamePort},{adminPort} | sort -u | xargs kill -9 2>/dev/null; sleep 0.3; " +
+                              $"lsof -ti:{gamePort},{adminPort} | sort -u | xargs kill -9 2>/dev/null";
                 Process.Start(new ProcessStartInfo
                 {
                     FileName = "/bin/bash",
-                    Arguments = $"-c \"lsof -ti:{port} -sTCP:LISTEN | xargs kill -9 2>/dev/null\"",
+                    Arguments = $"-c \"{killCmd}\"",
                     UseShellExecute = false, RedirectStandardOutput = true, CreateNoWindow = true,
                 })?.WaitForExit(3000);
+
+                // 验证：/health 应该失败
+                System.Threading.Thread.Sleep(500);
+                var check = _client.FetchHealth();
+                if (check.IsOnline)
+                {
+                    ShowNotification(new GUIContent("Kill failed — server still responding"));
+                    UnityEngine.Debug.LogWarning("[GM] Server still alive after kill. Try manually: " +
+                        $"lsof -ti:{gamePort},{adminPort} | xargs kill -9");
+                    return;
+                }
+
                 _lastAlive = false; _health = default; _stats = default;
                 _messages = Array.Empty<AdminClient.MsgEntry>();
                 _rooms = Array.Empty<AdminClient.RoomDetail>();
