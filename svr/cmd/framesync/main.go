@@ -103,7 +103,13 @@ func main() {
 	baseHandler := router.AsTransportHandler()
 	rxHandler := func(conn *transport.Conn, msg *codec.Message) {
 		GameStats.RecordRx(int64(len(msg.Data)))
-		LogMsg("rx", msg.Cmd, connPid(conn), len(msg.Data))
+		// 关键 RX 消息的日志在 txStats 中带 detail 记录，这里跳过避免双记
+		switch msg.Cmd {
+		case framesync.CmdReconnect, framesync.CmdJoinRoom:
+			// txStats 已处理
+		default:
+			LogMsg("rx", msg.Cmd, connPid(conn), len(msg.Data))
+		}
 		baseHandler(conn, msg)
 	}
 	server := transport.NewServer(*proto, rxHandler)

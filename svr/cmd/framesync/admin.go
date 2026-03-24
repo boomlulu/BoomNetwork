@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -38,6 +39,9 @@ func startAdminServer(addr, token string) {
 	mux.HandleFunc("/rooms", withAuth(token, handleRooms))
 	mux.HandleFunc("/rooms/stop/", withAuth(token, handleStopRoom))
 	mux.HandleFunc("/kick/", withAuth(token, handleKick))
+	mux.HandleFunc("/players/", withAuth(token, handlePlayerDetail))
+	mux.HandleFunc("/perf", withAuth(token, handlePerf))
+	mux.HandleFunc("/rates", withAuth(token, handleRates))
 
 	handler := gmTrafficMiddleware(mux)
 
@@ -281,6 +285,105 @@ func countOnlinePlayers() int {
 		return true
 	})
 	return int(count)
+}
+
+// ===================== GET /players/{pid} (G5) =====================
+
+func handlePlayerDetail(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	pidStr := strings.TrimPrefix(r.URL.Path, "/players/")
+	pid, err := strconv.Atoi(pidStr)
+	if err != nil || pid <= 0 {
+		jsonError(w, http.StatusBadRequest, "invalid player id")
+		return
+	}
+	playerId := int32(pid)
+
+	// 基本信息
+	detail := map[string]interface{}{
+		"id":     playerId,
+		"online": false,
+		"room":   0,
+	}
+
+	// 是否有连接
+	if _, ok := playerConnMap.Load(playerId); ok {
+		detail["online"] = true
+	}
+
+	// 所在房间
+	if roomVal, ok := playerRoomMap.Load(playerId); ok {
+		room := roomVal.(*framesync.Room)
+		detail["room"] = room.ID
+		detail["room_running"] = room.IsRunning()
+		detail["room_frame"] = room.CurrentFrameNumber()
+
+		// 查找该玩家在房间里的状态
+		room.ForEachPlayer(func(p framesync.PlayerInfo) {
+			if p.ID == playerId {
+				detail["state"] = p.State
+				if p.DisconnectTime > 0 {
+					detail["disconnect_time"] = p.DisconnectTime
+				}
+			}
+		})
+	}
+
+	// 最近该玩家的消息（从 MsgLog 筛选）
+	recentMsgs := MsgLog.Recent(100)
+	playerMsgs := make([]MsgEntry, 0)
+	for _, m := range recentMsgs {
+		if m.Pid == playerId {
+			playerMsgs = append(playerMsgs, m)
+			if len(playerMsgs) >= 20 {
+				break
+			}
+		}
+	}
+	detail["recent_messages"] = playerMsgs
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(detail)
+}
+
+// ===================== GET /perf (G6) =====================
+
+func handlePerf(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var memStats runtime.MemStats
+	runtime.ReadMemStats(&memStats)
+
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w,
+		`{"goroutines":%d,"heap_mb":%.2f,"sys_mb":%.2f,"gc_count":%d,"gc_pause_us":%d,"rooms":%d,"players":%d}`,
+		runtime.NumGoroutine(),
+		float64(memStats.HeapAlloc)/(1024*1024),
+		float64(memStats.Sys)/(1024*1024),
+		memStats.NumGC,
+		memStats.PauseNs[(memStats.NumGC+255)%256]/1000, // 最近一次 GC 暂停（微秒）
+		roomMgr.RoomCount(),
+		countOnlinePlayers(),
+	)
+}
+
+// ===================== GET /rates (G8) =====================
+
+func handleRates(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	top := PlayerRates.TopPlayers(20)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(top)
 }
 
 func jsonError(w http.ResponseWriter, code int, msg string) {
