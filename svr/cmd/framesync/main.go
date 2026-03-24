@@ -27,6 +27,7 @@ var (
 	authToken   = flag.String("token", "", "auth token (empty = no auth)")
 	metricsAddr = flag.String("metrics", ":9090", "prometheus metrics address (empty = disabled)")
 	adminAddr   = flag.String("admin", ":9091", "admin HTTP address (empty = disabled)")
+	adminToken  = flag.String("admin-token", "", "admin API bearer token (empty = no auth)")
 	configFile  = flag.String("config", "", "JSON config file path (overrides flags)")
 	genConfig   = flag.Bool("gen-config", false, "generate default config.json and exit")
 	autoRoom    = flag.Bool("autoroom", false, "auto-assign room on SessionBind (for legacy/stress tests)")
@@ -62,6 +63,7 @@ func main() {
 		*authToken   = cfg.AuthToken
 		*metricsAddr = cfg.MetricsAddr
 		*adminAddr   = cfg.AdminAddr
+		*adminToken  = cfg.AdminToken
 	} else {
 		cfg.Addr           = *addr
 		cfg.Proto          = *proto
@@ -69,6 +71,7 @@ func main() {
 		cfg.AuthToken      = *authToken
 		cfg.MetricsAddr    = *metricsAddr
 		cfg.AdminAddr      = *adminAddr
+		cfg.AdminToken     = *adminToken
 	}
 
 	// 用配置初始化 RoomManager
@@ -137,7 +140,7 @@ func main() {
 
 	// Admin HTTP server (health check / GM)
 	if *adminAddr != "" {
-		go startAdminServer(*adminAddr)
+		go startAdminServer(*adminAddr, *adminToken)
 	}
 
 	sig := make(chan os.Signal, 1)

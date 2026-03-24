@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.Net.Http;
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace BoomNetwork.GM.Editor
@@ -7,6 +9,7 @@ namespace BoomNetwork.GM.Editor
     public class AdminClient : IDisposable
     {
         public string BaseUrl { get; set; }
+        public string Token { get; set; }
         public int TimeoutMs { get; set; }
 
         private HttpClient _http;
@@ -14,6 +17,7 @@ namespace BoomNetwork.GM.Editor
         public AdminClient(string baseUrl = "http://127.0.0.1:9091", int timeoutMs = 600)
         {
             BaseUrl = baseUrl;
+            Token = "";
             TimeoutMs = timeoutMs;
             _http = new HttpClient { Timeout = TimeSpan.FromMilliseconds(timeoutMs) };
         }
@@ -46,34 +50,22 @@ namespace BoomNetwork.GM.Editor
         public struct StatsResult
         {
             public bool HasData;
-            // 游戏流量
-            public long GameRxTotal, GameTxTotal;
-            public long GameRx1Min,  GameTx1Min;
-            public long GameRx5Sec,  GameTx5Sec;
-            // GM 流量
-            public long GmRxTotal, GmTxTotal;
-            public long GmRx1Min,  GmTx1Min;
-            public long GmRx5Sec,  GmTx5Sec;
+            public long GameRxTotal, GameTxTotal, GameRx1Min, GameTx1Min, GameRx5Sec, GameTx5Sec;
+            public long GmRxTotal, GmTxTotal, GmRx1Min, GmTx1Min, GmRx5Sec, GmTx5Sec;
         }
 
         public StatsResult FetchStats()
         {
             var r = new StatsResult();
-            var json = Get("/stats");
-            if (json == null) return r;
+            var j = Get("/stats");
+            if (j == null) return r;
             r.HasData     = true;
-            r.GameRxTotal = ParseLong(json, "game_rx_total");
-            r.GameTxTotal = ParseLong(json, "game_tx_total");
-            r.GameRx1Min  = ParseLong(json, "game_rx_1min");
-            r.GameTx1Min  = ParseLong(json, "game_tx_1min");
-            r.GameRx5Sec  = ParseLong(json, "game_rx_5sec");
-            r.GameTx5Sec  = ParseLong(json, "game_tx_5sec");
-            r.GmRxTotal   = ParseLong(json, "gm_rx_total");
-            r.GmTxTotal   = ParseLong(json, "gm_tx_total");
-            r.GmRx1Min    = ParseLong(json, "gm_rx_1min");
-            r.GmTx1Min    = ParseLong(json, "gm_tx_1min");
-            r.GmRx5Sec    = ParseLong(json, "gm_rx_5sec");
-            r.GmTx5Sec    = ParseLong(json, "gm_tx_5sec");
+            r.GameRxTotal = ParseLong(j, "game_rx_total"); r.GameTxTotal = ParseLong(j, "game_tx_total");
+            r.GameRx1Min  = ParseLong(j, "game_rx_1min");  r.GameTx1Min  = ParseLong(j, "game_tx_1min");
+            r.GameRx5Sec  = ParseLong(j, "game_rx_5sec");  r.GameTx5Sec  = ParseLong(j, "game_tx_5sec");
+            r.GmRxTotal   = ParseLong(j, "gm_rx_total");   r.GmTxTotal   = ParseLong(j, "gm_tx_total");
+            r.GmRx1Min    = ParseLong(j, "gm_rx_1min");    r.GmTx1Min    = ParseLong(j, "gm_tx_1min");
+            r.GmRx5Sec    = ParseLong(j, "gm_rx_5sec");    r.GmTx5Sec    = ParseLong(j, "gm_tx_5sec");
             return r;
         }
 
@@ -93,44 +85,90 @@ namespace BoomNetwork.GM.Editor
             return ParseMsgArray(json);
         }
 
-        static MsgEntry[] ParseMsgArray(string json)
+        // ===================== /rooms (G1) =====================
+
+        public struct RoomDetail
         {
-            // 轻量解析 JSON 数组 [{...}, {...}]
-            var entries = new System.Collections.Generic.List<MsgEntry>();
-            int i = 0;
-            while (i < json.Length)
-            {
-                int start = json.IndexOf('{', i);
-                if (start < 0) break;
-                int end = json.IndexOf('}', start);
-                if (end < 0) break;
-                var obj = json.Substring(start, end - start + 1);
-                entries.Add(new MsgEntry
-                {
-                    Ts   = ParseLong(obj, "ts"),
-                    Dir  = ParseStr(obj, "dir"),
-                    Name = ParseStr(obj, "name"),
-                    Cmd  = ParseInt(obj, "cmd"),
-                    Pid  = ParseInt(obj, "pid"),
-                    Size = ParseInt(obj, "size"),
-                });
-                i = end + 1;
-            }
-            return entries.ToArray();
+            public int Id;
+            public bool Running, Paused;
+            public uint FrameNumber;
+            public int FrameRate, MaxPlayers, OnlineCount, TotalPlayers;
+            public PlayerInfo[] Players;
         }
 
-        // ===================== HTTP =====================
+        public struct PlayerInfo
+        {
+            public int Id;
+            public int State; // 0=online, 1=disconnected
+        }
+
+        public RoomDetail[] FetchRooms()
+        {
+            var json = Get("/rooms");
+            if (json == null || json.Length < 3) return Array.Empty<RoomDetail>();
+            return ParseRoomArray(json);
+        }
+
+        // ===================== POST /kick/{pid} (G2) =====================
+
+        public struct ActionResult
+        {
+            public bool Ok;
+            public string Error;
+        }
+
+        public ActionResult KickPlayer(int playerId) => Post($"/kick/{playerId}");
+
+        // ===================== POST /rooms/stop/{id} (G3) =====================
+
+        public ActionResult StopRoom(int roomId) => Post($"/rooms/stop/{roomId}");
+
+        // ===================== HTTP Core =====================
 
         private string Get(string path)
         {
             try
             {
-                var url = BaseUrl.TrimEnd('/') + path;
-                var task = _http.GetStringAsync(url);
+                var req = new HttpRequestMessage(HttpMethod.Get, BaseUrl.TrimEnd('/') + path);
+                AddAuth(req);
+                var task = _http.SendAsync(req);
                 task.Wait(TimeoutMs + 100);
-                return task.IsCompletedSuccessfully ? task.Result : null;
+                if (!task.IsCompletedSuccessfully) return null;
+                var readTask = task.Result.Content.ReadAsStringAsync();
+                readTask.Wait(TimeoutMs);
+                return readTask.IsCompletedSuccessfully ? readTask.Result : null;
             }
             catch { return null; }
+        }
+
+        private ActionResult Post(string path)
+        {
+            try
+            {
+                var req = new HttpRequestMessage(HttpMethod.Post, BaseUrl.TrimEnd('/') + path);
+                AddAuth(req);
+                req.Content = new StringContent("", Encoding.UTF8);
+                var task = _http.SendAsync(req);
+                task.Wait(TimeoutMs + 100);
+                if (!task.IsCompletedSuccessfully)
+                    return new ActionResult { Error = "timeout" };
+                var readTask = task.Result.Content.ReadAsStringAsync();
+                readTask.Wait(TimeoutMs);
+                var json = readTask.IsCompletedSuccessfully ? readTask.Result : "";
+                bool ok = json.Contains("\"ok\":true");
+                string err = ok ? "" : ParseStr(json, "error");
+                return new ActionResult { Ok = ok, Error = err };
+            }
+            catch (Exception e)
+            {
+                return new ActionResult { Error = e.Message };
+            }
+        }
+
+        private void AddAuth(HttpRequestMessage req)
+        {
+            if (!string.IsNullOrEmpty(Token))
+                req.Headers.TryAddWithoutValidation("Authorization", "Bearer " + Token);
         }
 
         // ===================== JSON Parsing =====================
@@ -149,6 +187,11 @@ namespace BoomNetwork.GM.Editor
             return m.Success ? m.Groups[1].Value : "";
         }
 
+        public static bool ParseBool(string j, string k)
+        {
+            return j.Contains($"\"{k}\":true");
+        }
+
         public static string FmtBytes(long b)
         {
             if (b < 0)       return "—";
@@ -156,6 +199,77 @@ namespace BoomNetwork.GM.Editor
             if (b < 1 << 20) return $"{b / 1024.0:F1} KB";
             if (b < 1 << 30) return $"{b / (1024.0 * 1024):F2} MB";
             return $"{b / (1024.0 * 1024 * 1024):F2} GB";
+        }
+
+        // ===================== Array Parsers =====================
+
+        static MsgEntry[] ParseMsgArray(string json)
+        {
+            var list = new List<MsgEntry>();
+            int i = 0;
+            while ((i = json.IndexOf('{', i)) >= 0)
+            {
+                int end = json.IndexOf('}', i);
+                if (end < 0) break;
+                var obj = json.Substring(i, end - i + 1);
+                list.Add(new MsgEntry
+                {
+                    Ts = ParseLong(obj, "ts"), Dir = ParseStr(obj, "dir"),
+                    Name = ParseStr(obj, "name"), Cmd = ParseInt(obj, "cmd"),
+                    Pid = ParseInt(obj, "pid"), Size = ParseInt(obj, "size"),
+                });
+                i = end + 1;
+            }
+            return list.ToArray();
+        }
+
+        static RoomDetail[] ParseRoomArray(string json)
+        {
+            var list = new List<RoomDetail>();
+            // Split rooms by top-level { } (rooms are flat objects with nested players array)
+            int depth = 0, start = -1;
+            for (int i = 0; i < json.Length; i++)
+            {
+                if (json[i] == '{') { if (depth == 0) start = i; depth++; }
+                else if (json[i] == '}') { depth--; if (depth == 0 && start >= 0) {
+                    list.Add(ParseRoom(json.Substring(start, i - start + 1)));
+                    start = -1;
+                }}
+            }
+            return list.ToArray();
+        }
+
+        static RoomDetail ParseRoom(string obj)
+        {
+            var r = new RoomDetail
+            {
+                Id           = ParseInt(obj, "id"),
+                Running      = ParseBool(obj, "running"),
+                Paused       = ParseBool(obj, "paused"),
+                FrameNumber  = (uint)ParseLong(obj, "frame_number"),
+                FrameRate    = ParseInt(obj, "frame_rate"),
+                MaxPlayers   = ParseInt(obj, "max_players"),
+                OnlineCount  = ParseInt(obj, "online_count"),
+                TotalPlayers = ParseInt(obj, "total_players"),
+            };
+
+            // Parse players array
+            var players = new List<PlayerInfo>();
+            int pStart = obj.IndexOf("\"players\":", StringComparison.Ordinal);
+            if (pStart >= 0)
+            {
+                int pi = pStart;
+                while ((pi = obj.IndexOf('{', pi)) >= 0)
+                {
+                    int pe = obj.IndexOf('}', pi);
+                    if (pe < 0) break;
+                    var po = obj.Substring(pi, pe - pi + 1);
+                    players.Add(new PlayerInfo { Id = ParseInt(po, "id"), State = ParseInt(po, "state") });
+                    pi = pe + 1;
+                }
+            }
+            r.Players = players.ToArray();
+            return r;
         }
     }
 }

@@ -231,6 +231,30 @@ func (r *Room) ForEachOnlinePlayer(fn func(id int32, conn PlayerConn)) {
 	}
 }
 
+// PlayerInfo GM 用的玩家信息快照
+type PlayerInfo struct {
+	ID             int32       `json:"id"`
+	State          PlayerState `json:"state"` // 0=online, 1=disconnected
+	DisconnectTime int64       `json:"disconnect_time,omitempty"` // unix ms, 0=online
+}
+
+// ForEachPlayer 遍历所有玩家（含离线），用于 GM 查询
+func (r *Room) ForEachPlayer(fn func(info PlayerInfo)) {
+	r.mu.Lock()
+	infos := make([]PlayerInfo, 0, len(r.players))
+	for _, p := range r.players {
+		info := PlayerInfo{ID: p.ID, State: p.State}
+		if p.State == PlayerDisconnected {
+			info.DisconnectTime = p.DisconnectTime.UnixMilli()
+		}
+		infos = append(infos, info)
+	}
+	r.mu.Unlock()
+	for _, info := range infos {
+		fn(info)
+	}
+}
+
 // CurrentFrameNumber 当前帧号
 func (r *Room) CurrentFrameNumber() uint32 {
 	r.mu.Lock()

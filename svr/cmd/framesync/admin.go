@@ -6,29 +6,67 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/boom/boomnetwork/framesync"
+	"github.com/boom/boomnetwork/transport"
 )
 
 var serverStartTime = time.Now()
 
 // startAdminServer 启动 Admin HTTP 服务
-func startAdminServer(addr string) {
+//
+// 路由：
+//
+//	GET  /health           健康检查（不鉴权）
+//	GET  /stats            流量统计（Game + GM）
+//	GET  /messages         最近 N 条网络消息
+//	GET  /rooms            房间列表 + 玩家详情
+//	POST /kick/{pid}       踢出玩家
+//	POST /rooms/stop/{id}  强停房间
+func startAdminServer(addr, token string) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/health", handleHealth)
-	mux.HandleFunc("/stats", handleStats)
-	mux.HandleFunc("/messages", handleMessages)
 
-	// GM 流量统计中间件
+	// /health 不鉴权（健康检查探针需要无障碍访问）
+	mux.HandleFunc("/health", handleHealth)
+
+	// 其余端点走鉴权
+	mux.HandleFunc("/stats", withAuth(token, handleStats))
+	mux.HandleFunc("/messages", withAuth(token, handleMessages))
+	mux.HandleFunc("/rooms", withAuth(token, handleRooms))
+	mux.HandleFunc("/rooms/stop/", withAuth(token, handleStopRoom))
+	mux.HandleFunc("/kick/", withAuth(token, handleKick))
+
 	handler := gmTrafficMiddleware(mux)
 
 	log.Printf("[Admin] Listening on %s\n", addr)
+	if token != "" {
+		log.Printf("[Admin] Auth enabled (Bearer Token)\n")
+	}
 	if err := http.ListenAndServe(addr, handler); err != nil {
 		log.Printf("[Admin] Failed: %v\n", err)
 	}
 }
 
-// ===================== GM 流量中间件 =====================
+// ===================== Auth Middleware (G4) =====================
+
+func withAuth(token string, next http.HandlerFunc) http.HandlerFunc {
+	if token == "" {
+		return next // 不鉴权
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		if auth != "Bearer "+token {
+			jsonError(w, http.StatusUnauthorized, "invalid or missing token")
+			return
+		}
+		next(w, r)
+	}
+}
+
+// ===================== GM Traffic Middleware =====================
 
 type countingWriter struct {
 	http.ResponseWriter
@@ -43,16 +81,14 @@ func (cw *countingWriter) Write(b []byte) (int, error) {
 
 func gmTrafficMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// RX: 请求 URL + 固定头部估算
 		GmStats.RecordRx(int64(len(r.URL.String()) + 200))
-		// TX: 包装 ResponseWriter 精确计数
 		cw := &countingWriter{ResponseWriter: w}
 		next.ServeHTTP(cw, r)
 		GmStats.RecordTx(cw.bytes)
 	})
 }
 
-// ===================== /health =====================
+// ===================== GET /health =====================
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -68,7 +104,7 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 		rooms, players, uptime)
 }
 
-// ===================== /stats =====================
+// ===================== GET /stats =====================
 
 func handleStats(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -87,7 +123,7 @@ func handleStats(w http.ResponseWriter, r *http.Request) {
 	)
 }
 
-// ===================== /messages =====================
+// ===================== GET /messages =====================
 
 func handleMessages(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -100,10 +136,140 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 			limit = n
 		}
 	}
-
 	msgs := MsgLog.Recent(limit)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(msgs)
+}
+
+// ===================== GET /rooms (G1) =====================
+
+type roomDetail struct {
+	ID           int32                  `json:"id"`
+	Running      bool                   `json:"running"`
+	Paused       bool                   `json:"paused"`
+	FrameNumber  uint32                 `json:"frame_number"`
+	FrameRate    int32                  `json:"frame_rate"`
+	MaxPlayers   int                    `json:"max_players"`
+	OnlineCount  int                    `json:"online_count"`
+	TotalPlayers int                    `json:"total_players"`
+	Players      []framesync.PlayerInfo `json:"players"`
+}
+
+func handleRooms(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	infos := roomMgr.GetAllRoomInfos()
+	rooms := make([]roomDetail, 0, len(infos))
+
+	for _, info := range infos {
+		room := roomMgr.GetRoom(info.RoomId)
+		if room == nil {
+			continue
+		}
+		detail := roomDetail{
+			ID:           room.ID,
+			Running:      room.IsRunning(),
+			Paused:       room.IsSnapshotPaused(),
+			FrameNumber:  room.CurrentFrameNumber(),
+			FrameRate:    room.FrameRate(),
+			MaxPlayers:   room.MaxPlayers(),
+			OnlineCount:  room.PlayerCount(),
+			TotalPlayers: room.TotalPlayerCount(),
+		}
+		room.ForEachPlayer(func(p framesync.PlayerInfo) {
+			detail.Players = append(detail.Players, p)
+		})
+		rooms = append(rooms, detail)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(rooms)
+}
+
+// ===================== POST /kick/{pid} (G2) =====================
+
+func handleKick(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// 从 URL 解析 playerId: /kick/123
+	pidStr := strings.TrimPrefix(r.URL.Path, "/kick/")
+	pid, err := strconv.Atoi(pidStr)
+	if err != nil || pid <= 0 {
+		jsonError(w, http.StatusBadRequest, "invalid player id")
+		return
+	}
+	playerId := int32(pid)
+
+	// 找到玩家所在房间
+	roomVal, ok := playerRoomMap.Load(playerId)
+	if !ok {
+		jsonError(w, http.StatusNotFound, fmt.Sprintf("player %d not in any room", playerId))
+		return
+	}
+	room := roomVal.(*framesync.Room)
+
+	// 从房间移除
+	room.RemovePlayer(playerId)
+	playerRoomMap.Delete(playerId)
+
+	// 断开连接
+	if connVal, ok := playerConnMap.LoadAndDelete(playerId); ok {
+		connVal.(*transport.Conn).Close()
+	}
+
+	// 通知同房其他玩家
+	broadcastToRoom(room, playerId, framesync.CmdPlayerLeft, framesync.EncodePlayerId(playerId))
+
+	log.Printf("[Admin] Kicked player %d from room %d\n", playerId, room.ID)
+
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{"ok":true,"kicked":%d,"room":%d}`, playerId, room.ID)
+}
+
+// ===================== POST /rooms/stop/{id} (G3) =====================
+
+func handleStopRoom(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// 从 URL 解析 roomId: /rooms/stop/123
+	idStr := strings.TrimPrefix(r.URL.Path, "/rooms/stop/")
+	id, err := strconv.Atoi(idStr)
+	if err != nil || id <= 0 {
+		jsonError(w, http.StatusBadRequest, "invalid room id")
+		return
+	}
+	roomId := int32(id)
+
+	room := roomMgr.GetRoom(roomId)
+	if room == nil {
+		jsonError(w, http.StatusNotFound, fmt.Sprintf("room %d not found", roomId))
+		return
+	}
+
+	// 停止帧同步
+	room.Stop()
+
+	// 清理所有玩家的房间映射
+	room.ForEachPlayer(func(p framesync.PlayerInfo) {
+		playerRoomMap.Delete(p.ID)
+	})
+
+	// 从管理器移除
+	roomMgr.RemoveRoom(roomId)
+
+	log.Printf("[Admin] Stopped and removed room %d\n", roomId)
+
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{"ok":true,"stopped":%d}`, roomId)
 }
 
 // ===================== Helpers =====================

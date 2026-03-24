@@ -20,7 +20,8 @@ type ServerConfig struct {
 	MetricsAddr string `yaml:"metricsAddr"`
 
 	// Admin HTTP 服务（健康检查 / GM 操作）
-	AdminAddr string `yaml:"adminAddr"`
+	AdminAddr  string `yaml:"adminAddr"`
+	AdminToken string `yaml:"adminToken"` // Bearer Token 鉴权，空 = 不鉴权
 
 	// 房间
 	PlayersPerRoom int `yaml:"playersPerRoom"`
@@ -61,6 +62,7 @@ func DefaultConfig() ServerConfig {
 		AuthToken:      "",
 		MetricsAddr:    ":9090",
 		AdminAddr:      ":9091",
+		AdminToken:     "",
 		PlayersPerRoom: 4,
 
 		FrameRate:              20,
@@ -113,6 +115,7 @@ metricsAddr: ":9090"  # Prometheus metrics 地址，空 = 不启用
 
 # ===== Admin HTTP =====
 adminAddr: ":9091"    # 健康检查 / GM 操作地址，空 = 不启用
+adminToken: ""        # Admin API 鉴权 Token，空 = 不鉴权
 
 # ===== 房间 =====
 playersPerRoom: 4     # 默认每房间最大玩家数
