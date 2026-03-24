@@ -144,9 +144,9 @@ namespace BoomNetwork.GM.Editor
             EditorGUILayout.LabelField(label, GUILayout.Width(40));
             var prev = GUI.contentColor;
             GUI.contentColor = new Color(0.4f, 0.8f, 1f);
-            EditorGUILayout.LabelField($"↑ {AdminClient.FmtBytes(tx)}{suffix}", GUILayout.Width(100));
+            EditorGUILayout.LabelField($"S→C {AdminClient.FmtBytes(tx)}{suffix}", GUILayout.Width(110));
             GUI.contentColor = new Color(0.5f, 1f, 0.5f);
-            EditorGUILayout.LabelField($"↓ {AdminClient.FmtBytes(rx)}{suffix}");
+            EditorGUILayout.LabelField($"C→S {AdminClient.FmtBytes(rx)}{suffix}");
             GUI.contentColor = prev;
             EditorGUILayout.EndHorizontal();
         }
