@@ -157,17 +157,16 @@ KCP 内存高因为每连接维护收发窗口缓冲区。如果连接数 > 3000
 
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
-| `adminAddr` | string | `:9091` | Admin HTTP 地址（健康检查 / GM / 流量统计）。空字符串 = 不启用 |
+| `adminAddr` | string | `:9091` | Admin HTTP 地址。空 = 不启用 |
+| `adminToken` | string | `""` | Bearer Token 鉴权。空 = 不鉴权 |
 
 ```yaml
 # config.yaml
-adminAddr: ":9091"    # GET /health, GET /stats
+adminAddr: ":9091"
+adminToken: "your-secret"  # 生产环境必须设置
 ```
 
-| 端点 | 方法 | 说明 |
-|------|------|------|
-| `/health` | GET | `{"status":"ok","rooms":N,"players":N,"uptime":"5m3s"}` |
-| `/stats` | GET | 流量统计：`{rx_total_bytes, tx_total_bytes, rx_1min_bytes, tx_1min_bytes, rx_5sec_bytes, tx_5sec_bytes}` |
+9 个端点（监控 / 控制 / 诊断），完整文档见 → [gm-tools.md](gm-tools.md)
 
 ---
 

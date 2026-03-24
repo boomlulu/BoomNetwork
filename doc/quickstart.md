@@ -10,8 +10,9 @@
 | 4 | [sequence-diagrams.md](sequence-diagrams.md) | 6 张时序图：游戏流程、心跳、重连、Tick 内部 | 想理解运行流程的人 |
 | 5 | [configuration.md](configuration.md) | 所有可配参数、默认值、调参建议 | 接入项目时查阅 |
 | 6 | [architecture.md](architecture.md) | 设计原则、分层架构、数据流、线格式、内存策略 | 想深入理解或贡献代码的人 |
-| 7 | [benchmark-report.md](benchmark-report.md) | Codec 基准、TCP/KCP 压测、包头优化效果 | 关心性能的人 |
-| 8 | [roadmap.md](roadmap.md) | 未来规划 v0.1 → v1.0 | 想了解方向的人 |
+| 7 | [gm-tools.md](gm-tools.md) | Admin API + Unity ServerWindow 全部 GM 能力 | 运维 / 开发调试 |
+| 8 | [benchmark-report.md](benchmark-report.md) | Codec 基准、TCP/KCP 压测、包头优化效果 | 关心性能的人 |
+| 9 | [roadmap.md](roadmap.md) | 未来规划 v0.1 → v1.0 | 想了解方向的人 |
 
 ---
 
@@ -118,9 +119,10 @@ cd svr && go run ./cmd/framesync/ -config=cmd/framesync/config.yaml
 # 2. 用命令行参数启动
 cd svr && go run ./cmd/framesync/ -addr=:9000 -proto=tcp -ppr=4
 
-# 3. Admin HTTP 端点验证
+# 3. Admin HTTP 端点验证（完整端点列表见 gm-tools.md）
 curl http://127.0.0.1:9091/health    # 健康检查
 curl http://127.0.0.1:9091/stats     # 流量统计
+curl http://127.0.0.1:9091/rooms     # 房间列表
 
 # 4. C# 帧同步集成测试
 cd cli && dotnet run --project FrameSyncExample

@@ -39,7 +39,7 @@
 | 18 | 服务器集群方案 | 待做 | 多房间服务器横向扩展、负载均衡 |
 | 19 | 加密传输 | 待做 | TLS / KCP 加密选项 |
 | 20 | Demo02 预测回滚完善 | 待做 | 目前只有框架代码，Demo 场景未完成 |
-| 21 | Web 管理后台 | **部分完成** | Admin HTTP (:9091) + /health + /stats + GM 工具包。待做：/rooms、/kick、鉴权中间件 |
+| 21 | Web 管理后台 | **已完成** | Admin HTTP (:9091) 9 个端点：监控(/health /stats /messages /rooms) + 控制(/kick /rooms/stop) + 诊断(/players /perf /rates) + Bearer Token 鉴权 + Unity ServerWindow 三页面板。详见 [gm-tools.md](../doc/gm-tools.md) |
 
 ---
 

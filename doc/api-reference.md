@@ -1,5 +1,8 @@
 # API Reference
 
+> 本文档覆盖 **客户端 API**（Person / FrameSyncClient / ConnectionManager）。
+> **服务器 Admin API**（/health /rooms /kick 等 9 个 GM 端点）见 → [gm-tools.md](gm-tools.md)
+
 ## Person（推荐入口）
 
 `Person` 封装了完整的网络客户端身份，管理 连接→房间→帧同步→重连 全流程。
