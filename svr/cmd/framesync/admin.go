@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"sync/atomic"
 	"time"
 )
@@ -12,53 +13,101 @@ import (
 var serverStartTime = time.Now()
 
 // startAdminServer 启动 Admin HTTP 服务
-//
-// 路由：
-//   GET  /health     服务器健康状态
-//   GET  /stats      流量统计（总量 + 近 1 分钟 + 近 5 秒）
-//
-// 后续扩展示例：
-//   GET  /rooms      房间列表
-//   POST /rooms/{id}/stop   强制停止房间
-//   POST /kick/{pid}        踢出玩家
 func startAdminServer(addr string) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", handleHealth)
 	mux.HandleFunc("/stats", handleStats)
+	mux.HandleFunc("/messages", handleMessages)
+
+	// GM 流量统计中间件
+	handler := gmTrafficMiddleware(mux)
 
 	log.Printf("[Admin] Listening on %s\n", addr)
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	if err := http.ListenAndServe(addr, handler); err != nil {
 		log.Printf("[Admin] Failed: %v\n", err)
 	}
 }
 
-// handleHealth GET /health
-//
-// Response 200:
-//
-//	{
-//	  "status":  "ok",
-//	  "rooms":   3,
-//	  "players": 12,
-//	  "uptime":  "1h23m45s"
-//	}
+// ===================== GM 流量中间件 =====================
+
+type countingWriter struct {
+	http.ResponseWriter
+	bytes int64
+}
+
+func (cw *countingWriter) Write(b []byte) (int, error) {
+	n, err := cw.ResponseWriter.Write(b)
+	cw.bytes += int64(n)
+	return n, err
+}
+
+func gmTrafficMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// RX: 请求 URL + 固定头部估算
+		GmStats.RecordRx(int64(len(r.URL.String()) + 200))
+		// TX: 包装 ResponseWriter 精确计数
+		cw := &countingWriter{ResponseWriter: w}
+		next.ServeHTTP(cw, r)
+		GmStats.RecordTx(cw.bytes)
+	})
+}
+
+// ===================== /health =====================
+
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-
 	rooms := roomMgr.RoomCount()
 	players := countOnlinePlayers()
 	uptime := time.Since(serverStartTime).Truncate(time.Second).String()
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
 	fmt.Fprintf(w, `{"status":"ok","rooms":%d,"players":%d,"uptime":%q}`,
 		rooms, players, uptime)
 }
 
-// countOnlinePlayers 统计当前在线玩家数（已 SessionBind 的连接）
+// ===================== /stats =====================
+
+func handleStats(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	g := GameStats.Snapshot()
+	m := GmStats.Snapshot()
+
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w,
+		`{"game_rx_total":%d,"game_tx_total":%d,"game_rx_1min":%d,"game_tx_1min":%d,"game_rx_5sec":%d,"game_tx_5sec":%d,`+
+			`"gm_rx_total":%d,"gm_tx_total":%d,"gm_rx_1min":%d,"gm_tx_1min":%d,"gm_rx_5sec":%d,"gm_tx_5sec":%d}`,
+		g.RxTotal, g.TxTotal, g.Rx1Min, g.Tx1Min, g.Rx5Sec, g.Tx5Sec,
+		m.RxTotal, m.TxTotal, m.Rx1Min, m.Tx1Min, m.Rx5Sec, m.Tx5Sec,
+	)
+}
+
+// ===================== /messages =====================
+
+func handleMessages(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	limit := 100
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 500 {
+			limit = n
+		}
+	}
+
+	msgs := MsgLog.Recent(limit)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(msgs)
+}
+
+// ===================== Helpers =====================
+
 func countOnlinePlayers() int {
 	var count int64
 	connPlayerMap.Range(func(_, _ any) bool {
@@ -68,32 +117,6 @@ func countOnlinePlayers() int {
 	return int(count)
 }
 
-// handleStats GET /stats
-//
-// Response 200:
-//
-//	{
-//	  "rx_total_bytes": 1234567,
-//	  "tx_total_bytes": 2345678,
-//	  "rx_1min_bytes":  12345,
-//	  "tx_1min_bytes":  23456,
-//	  "rx_5sec_bytes":  1234,
-//	  "tx_5sec_bytes":  2345
-//	}
-func handleStats(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	s := Stats.Snapshot()
-	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w,
-		`{"rx_total_bytes":%d,"tx_total_bytes":%d,"rx_1min_bytes":%d,"tx_1min_bytes":%d,"rx_5sec_bytes":%d,"tx_5sec_bytes":%d}`,
-		s.RxTotal, s.TxTotal, s.Rx1MinBytes, s.Tx1MinBytes, s.Rx5SecBytes, s.Tx5SecBytes,
-	)
-}
-
-// jsonError 统一错误响应格式（供后续 GM 接口使用）
 func jsonError(w http.ResponseWriter, code int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)

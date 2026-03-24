@@ -96,10 +96,11 @@ func main() {
 	// 快照
 	router.On(framesync.CmdUploadSnapshot, txStats(handleUploadSnapshot))
 
-	// 在 router 外层包一层 RX 计数
+	// 在 router 外层包一层 RX 计数 + 消息日志
 	baseHandler := router.AsTransportHandler()
 	rxHandler := func(conn *transport.Conn, msg *codec.Message) {
-		Stats.RecordRx(int64(len(msg.Data)))
+		GameStats.RecordRx(int64(len(msg.Data)))
+		LogMsg("rx", msg.Cmd, connPid(conn), len(msg.Data))
 		baseHandler(conn, msg)
 	}
 	server := transport.NewServer(*proto, rxHandler)
@@ -491,7 +492,7 @@ func bindPlayerToRoom(playerId int32, conn *transport.Conn, room *framesync.Room
 	connPlayerMap.Store(conn.ID, playerId)
 	playerRoomMap.Store(playerId, room)
 	playerConnMap.Store(playerId, conn)
-	room.AddPlayer(playerId, &statsConn{inner: conn}) // 包装连接，自动计入帧推送 TX
+	room.AddPlayer(playerId, &statsConn{inner: conn, pid: playerId})
 }
 
 func handleRequestStart(conn *transport.Conn, msg *codec.Message) *codec.Message {
@@ -529,9 +530,10 @@ func handleRequestStart(conn *transport.Conn, msg *codec.Message) *codec.Message
 	return nil
 }
 
-// sendMsg 发送消息并记录 TX 流量
-func sendMsg(conn framesync.PlayerConn, msg *codec.Message) {
-	Stats.RecordTx(int64(len(msg.Data)))
+// sendMsg 发送消息并记录游戏 TX 流量 + 消息日志
+func sendMsg(conn *transport.Conn, msg *codec.Message) {
+	GameStats.RecordTx(int64(len(msg.Data)))
+	LogMsg("tx", msg.Cmd, connPid(conn), len(msg.Data))
 	conn.Send(msg)
 }
 

@@ -4,12 +4,6 @@ using System.Text.RegularExpressions;
 
 namespace BoomNetwork.GM.Editor
 {
-    /// <summary>
-    /// 服务器 Admin HTTP 客户端（Editor-only）
-    ///
-    /// 统一封装 /health、/stats 等 Admin API 调用。
-    /// 所有方法同步阻塞（Editor 场景，非游戏线程）。
-    /// </summary>
     public class AdminClient : IDisposable
     {
         public string BaseUrl { get; set; }
@@ -31,8 +25,7 @@ namespace BoomNetwork.GM.Editor
         public struct HealthResult
         {
             public bool IsOnline;
-            public int Rooms;
-            public int Players;
+            public int Rooms, Players;
             public string Uptime;
         }
 
@@ -41,7 +34,6 @@ namespace BoomNetwork.GM.Editor
             var r = new HealthResult();
             var json = Get("/health");
             if (json == null) return r;
-
             r.IsOnline = json.Contains("\"ok\"");
             r.Rooms    = ParseInt(json, "rooms");
             r.Players  = ParseInt(json, "players");
@@ -54,9 +46,14 @@ namespace BoomNetwork.GM.Editor
         public struct StatsResult
         {
             public bool HasData;
-            public long RxTotal, TxTotal;
-            public long Rx1Min,  Tx1Min;
-            public long Rx5Sec,  Tx5Sec;
+            // 游戏流量
+            public long GameRxTotal, GameTxTotal;
+            public long GameRx1Min,  GameTx1Min;
+            public long GameRx5Sec,  GameTx5Sec;
+            // GM 流量
+            public long GmRxTotal, GmTxTotal;
+            public long GmRx1Min,  GmTx1Min;
+            public long GmRx5Sec,  GmTx5Sec;
         }
 
         public StatsResult FetchStats()
@@ -64,24 +61,65 @@ namespace BoomNetwork.GM.Editor
             var r = new StatsResult();
             var json = Get("/stats");
             if (json == null) return r;
-
-            r.HasData = true;
-            r.RxTotal = ParseLong(json, "rx_total_bytes");
-            r.TxTotal = ParseLong(json, "tx_total_bytes");
-            r.Rx1Min  = ParseLong(json, "rx_1min_bytes");
-            r.Tx1Min  = ParseLong(json, "tx_1min_bytes");
-            r.Rx5Sec  = ParseLong(json, "rx_5sec_bytes");
-            r.Tx5Sec  = ParseLong(json, "tx_5sec_bytes");
+            r.HasData     = true;
+            r.GameRxTotal = ParseLong(json, "game_rx_total");
+            r.GameTxTotal = ParseLong(json, "game_tx_total");
+            r.GameRx1Min  = ParseLong(json, "game_rx_1min");
+            r.GameTx1Min  = ParseLong(json, "game_tx_1min");
+            r.GameRx5Sec  = ParseLong(json, "game_rx_5sec");
+            r.GameTx5Sec  = ParseLong(json, "game_tx_5sec");
+            r.GmRxTotal   = ParseLong(json, "gm_rx_total");
+            r.GmTxTotal   = ParseLong(json, "gm_tx_total");
+            r.GmRx1Min    = ParseLong(json, "gm_rx_1min");
+            r.GmTx1Min    = ParseLong(json, "gm_tx_1min");
+            r.GmRx5Sec    = ParseLong(json, "gm_rx_5sec");
+            r.GmTx5Sec    = ParseLong(json, "gm_tx_5sec");
             return r;
         }
 
-        // ===================== /rooms (预留) =====================
+        // ===================== /messages =====================
 
-        // public RoomInfo[] FetchRooms() { ... }
-        // public bool KickPlayer(int playerId) { ... }
-        // public bool StopRoom(int roomId) { ... }
+        public struct MsgEntry
+        {
+            public long Ts;
+            public string Dir, Name;
+            public int Cmd, Pid, Size;
+        }
 
-        // ===================== HTTP Core =====================
+        public MsgEntry[] FetchMessages(int limit = 100)
+        {
+            var json = Get($"/messages?limit={limit}");
+            if (json == null || json.Length < 3) return Array.Empty<MsgEntry>();
+            return ParseMsgArray(json);
+        }
+
+        static MsgEntry[] ParseMsgArray(string json)
+        {
+            // 轻量解析 JSON 数组 [{...}, {...}]
+            var entries = new System.Collections.Generic.List<MsgEntry>();
+            int i = 0;
+            while (i < json.Length)
+            {
+                int start = json.IndexOf('{', i);
+                if (start < 0) break;
+                int end = json.IndexOf('}', start);
+                if (end < 0) break;
+                var obj = json.Substring(start, end - start + 1);
+                entries.Add(new MsgEntry
+                {
+                    Ts   = ParseLong(obj, "ts"),
+                    Dir  = ParseStr(obj, "dir"),
+                    Name = ParseStr(obj, "name"),
+                    Cmd  = ParseInt(obj, "cmd"),
+                    Pid  = ParseInt(obj, "pid"),
+                    Size = ParseInt(obj, "size"),
+                });
+                i = end + 1;
+            }
+            return entries.ToArray();
+        }
+
+        // ===================== HTTP =====================
 
         private string Get(string path)
         {
@@ -96,7 +134,6 @@ namespace BoomNetwork.GM.Editor
         }
 
         // ===================== JSON Parsing =====================
-        // 轻量正则，不依赖 Newtonsoft
 
         public static int ParseInt(string j, string k) => (int)ParseLong(j, k);
 
