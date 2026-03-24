@@ -85,7 +85,7 @@ echo ""
 echo "[6/$TOTAL] FrameSync Integration (Bind + Heartbeat + Reconnect)..."
 cleanup_port 9001
 cd "$ROOT/svr"
-go run ./cmd/framesync/ -addr=:9001 -autoroom > /dev/null 2>&1 &
+go run ./cmd/framesync/ -config=./cmd/framesync/config_test.yaml -autoroom > /dev/null 2>&1 &
 FS_PID=$!
 sleep 1
 

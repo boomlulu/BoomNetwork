@@ -34,17 +34,8 @@ namespace BoomNetwork.StressTest
 
             for (int i = 0; i < clientCount; i++)
             {
-                var transport = new TcpClientTransport();
-                var session = new NetworkSession(transport);
-                var strategy = new CompositeReconnectStrategy(
-                    (new QuickReconnectStrategy { TimeoutMs = 3000 }, 1),
-                    (new SnapshotReconnectStrategy { TimeoutMs = 5000 }, 1)
-                );
-                var cm = new ConnectionManager(session, strategy);
-                cm.HeartbeatIntervalMs = 5000;
-                cm.HeartbeatTimeoutMs = 30000;
-                clients[i] = new FrameSyncClient(session, cm);
-                clients[i].OnBound += _ => Interlocked.Increment(ref totalBound);
+                clients[i] = new FrameSyncClient(5000, 30000);
+                clients[i].OnConnected += () => Interlocked.Increment(ref totalBound);
                 clients[i].OnFrameSyncStart += _ => Interlocked.Increment(ref totalSyncing);
                 clients[i].OnError += _ => { };
             }

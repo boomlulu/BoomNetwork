@@ -51,16 +51,22 @@ func main() {
 		return
 	}
 
-	// 加载配置文件（如果指定，覆盖命令行参数）
+	// 加载配置：有 -config 时配置文件覆盖 flags，否则 flags 覆盖 DefaultConfig
 	cfg = DefaultConfig()
 	if *configFile != "" {
 		cfg = LoadConfig(*configFile)
+		*addr = cfg.Addr
+		*proto = cfg.Proto
+		*ppr = cfg.PlayersPerRoom
+		*authToken = cfg.AuthToken
+		*metricsAddr = cfg.MetricsAddr
+	} else {
+		cfg.Addr = *addr
+		cfg.Proto = *proto
+		cfg.PlayersPerRoom = *ppr
+		cfg.AuthToken = *authToken
+		cfg.MetricsAddr = *metricsAddr
 	}
-	*addr = cfg.Addr
-	*proto = cfg.Proto
-	*ppr = cfg.PlayersPerRoom
-	*authToken = cfg.AuthToken
-	*metricsAddr = cfg.MetricsAddr
 
 	// 用配置初始化 RoomManager
 	roomMgr = framesync.NewRoomManager(framesync.RoomConfig{

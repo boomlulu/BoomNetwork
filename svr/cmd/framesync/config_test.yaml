@@ -1,5 +1,5 @@
 # 集成测试配置 — 小缓冲区，用于测试快照重连降级
-addr: ":9000"
+addr: ":9001"
 proto: "tcp"
 authToken: ""
 metricsAddr: ""
