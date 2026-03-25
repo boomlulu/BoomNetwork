@@ -220,6 +220,7 @@ namespace BoomNetwork.Client.FrameSync
                 Log($"Left room {RoomId}");
                 RoomId = 0;
                 _frameSyncStarted = false;
+                _authorityEntities.Clear();
                 CurrentState = State.Connected;
                 OnLeftRoom?.Invoke(oldPlayerId);
             });
