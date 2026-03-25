@@ -84,6 +84,7 @@ namespace BoomNetwork.Client.Connection
         private bool _heartbeatActive;
         private bool _heartbeatWaitingRsp; // 是否在等待心跳回复
         private bool _intentionalDisconnect; // 主动断开标记，不触发重连
+        private bool _reconnectPaused;       // 暂停自动重连（测试用）
 
         /// <summary>最近一次心跳 RTT（毫秒），-1 = 未测量</summary>
         public float RttMs { get; private set; } = -1;
@@ -124,6 +125,29 @@ namespace BoomNetwork.Client.Connection
             _reconnectStrategy?.Cancel();
             _session.Disconnect();
             TransitionTo(State.Disconnected);
+        }
+
+        /// <summary>
+        /// 暂停自动重连（断开后不会尝试恢复，直到 ResumeReconnect）
+        /// </summary>
+        public void PauseReconnect()
+        {
+            _reconnectPaused = true;
+        }
+
+        /// <summary>
+        /// 恢复自动重连。如果当前已断开，立即触发重连流程。
+        /// </summary>
+        public void ResumeReconnect()
+        {
+            if (!_reconnectPaused) return;
+            _reconnectPaused = false;
+
+            // 如果 pause 期间断了线，现在补触发重连
+            if (CurrentState == State.Disconnected && !_intentionalDisconnect && _reconnectStrategy != null)
+            {
+                HandleSessionDisconnected();
+            }
         }
 
         /// <summary>
@@ -226,6 +250,14 @@ namespace BoomNetwork.Client.Connection
                 Log("No reconnect strategy, staying disconnected");
                 TransitionTo(State.Disconnected);
                 OnDisconnected?.Invoke();
+                return;
+            }
+
+            // 重连暂停中 → 停在 Disconnected 状态，等 ResumeReconnect
+            if (_reconnectPaused)
+            {
+                Log("Reconnect paused, waiting for resume");
+                TransitionTo(State.Disconnected);
                 return;
             }
 

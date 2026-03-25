@@ -165,9 +165,29 @@ namespace BoomNetwork.Client.FrameSync
         /// <summary>
         /// 测试用：只断 TCP，保留身份，触发正常断线→重连流程
         /// </summary>
+        /// <summary>
+        /// 测试用：只断 TCP，保留身份，触发正常断线→重连流程
+        /// </summary>
         public void SimulateNetworkDrop()
         {
             _transport?.Disconnect();
+        }
+
+        /// <summary>
+        /// 测试用：断开连接并暂停自动重连。调用 ResumeReconnect 后恢复。
+        /// </summary>
+        public void SimulateNetworkDropAndPause()
+        {
+            _connMgr?.PauseReconnect();
+            _transport?.Disconnect();
+        }
+
+        /// <summary>
+        /// 恢复自动重连（配合 SimulateNetworkDropAndPause 使用）
+        /// </summary>
+        public void ResumeReconnect()
+        {
+            _connMgr?.ResumeReconnect();
         }
 
         // ===================== Room =====================
