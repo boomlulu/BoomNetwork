@@ -259,7 +259,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 85988fcee181e43e5ba145a172e49e3d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  moveSpeed: 5
+  moveSpeed: 1
 --- !u!114 &1303604624
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -272,7 +272,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 70bffb5ba2f54ae58bda3435d64fd184, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  host: 127.0.0.1
+  host: 124.220.6.174
   port: 9000
   heartbeatIntervalMs: 3000
   heartbeatTimeoutMs: 10000
