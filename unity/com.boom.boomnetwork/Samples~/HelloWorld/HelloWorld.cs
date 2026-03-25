@@ -23,6 +23,7 @@ public class HelloWorld : MonoBehaviour
     private readonly Dictionary<int, Transform> _players = new();
     private readonly byte[] _inputBuf = new byte[8];
     private uint _lastFrame;
+    private float _sendTimer;
 
     private static readonly Color[] Colors = { Color.green, new(0.3f, 0.5f, 1f), Color.red, Color.yellow };
 
@@ -36,6 +37,11 @@ public class HelloWorld : MonoBehaviour
     void Update()
     {
         if (!_network.IsSyncing) return;
+
+        // 按服务器帧率节流（20fps = 50ms），不要每帧都发
+        _sendTimer += Time.deltaTime * 1000f;
+        if (_sendTimer < 50f) return;
+        _sendTimer -= 50f;
 
         float h = Input.GetAxisRaw("Horizontal");
         float v = Input.GetAxisRaw("Vertical");
