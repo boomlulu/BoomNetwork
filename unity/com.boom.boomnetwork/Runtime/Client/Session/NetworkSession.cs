@@ -53,7 +53,6 @@ namespace BoomNetwork.Client.Session
 
         // --- 已发送消息缓冲区（快速重连用）---
         private readonly LinkedList<SentMessage> _sentBuffer = new();
-        private int _lastAckedSeq; // 服务器已确认收到的 Seq
 
         /// <summary>
         /// 已发送缓冲区最大容量（超过后丢弃最早的）
@@ -192,28 +191,12 @@ namespace BoomNetwork.Client.Session
         /// <summary>
         /// 服务器确认已收到的 Seq，清理缓冲区中已确认的消息
         /// </summary>
-        public void AckServerReceived(int ackedSeq)
-        {
-            _lastAckedSeq = ackedSeq;
-            while (_sentBuffer.Count > 0 && _sentBuffer.First!.Value.Seq <= ackedSeq)
-            {
-                _sentBuffer.RemoveFirst();
-            }
-        }
-
         /// <summary>
-        /// 重发所有未确认的消息（快速重连用）
+        /// 清空已发送缓冲区（重连成功后调用）
         /// </summary>
-        /// <returns>重发的消息数</returns>
-        public int ResendUnacked()
+        public void ClearSentBuffer()
         {
-            int count = 0;
-            foreach (var sent in _sentBuffer)
-            {
-                _transport.Send(sent.EncodedData, 0, sent.EncodedLength);
-                count++;
-            }
-            return count;
+            _sentBuffer.Clear();
         }
 
         /// <summary>
@@ -224,16 +207,16 @@ namespace BoomNetwork.Client.Session
             _framing.Reset();
             _sentBuffer.Clear();
             _lastRecvServerSeq = 0;
-            _lastAckedSeq = 0;
             CancelAllPending(ErrorCode.SessionReset, "Full reset");
         }
 
         /// <summary>
-        /// 轻量清除（快速重连用，保留缓冲区）
+        /// 轻量清除（快速重连用）
         /// </summary>
         public void LightReset()
         {
             _framing.Reset();
+            _sentBuffer.Clear();
             CancelAllPending(ErrorCode.SessionReset, "Light reset");
         }
 

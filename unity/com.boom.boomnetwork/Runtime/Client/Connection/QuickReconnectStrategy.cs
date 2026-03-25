@@ -60,8 +60,12 @@ namespace BoomNetwork.Client.Connection
                         context.ServerFrameNumber = serverFrame;
                         context.IsSnapshotRestore = false;
 
-                        // 服务器会异步重发缺失帧，客户端这边重发未确认的消息
-                        session.ResendUnacked();
+                        // 重连成功：清空已发送缓冲区
+                        // 注意：不能调用 ResendUnacked()！
+                        // sent buffer 中的 SessionBind/CreateRoom/JoinRoom 等消息
+                        // 重发会导致 server 创建重复 player/room（致命 bug）
+                        // 真正需要重发的 FrameInput/EntityState 使用 Send（无 Seq），不在 buffer 中
+                        session.ClearSentBuffer();
 
                         onSuccess();
                     },
