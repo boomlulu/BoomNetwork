@@ -31,6 +31,8 @@ public class HelloWorld : MonoBehaviour
     {
         _network = GetComponent<BoomNetworkManager>();
         _network.Client.OnFrame += OnFrame;
+        _network.Client.OnTakeSnapshot = TakeSnapshot;
+        _network.Client.OnLoadSnapshot = LoadSnapshot;
         _network.QuickStart();
     }
 
@@ -98,6 +100,39 @@ public class HelloWorld : MonoBehaviour
 
         _players[playerId] = go.transform;
         return go.transform;
+    }
+
+    // --- 快照：服务器要求定期上传，用于重连恢复 ---
+
+    byte[] TakeSnapshot()
+    {
+        var buf = new byte[2 + _players.Count * 12]; // count + N × (pid + x + y)
+        buf[0] = (byte)(_players.Count & 0xFF);
+        buf[1] = (byte)((_players.Count >> 8) & 0xFF);
+        int offset = 2;
+        foreach (var kv in _players)
+        {
+            BitConverter.TryWriteBytes(buf.AsSpan(offset, 4), kv.Key); offset += 4;
+            BitConverter.TryWriteBytes(buf.AsSpan(offset, 4), kv.Value.position.x); offset += 4;
+            BitConverter.TryWriteBytes(buf.AsSpan(offset, 4), kv.Value.position.y); offset += 4;
+        }
+        return buf;
+    }
+
+    void LoadSnapshot(byte[] data)
+    {
+        if (data == null || data.Length < 2) return;
+        int count = data[0] | (data[1] << 8);
+        int offset = 2;
+        for (int i = 0; i < count && offset + 12 <= data.Length; i++)
+        {
+            int pid = BitConverter.ToInt32(data, offset); offset += 4;
+            float x = BitConverter.ToSingle(data, offset); offset += 4;
+            float y = BitConverter.ToSingle(data, offset); offset += 4;
+            if (!_players.TryGetValue(pid, out var t))
+                t = SpawnPlayer(pid);
+            t.position = new Vector3(x, y, 0);
+        }
     }
 
     void OnGUI()
