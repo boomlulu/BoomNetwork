@@ -39,6 +39,9 @@ namespace BoomNetwork.Client.FrameSync
         public int PlayerId { get; private set; }
         public int RoomId { get; private set; }
         public uint LastFrameNumber { get; private set; }
+
+        /// <summary>最近心跳 RTT（毫秒），-1 = 未测量</summary>
+        public float RttMs => _connMgr?.RttMs ?? -1;
         public FrameSyncInitData? InitData { get; private set; }
         public bool HasPreviousIdentity => PlayerId > 0 && RoomId > 0;
 

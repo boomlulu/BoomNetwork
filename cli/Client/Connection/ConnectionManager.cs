@@ -80,8 +80,13 @@ namespace BoomNetwork.Client.Connection
         private int _port;
         private float _heartbeatTimer;
         private float _heartbeatRspTimer;
+        private float _heartbeatSendTimer; // 单次心跳发送后的计时（用于 RTT）
         private bool _heartbeatActive;
+        private bool _heartbeatWaitingRsp; // 是否在等待心跳回复
         private bool _intentionalDisconnect; // 主动断开标记，不触发重连
+
+        /// <summary>最近一次心跳 RTT（毫秒），-1 = 未测量</summary>
+        public float RttMs { get; private set; } = -1;
         private int _playerId;
         private uint _lastFrameNumber;
 
@@ -171,8 +176,13 @@ namespace BoomNetwork.Client.Connection
             if (_heartbeatTimer >= HeartbeatIntervalMs)
             {
                 _heartbeatTimer = 0;
+                _heartbeatSendTimer = 0;
+                _heartbeatWaitingRsp = true;
                 _session.Send(FrameSyncCmd.Heartbeat);
             }
+
+            if (_heartbeatWaitingRsp)
+                _heartbeatSendTimer += deltaTimeMs;
 
             if (_heartbeatRspTimer >= HeartbeatTimeoutMs)
             {
@@ -259,6 +269,11 @@ namespace BoomNetwork.Client.Connection
             if (msg.Cmd == FrameSyncCmd.HeartbeatRsp)
             {
                 _heartbeatRspTimer = 0;
+                if (_heartbeatWaitingRsp)
+                {
+                    RttMs = _heartbeatSendTimer;
+                    _heartbeatWaitingRsp = false;
+                }
             }
         }
 
