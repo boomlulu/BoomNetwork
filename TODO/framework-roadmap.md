@@ -1,82 +1,117 @@
-# BoomNetwork 框架推广 — 紧急重要四象限
+# BoomNetwork 路线图
 
-## 一、紧急且重要（立即做，阻断别人使用）
-
-| # | 任务 | 状态 | 说明 |
-|---|------|------|------|
-| 1 | README + Quick Start | **已完成** | 5 分钟跑通：克隆→启动服务器→Unity 连接→方块移动 |
-| 2 | Unity 集成指南 | **已完成** | 30 行代码接入，Person 生命周期 + 事件一览 |
-| 3 | 服务器部署 | **已完成** | Dockerfile + docker-compose + 二进制编译 + systemd |
-| 4 | API Reference | **已完成** | Person / FrameSyncClient / RoomClient 全接口 + 26 条协议命令表 |
-
-## 二、重要不紧急（质量保障，早做少踩坑）
-
-| # | 任务 | 状态 | 说明 |
-|---|------|------|------|
-| 5 | 协议文档 | 待做 | Cmd 列表 + 二进制 Wire format，非 C# 客户端可据此接入 |
-| 6 | 生命周期流程图 | 待做 | 连接→房间→帧同步→断线→重连 完整状态机（Mermaid） |
-| 7 | 错误码文档 | 待做 | 所有 ErrorCode + 触发场景 + 客户端推荐处理方式 |
-| 8 | config.yaml 参数文档 | 待做 | 独立文档：参数含义、推荐值、参数间关系、调优指南 |
-| 9 | License | **已完成** | MIT |
-| 10 | 自动化测试 CI | 待做 | GitHub Actions: Go test + C# test + Unity EditMode test |
-| 11 | 版本号 + CHANGELOG | 待做 | 语义化版本 + 每版变更记录 |
-| 12 | 迟到者加入 (Late-Join) | **已完成** | JoinRoom 时下发 RoomSnapshot + 补帧 |
-
-## 三、紧急不重要（快速解决，提升第一印象）
-
-| # | 任务 | 状态 | 说明 |
-|---|------|------|------|
-| 13 | Demo 场景整理 | **已完成** | DemoLauncher 入口 + 场景切换菜单 |
-| 14 | ServerWindow 优化 | **已完成** | HTTP /health 探测（零游戏日志）+ 流量统计面板 + 迁入 GM 工具包 |
-| 15 | HUD 美化 | **已完成** | HUDStyles 共享样式 + 状态颜色语义化 + World Hash |
-
-## 四、不紧急不重要（锦上添花，有余力再做）
-
-| # | 任务 | 状态 | 说明 |
-|---|------|------|------|
-| 16 | 性能基准报告 | 待做 | N 客户端、帧率、延迟、内存的量化数据 |
-| 17 | 多语言客户端示例 | 待做 | TypeScript / Lua / Go 客户端 |
-| 18 | 服务器集群方案 | 待做 | 多房间服务器横向扩展、负载均衡 |
-| 19 | 加密传输 | 待做 | TLS / KCP 加密选项 |
-| 20 | Demo02 预测回滚完善 | 待做 | 目前只有框架代码，Demo 场景未完成 |
-| 21 | Web 管理后台 | **已完成** | Admin HTTP (:9091) 9 个端点：监控(/health /stats /messages /rooms) + 控制(/kick /rooms/stop) + 诊断(/players /perf /rates) + Bearer Token 鉴权 + Unity ServerWindow 三页面板。详见 [gm-tools.md](../doc/gm-tools.md) |
+> **核心定位**：通用帧同步框架，先自己用 → 验证 → 开源推广
+>
+> **当前阶段**：技术基础设施已完成，下一步是**降低接入复杂度**
+>
+> **第一性原理**：框架的价值 = 用户能多快跑通第一个多人游戏
 
 ---
 
-# BoomNetwork 框架迭代 — 紧急重要四象限
+## 已完成 ✅
 
-## 一、紧急且重要（影响核心功能，必须优先）
+### 技术基础设施
 
-| # | 任务 | 说明 |
-|---|------|------|
-| F1 | ~~帧号去重与快照冲突~~ | **已修复** — LoadWorldSnapshot 重置 `_lastProcessedFrame=0` |
-| F2 | ~~集成测试 Test10 稳定性~~ | **已修复** — ConnectionManager 防止 Reconnecting 状态下重复触发重连，16/16 全过 |
-| F3 | ~~Late-Join 无快照兜底~~ | **已修复** — 无快照时从缓冲区最旧帧开始补帧（最佳努力） |
+| 模块 | 完成内容 |
+|------|---------|
+| 传输层 | TCP + KCP 双协议，C# 客户端 + Go 服务器 |
+| 帧同步 | 帧收发、输入广播、快照上传/恢复、迟到者加入 |
+| 重连 | CompositeReconnectStrategy（快速重连 + 快照降级） |
+| 房间管理 | 创建/加入/离开/列表，autoroom 模式 |
+| 预测回滚 | PredictionManager 框架（Demo02 待完善） |
+| FrameSyncClient 重构 | 长生命周期，内置完整网络栈，Person 瘦身为纯适配器 |
 
-## 二、重要不紧急（架构改进，提升健壮性）
+### GM 工具
 
-| # | 任务 | 说明 |
-|---|------|------|
-| F4 | ~~Person 重连流程收敛~~ | **已完成** — FrameSyncClient 内置 CompositeReconnectStrategy，Person 瘦身为纯适配器，不再自己管理重连 |
-| F5 | **服务器推送房间完整状态** | JoinRoomRsp 带 existingPlayers 但不带状态（在线/掉线）。后续应推送每个玩家的 online/offline 状态 |
-| F6 | **帧同步暂停/恢复机制** | 当前快照过期暂停是服务端静默停帧，客户端不知道。应通知客户端暂停原因 + 恢复事件 |
-| F7 | **KCP 传输层测试覆盖** | TCP 路径测试充分，KCP 路径未在集成测试和 Demo 中覆盖 |
-| F8 | **消息可靠性保障** | 快照上传、重连请求等关键消息无 ACK 重试机制，弱网下可能丢失 |
+| 功能 | 端点/UI |
+|------|---------|
+| 健康检查 | GET /health（免鉴权）|
+| 流量统计（Game + GM 分离） | GET /stats |
+| 消息日志（100 条 + payload 解码） | GET /messages |
+| 房间列表 + 玩家在线状态 | GET /rooms |
+| 踢人 / 停房间 | POST /kick/{pid}、/rooms/stop/{id} |
+| 玩家详情 / 性能 / 限流 | GET /players/{pid}、/perf、/rates |
+| Admin 鉴权 | Bearer Token middleware |
+| Unity ServerWindow 三页面板 | Dashboard / Messages / Rooms |
 
-## 三、紧急不重要（快速改善体验）
+### 文档
 
-| # | 任务 | 说明 |
-|---|------|------|
-| F9 | ~~Unity Demo 场景 Build Settings~~ | **已修复** — DemoSceneSetup.cs InitializeOnLoad 自动添加场景 |
-| F10 | ~~ServerWindow 显示连接数/房间数~~ | **已修复** — 通过 Prometheus metrics HTTP 拉取 connections + rooms |
-| F11 | ~~Drop 按钮可配置时长~~ | **已修复** — dropSeconds Inspector 字段，单个 Drop 按钮读取配置 |
+| 文档 | 状态 |
+|------|------|
+| quickstart.md | ✅ 架构 + 模块 + 接入示例 |
+| api-reference.md | ✅ Person + FrameSyncClient 全接口 |
+| configuration.md | ✅ 所有可配参数 + 调参建议 |
+| gm-tools.md | ✅ 9 端点 + Unity UI + 鉴权 |
+| architecture.md | ✅ 分层设计 + 数据流 |
+| concepts.md | ✅ 帧同步核心概念 |
+| deployment.md | ✅ Docker + 二进制 + systemd |
 
-## 四、不紧急不重要（技术债 + 优化）
+### 质量保障
 
-| # | 任务 | 说明 |
-|---|------|------|
-| F12 | ~~FrameSyncClient 与 Person 职责边界清理~~ | **已完成** — FrameSyncClient 长生命周期拥有完整网络栈，Person 为纯代理适配器，快照回调统一由 FrameSyncClient 管理 |
-| F13 | 重连时 ConnPlayerMap 多次 Store 问题 | 多次快速重连可能导致映射不一致，需要原子化处理 |
-| F14 | Room tickLoop panic 恢复后的状态一致性 | recover 后 running=false 但玩家还在房间里，需要通知客户端 |
-| F15 | 单元测试覆盖率提升 | 当前 Go 12 个 + C# 29 个，Room 的 stepFrame/broadcast 等热路径未覆盖 |
-| F16 | autoroom 模式整合到 YAML 配置 | 目前是命令行 flag，不在 config.yaml 中 |
+| 项 | 状态 |
+|----|------|
+| C# 单元测试 29 项 | ✅ |
+| Go 单元测试 12 项 | ✅ |
+| 跨语言兼容测试 | ✅ C# ↔ Go fixture |
+| 帧同步集成测试 15 项 | ✅ 心跳 + 快速重连 + 快照重连 |
+| KCP Echo 测试 7 项 | ✅ |
+
+---
+
+## 一、紧急且重要 — 降低接入门槛（阻断推广的障碍）
+
+> **判断标准**：新用户 clone 后能否 5 分钟跑通多人游戏？
+
+| # | 任务 | 说明 | 状态 |
+|---|------|------|------|
+| N1 | **服务器一键启动** | 提供预编译二进制（macOS/Linux/Windows）+ `./boom-server` 零依赖启动。Docker 镜像打包。目标：不装 Go 也能跑 | 待做 |
+| N2 | **Quickstart 教程重写** | 从"文档"升级为"教程"：① clone ② 启动服务器 ③ 打开 Unity Demo ④ 看到两个方块移动。每步带截图/GIF，预估时间标注 | 待做 |
+| N3 | **Demo 即模板** | 现有 Demo01 整理为可直接复制的项目模板。新用户 fork 后改 OnFrame 和 SendInput 即可做自己的游戏 | 待做 |
+| N4 | **生命周期流程图** | Mermaid 状态机：连接→绑定→建房→入房→帧同步→断线→重连。一图胜千字，放在 quickstart 最醒目位置 | 待做 |
+
+## 二、重要不紧急 — 框架健壮性（决定能否上生产）
+
+| # | 任务 | 说明 | 状态 |
+|---|------|------|------|
+| N5 | **错误码文档** | 所有 ErrorCode + 触发场景 + 客户端推荐处理方式 | 待做 |
+| N6 | **config.yaml 参数指南** | 参数含义、推荐值、参数间关系（如 frameBufferSize ≥ disconnectKeepSec × frameRate） | 待做 |
+| N7 | **KCP 集成测试覆盖** | TCP 路径测试充分，KCP 路径未在帧同步集成测试和 Demo 中覆盖 | 待做 |
+| N8 | **版本号 + CHANGELOG** | 语义化版本 v0.1.0 → v0.2.0，每版变更记录 | 待做 |
+| N9 | **F5 服务器推送完整房间状态** | JoinRoomRsp 带 existingPlayers 但不带在线/离线状态 | 待做 |
+| N10 | **F6 帧同步暂停/恢复通知** | 快照过期暂停时客户端不知道，应通知暂停原因 + 恢复事件 | 待做 |
+| N11 | **F8 关键消息 ACK 重试** | 快照上传、重连请求等弱网下可能丢失 | 待做 |
+| N12 | **性能基准报告** | N 客户端 × 帧率 × 延迟 × 内存的量化数据，给用户信心 | 待做 |
+
+## 三、紧急不重要 — 快速完善
+
+| # | 任务 | 说明 | 状态 |
+|---|------|------|------|
+| N13 | **Demo02 预测回滚完善** | 框架代码已有，Demo 场景未完成 | 待做 |
+| N14 | **F13 重连 ConnPlayerMap 原子化** | 多次快速重连可能映射不一致 | 待做 |
+| N15 | **F14 Room panic 恢复一致性** | recover 后 running=false 但玩家还在 | 待做 |
+| N16 | **F16 autoroom 整合到 config.yaml** | 目前是命令行 flag，不在配置中 | 待做 |
+| N17 | **单元测试覆盖率提升** | Room stepFrame/broadcast 热路径 | 待做 |
+
+## 四、不紧急不重要 — 远期愿景
+
+| # | 任务 | 说明 | 状态 |
+|---|------|------|------|
+| N18 | 多语言客户端示例 | TypeScript / Lua / Go 客户端 | 待做 |
+| N19 | 服务器集群方案 | 多房间服务器横向扩展、负载均衡 | 待做 |
+| N20 | 加密传输 | TLS / KCP 加密选项 | 待做 |
+| N21 | 匹配系统 | 按技能/延迟匹配，排队等待 | 待做 |
+| N22 | 协议文档（Wire Format） | 二进制格式文档，非 C# 客户端据此接入 | 待做 |
+
+---
+
+## 下一步建议
+
+```
+优先做 N1-N4（第一象限）：
+  N4 流程图 → N2 教程重写 → N1 一键启动 → N3 模板化 Demo
+
+验收标准：
+  一个没接触过 BoomNetwork 的 Unity 开发者
+  clone → 5 分钟内看到两个角色在屏幕上移动
+  不需要问任何人
+```
