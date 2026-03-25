@@ -76,15 +76,15 @@ public class EntitySync : MonoBehaviour
         float h = Input.GetAxisRaw("Horizontal");
         float v = Input.GetAxisRaw("Vertical");
 
-        // 本地权威：直接移动，零延迟
+        // 本地权威：移动逻辑位置，零延迟（视觉平滑在 LateUpdate）
         if (_entities.TryGetValue(_network.PlayerId, out var me))
         {
-            var pos = me.transform.position;
+            var pos = me.LogicalPosition;
             pos.x += h * moveSpeed;
             pos.y += v * moveSpeed;
             if (pos.x > 8f) pos.x -= 16f; if (pos.x < -8f) pos.x += 16f;
             if (pos.y > 5f) pos.y -= 10f; if (pos.y < -5f) pos.y += 10f;
-            me.transform.position = pos;
+            me.LogicalPosition = pos;
             me.Velocity = new Vector2(h, v) * moveSpeed;
         }
 
@@ -105,13 +105,20 @@ public class EntitySync : MonoBehaviour
 
     void LateUpdate()
     {
-        // 远端实体：Lerp 平滑追踪目标位置
+        // 所有实体：visual 平滑追踪 logical（权威和远端统一处理）
         foreach (var kv in _entities)
         {
             var e = kv.Value;
-            if (e.IsAuthority) continue;
-            e.transform.position = Vector3.Lerp(
-                e.transform.position, e.TargetPosition, smoothSpeed * Time.deltaTime);
+            var current = (Vector2)e.transform.position;
+            var target = e.LogicalPosition;
+
+            // 瞬移检测：距离超过半屏则 snap（环绕传送）
+            if (Vector2.Distance(current, target) > 6f)
+                current = target;
+            else
+                current = Vector2.Lerp(current, target, smoothSpeed * Time.deltaTime);
+
+            e.transform.position = new Vector3(current.x, current.y, 0);
         }
     }
 
@@ -171,8 +178,8 @@ public class EntitySync : MonoBehaviour
         foreach (var kv in _entities)
         {
             BitConverter.TryWriteBytes(buf.AsSpan(off, 4), kv.Key); off += 4;
-            BitConverter.TryWriteBytes(buf.AsSpan(off, 4), kv.Value.transform.position.x); off += 4;
-            BitConverter.TryWriteBytes(buf.AsSpan(off, 4), kv.Value.transform.position.y); off += 4;
+            BitConverter.TryWriteBytes(buf.AsSpan(off, 4), kv.Value.LogicalPosition.x); off += 4;
+            BitConverter.TryWriteBytes(buf.AsSpan(off, 4), kv.Value.LogicalPosition.y); off += 4;
         }
         return buf;
     }
@@ -187,8 +194,8 @@ public class EntitySync : MonoBehaviour
             float x = BitConverter.ToSingle(data, off); off += 4;
             float y = BitConverter.ToSingle(data, off); off += 4;
             var e = GetOrCreateEntity(eid, eid == _network.PlayerId);
+            e.LogicalPosition = new Vector2(x, y);
             e.transform.position = new Vector3(x, y, 0);
-            e.TargetPosition = e.transform.position;
         }
     }
 
@@ -218,24 +225,26 @@ public class EntitySync : MonoBehaviour
 /// <summary>
 /// 最简 IEntitySync 实现 — 内联在 Sample 中，不依赖外部中间件。
 ///
+/// 逻辑/视觉分离：
+///   LogicalPosition — 权威真值（权威端直接写，远端收服务器状态写）
+///   transform.position — 视觉位置（LateUpdate 中 Lerp 追踪 Logical）
+///
 /// 状态格式：[posX:4][posY:4][velX:4][velY:4] = 16 bytes
-/// 权威端：WriteState 序列化当前位置+速度
-/// 远端：OnRemoteState 更新目标位置，LateUpdate 中 Lerp 追踪
 /// </summary>
 public class SyncedEntity : MonoBehaviour, IEntitySync
 {
     public int EntityId { get; set; }
     public int StateSize => 16;
     public bool IsAuthority;
-    public Vector3 TargetPosition;
+    public Vector2 LogicalPosition;  // 逻辑位置（权威真值）
     public Vector2 Velocity;
     public int CorrectionCount { get; private set; }
 
     public int WriteState(byte[] buf, int offset)
     {
-        var pos = transform.position;
-        BitConverter.TryWriteBytes(buf.AsSpan(offset, 4), pos.x); offset += 4;
-        BitConverter.TryWriteBytes(buf.AsSpan(offset, 4), pos.y); offset += 4;
+        // 权威端：序列化逻辑位置（不是视觉位置）
+        BitConverter.TryWriteBytes(buf.AsSpan(offset, 4), LogicalPosition.x); offset += 4;
+        BitConverter.TryWriteBytes(buf.AsSpan(offset, 4), LogicalPosition.y); offset += 4;
         BitConverter.TryWriteBytes(buf.AsSpan(offset, 4), Velocity.x); offset += 4;
         BitConverter.TryWriteBytes(buf.AsSpan(offset, 4), Velocity.y);
         return 16;
@@ -246,7 +255,8 @@ public class SyncedEntity : MonoBehaviour, IEntitySync
         if (length < 16 || IsAuthority) return;
         float x = BitConverter.ToSingle(data, offset);
         float y = BitConverter.ToSingle(data, offset + 4);
-        TargetPosition = new Vector3(x, y, 0);
+        // 远端：直接信任权威状态，更新逻辑位置
+        LogicalPosition = new Vector2(x, y);
         CorrectionCount++;
     }
 }
