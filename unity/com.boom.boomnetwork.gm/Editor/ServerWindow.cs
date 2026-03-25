@@ -1,6 +1,7 @@
 using UnityEngine;
 using UnityEditor;
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 
@@ -12,14 +13,23 @@ namespace BoomNetwork.GM.Editor
         private string _serverPath, _configFile, _addr, _proto, _adminUrl, _adminToken;
         private int _ppr;
 
+        // ===== Clients =====
+        private AdminClient _client;       // HTTP fallback
+        private AdminWsClient _wsClient;   // WebSocket 主通道
+
         // ===== State =====
-        private AdminClient _client;
         private AdminClient.HealthResult _health;
         private AdminClient.StatsResult  _stats;
         private AdminClient.MsgEntry[]   _messages = Array.Empty<AdminClient.MsgEntry>();
         private AdminClient.RoomDetail[] _rooms = Array.Empty<AdminClient.RoomDetail>();
         private double _nextCheckTime;
+        private double _nextPingTime;
         private bool _lastAlive;
+        private string _lastAdminUrl, _lastAdminToken; // 检测配置变更
+
+        // WS 消息缓冲（追加模式，最多保留 200 条）
+        private readonly List<AdminClient.MsgEntry> _wsMsgBuffer = new List<AdminClient.MsgEntry>();
+        private const int WS_MSG_BUFFER_MAX = 200;
 
         // ===== Tab =====
         private int _tab;
@@ -29,7 +39,7 @@ namespace BoomNetwork.GM.Editor
         private Vector2 _msgScroll;
         private int _cmdFilter = -1;
         private bool _msgPaused;
-        private bool _hideHeartbeat = true; // G11: 默认隐藏心跳
+        private bool _hideHeartbeat = true;
         private string[] _cmdFilterNames;
         private int[] _cmdFilterValues;
 
@@ -45,8 +55,8 @@ namespace BoomNetwork.GM.Editor
         void OnEnable()
         {
             LoadPrefs();
-            _client = new AdminClient(_adminUrl);
-            _client.Token = _adminToken;
+            _client = new AdminClient(_adminUrl) { Token = _adminToken };
+            _wsClient = new AdminWsClient();
             BuildCmdFilter();
             EditorApplication.update += OnEditorUpdate;
         }
@@ -55,39 +65,186 @@ namespace BoomNetwork.GM.Editor
         {
             EditorApplication.update -= OnEditorUpdate;
             SavePrefs();
+            _wsClient?.Dispose();
             _client?.Dispose();
         }
 
+        // ===================== 主循环 =====================
+
         void OnEditorUpdate()
         {
-            if (EditorApplication.timeSinceStartup < _nextCheckTime) return;
-            _nextCheckTime = EditorApplication.timeSinceStartup + POLL_INTERVAL;
-
-            _client.BaseUrl = _adminUrl;
-            _client.Token = _adminToken;
-            _health = _client.FetchHealth();
-
-            if (_health.IsOnline)
+            // 检测配置变更 → 重连 WS
+            if (_adminUrl != _lastAdminUrl || _adminToken != _lastAdminToken)
             {
-                _stats = _client.FetchStats();
-                if (_tab == 1 && !_msgPaused)
-                    _messages = _client.FetchMessages(100);
-                if (_tab == 2)
-                    _rooms = _client.FetchRooms();
-            }
-            else
-            {
-                _stats = default;
-                _messages = Array.Empty<AdminClient.MsgEntry>();
-                _rooms = Array.Empty<AdminClient.RoomDetail>();
+                _lastAdminUrl = _adminUrl;
+                _lastAdminToken = _adminToken;
+                _client.BaseUrl = _adminUrl;
+                _client.Token = _adminToken;
+                _wsClient.Disconnect();
             }
 
-            if (_health.IsOnline != _lastAlive || _health.IsOnline)
+            bool dirty = false;
+            bool wsConnected = _wsClient.IsConnected;
+
+            // ===== WS 模式：drain 入站队列 =====
+            if (wsConnected)
             {
-                _lastAlive = _health.IsOnline;
+                while (_wsClient.Inbound.TryDequeue(out var env))
+                {
+                    ApplyEnvelope(env);
+                    dirty = true;
+                }
+
+                // 心跳
+                if (EditorApplication.timeSinceStartup > _nextPingTime)
+                {
+                    _nextPingTime = EditorApplication.timeSinceStartup + 30.0;
+                    _wsClient.SendPing();
+                }
+            }
+
+            // ===== HTTP Fallback 或 WS 连接尝试 =====
+            if (EditorApplication.timeSinceStartup >= _nextCheckTime)
+            {
+                _nextCheckTime = EditorApplication.timeSinceStartup + POLL_INTERVAL;
+
+                if (!wsConnected)
+                {
+                    // 尝试 HTTP 探测 + WS 连接
+                    _health = _client.FetchHealth();
+
+                    if (_health.IsOnline)
+                    {
+                        // 服务器在线但 WS 未连接 → 启动 WS
+                        _wsClient.Connect(_adminUrl, _adminToken);
+
+                        // HTTP fallback 拉数据
+                        _stats = _client.FetchStats();
+                        if (_tab == 1 && !_msgPaused)
+                            _messages = _client.FetchMessages(100);
+                        if (_tab == 2)
+                            _rooms = _client.FetchRooms();
+                    }
+                    else
+                    {
+                        _stats = default;
+                        _messages = Array.Empty<AdminClient.MsgEntry>();
+                        _rooms = Array.Empty<AdminClient.RoomDetail>();
+                        _wsMsgBuffer.Clear();
+                    }
+                    dirty = true;
+                }
+            }
+
+            // 更新存活状态
+            bool alive = wsConnected || _health.IsOnline;
+            if (alive != _lastAlive || dirty)
+            {
+                _lastAlive = alive;
                 Repaint();
             }
         }
+
+        // ===================== WS Push 应用 =====================
+
+        void ApplyEnvelope(GmEnvelope env)
+        {
+            if (env.Type == "push")
+            {
+                var payload = env.DecodePayload();
+                if (payload == null) return;
+
+                switch (env.Topic)
+                {
+                    case GmTopics.Health:
+                        var hp = GmHealthPush.From(payload);
+                        _health = new AdminClient.HealthResult
+                        {
+                            IsOnline = true,
+                            Rooms = hp.Rooms,
+                            Players = hp.Players,
+                            Uptime = hp.Uptime,
+                        };
+                        break;
+
+                    case GmTopics.Stats:
+                        var sp = GmStatsPush.From(payload);
+                        _stats = new AdminClient.StatsResult
+                        {
+                            HasData = true,
+                            GameRxTotal = sp.GameRxTotal, GameTxTotal = sp.GameTxTotal,
+                            GameRx1Min = sp.GameRx1Min, GameTx1Min = sp.GameTx1Min,
+                            GameRx5Sec = sp.GameRx5Sec, GameTx5Sec = sp.GameTx5Sec,
+                            GmRxTotal = sp.GmRxTotal, GmTxTotal = sp.GmTxTotal,
+                            GmRx1Min = sp.GmRx1Min, GmTx1Min = sp.GmTx1Min,
+                            GmRx5Sec = sp.GmRx5Sec, GmTx5Sec = sp.GmTx5Sec,
+                        };
+                        break;
+
+                    case GmTopics.Messages:
+                        if (!_msgPaused)
+                        {
+                            var me = GmMsgEntry.From(payload);
+                            _wsMsgBuffer.Add(new AdminClient.MsgEntry
+                            {
+                                Ts = me.Ts, Dir = me.Dir, Cmd = me.Cmd,
+                                Name = me.Name, Pid = me.Pid, Size = me.Size,
+                            });
+                            if (_wsMsgBuffer.Count > WS_MSG_BUFFER_MAX)
+                                _wsMsgBuffer.RemoveAt(0);
+                            _messages = _wsMsgBuffer.ToArray();
+                        }
+                        break;
+
+                    case GmTopics.Rooms:
+                        // Rooms push 是数组，payload 直接就是 msgpack array
+                        var roomsArr = MsgPackLite.Decode(env.Payload);
+                        if (roomsArr is List<object> roomList)
+                        {
+                            var rooms = new List<AdminClient.RoomDetail>();
+                            foreach (var item in roomList)
+                            {
+                                if (item is Dictionary<string, object> rm)
+                                {
+                                    var grd = GmRoomDetail.From(rm);
+                                    var rd = new AdminClient.RoomDetail
+                                    {
+                                        Id = grd.Id, Running = grd.Running, Paused = grd.Paused,
+                                        FrameNumber = grd.FrameNumber, FrameRate = grd.FrameRate,
+                                        MaxPlayers = grd.MaxPlayers, OnlineCount = grd.OnlineCount,
+                                        TotalPlayers = grd.TotalPlayers,
+                                    };
+                                    if (grd.Players != null)
+                                    {
+                                        rd.Players = new AdminClient.PlayerInfo[grd.Players.Length];
+                                        for (int i = 0; i < grd.Players.Length; i++)
+                                            rd.Players[i] = new AdminClient.PlayerInfo { Id = grd.Players[i].Id, State = grd.Players[i].State };
+                                    }
+                                    else rd.Players = Array.Empty<AdminClient.PlayerInfo>();
+                                    rooms.Add(rd);
+                                }
+                            }
+                            _rooms = rooms.ToArray();
+                        }
+                        break;
+                }
+            }
+            else if (env.Type == "rsp")
+            {
+                // RPC 响应
+                var payload = env.DecodePayload();
+                if (payload != null && MsgPackLite.GetBool(payload, "ok"))
+                    ShowNotification(new GUIContent($"{env.Topic}: OK"));
+            }
+            else if (env.Type == "err")
+            {
+                var payload = env.DecodePayload();
+                var msg = MsgPackLite.GetString(payload, "error", "unknown error");
+                ShowNotification(new GUIContent($"Error: {msg}"));
+            }
+        }
+
+        // ===================== GUI =====================
 
         void OnGUI()
         {
@@ -109,12 +266,26 @@ namespace BoomNetwork.GM.Editor
             EditorGUILayout.Space(4);
             EditorGUILayout.BeginHorizontal();
             var prev = GUI.contentColor;
+
+            // 服务器状态
             GUI.contentColor = _lastAlive ? Color.green : Color.gray;
             EditorGUILayout.LabelField($"● {(_lastAlive ? "RUNNING" : "STOPPED")}",
                 EditorStyles.boldLabel, GUILayout.Width(90));
             GUI.contentColor = prev;
+
             if (_lastAlive)
+            {
                 EditorGUILayout.LabelField($"Rooms: {_health.Rooms}  Players: {_health.Players}  Up: {_health.Uptime}");
+
+                // WS 连接指示
+                GUILayout.FlexibleSpace();
+                bool wsOn = _wsClient != null && _wsClient.IsConnected;
+                var wsColor = wsOn ? Color.cyan : Color.yellow;
+                prev = GUI.contentColor;
+                GUI.contentColor = wsColor;
+                EditorGUILayout.LabelField(wsOn ? "WS" : "HTTP", EditorStyles.miniLabel, GUILayout.Width(30));
+                GUI.contentColor = prev;
+            }
             EditorGUILayout.EndHorizontal();
         }
 
@@ -141,7 +312,7 @@ namespace BoomNetwork.GM.Editor
             EditorGUILayout.Space(6);
             DrawActions();
 
-            // G12: 手动命令区
+            // 手动命令区
             EditorGUILayout.Space(6);
             EditorGUILayout.LabelField("Manual Command", EditorStyles.boldLabel);
             var cmd = BuildCommand();
@@ -179,7 +350,6 @@ namespace BoomNetwork.GM.Editor
             int newIdx = EditorGUILayout.Popup(filterIdx, _cmdFilterNames, GUILayout.Width(130));
             _cmdFilter = _cmdFilterValues[newIdx];
 
-            // G11: 心跳隐藏开关
             _hideHeartbeat = GUILayout.Toggle(_hideHeartbeat, "Hide HB", GUILayout.Width(65));
 
             GUILayout.FlexibleSpace();
@@ -187,7 +357,6 @@ namespace BoomNetwork.GM.Editor
             if (GUILayout.Button(_msgPaused ? "▶" : "❚❚", GUILayout.Width(30)))
                 _msgPaused = !_msgPaused;
 
-            // G10: 导出
             if (GUILayout.Button("Copy", GUILayout.Width(40)))
                 CopyMessages();
 
@@ -209,7 +378,7 @@ namespace BoomNetwork.GM.Editor
 
             var filtered = _messages.Where(m =>
             {
-                if (_hideHeartbeat && (m.Cmd == 7 || m.Cmd == 8)) return false; // G11
+                if (_hideHeartbeat && (m.Cmd == 7 || m.Cmd == 8)) return false;
                 if (_cmdFilter >= 0 && m.Cmd != _cmdFilter) return false;
                 return true;
             }).ToArray();
@@ -234,7 +403,7 @@ namespace BoomNetwork.GM.Editor
             EditorGUILayout.EndScrollView();
         }
 
-        void CopyMessages() // G10
+        void CopyMessages()
         {
             var sb = new System.Text.StringBuilder();
             sb.AppendLine("Time\tDir\tCommand\tPlayer\tSize");
@@ -249,20 +418,21 @@ namespace BoomNetwork.GM.Editor
 
         void BuildCmdFilter()
         {
-            var names = new System.Collections.Generic.List<string> { "All" };
-            var values = new System.Collections.Generic.List<int> { -1 };
+            var names = new List<string> { "All" };
+            var values = new List<int> { -1 };
             var cmds = new (int cmd, string name)[]
             {
                 (1, "SessionBind"), (3, "RequestStart"), (5, "FrameInput"),
                 (6, "PushFrames"), (7, "Heartbeat"), (9, "Reconnect"),
                 (15, "JoinRoom"), (19, "PlayerJoined"), (22, "UploadSnapshot"),
+                (27, "SendEntityState"), (28, "PushEntityState"),
             };
             foreach (var c in cmds) { names.Add(c.name); values.Add(c.cmd); }
             _cmdFilterNames = names.ToArray();
             _cmdFilterValues = values.ToArray();
         }
 
-        // ===================== Tab 2: Rooms (G1+G2+G3) =====================
+        // ===================== Tab 2: Rooms =====================
 
         void DrawRooms()
         {
@@ -288,14 +458,11 @@ namespace BoomNetwork.GM.Editor
                     EditorStyles.boldLabel);
                 GUI.contentColor = prev;
 
-                // G3: Stop room button
+                // Stop room button
                 GUI.backgroundColor = new Color(1f, 0.4f, 0.3f);
                 GUI.enabled = room.Running;
                 if (GUILayout.Button("Stop", GUILayout.Width(45)))
-                {
-                    var r = _client.StopRoom(room.Id);
-                    ShowNotification(new GUIContent(r.Ok ? $"Room {room.Id} stopped" : r.Error));
-                }
+                    DoStopRoom(room.Id);
                 GUI.enabled = true;
                 GUI.backgroundColor = Color.white;
                 EditorGUILayout.EndHorizontal();
@@ -314,13 +481,10 @@ namespace BoomNetwork.GM.Editor
                             GUILayout.Width(120));
                         GUI.contentColor = pPrev;
 
-                        // G2: Kick button
+                        // Kick button
                         GUI.backgroundColor = new Color(1f, 0.6f, 0.3f);
                         if (GUILayout.Button("Kick", GUILayout.Width(40)))
-                        {
-                            var r = _client.KickPlayer(p.Id);
-                            ShowNotification(new GUIContent(r.Ok ? $"Kicked P{p.Id}" : r.Error));
-                        }
+                            DoKickPlayer(p.Id);
                         GUI.backgroundColor = Color.white;
 
                         EditorGUILayout.EndHorizontal();
@@ -332,6 +496,34 @@ namespace BoomNetwork.GM.Editor
             }
 
             EditorGUILayout.EndScrollView();
+        }
+
+        // ===================== RPC: WS 优先，HTTP 降级 =====================
+
+        void DoKickPlayer(int pid)
+        {
+            if (_wsClient != null && _wsClient.IsConnected)
+            {
+                _wsClient.SendRpc("kick", new Dictionary<string, object> { ["pid"] = pid });
+            }
+            else
+            {
+                var r = _client.KickPlayer(pid);
+                ShowNotification(new GUIContent(r.Ok ? $"Kicked P{pid}" : r.Error));
+            }
+        }
+
+        void DoStopRoom(int roomId)
+        {
+            if (_wsClient != null && _wsClient.IsConnected)
+            {
+                _wsClient.SendRpc("stop_room", new Dictionary<string, object> { ["room_id"] = roomId });
+            }
+            else
+            {
+                var r = _client.StopRoom(roomId);
+                ShowNotification(new GUIContent(r.Ok ? $"Room {roomId} stopped" : r.Error));
+            }
         }
 
         // ===================== Config =====================
@@ -388,20 +580,15 @@ namespace BoomNetwork.GM.Editor
 
         void StopServer()
         {
-            // 从 adminUrl 提取 admin 端口（http://127.0.0.1:9091 → 9091）
+            // 断开 WS
+            _wsClient?.Disconnect();
+
             var gamePort = _addr.TrimStart(':');
             var adminPort = "9091";
-            try
-            {
-                var uri = new Uri(_adminUrl);
-                adminPort = uri.Port.ToString();
-            }
-            catch { }
+            try { var uri = new Uri(_adminUrl); adminPort = uri.Port.ToString(); } catch { }
 
             try
             {
-                // 杀游戏端口 + admin 端口（同进程，双保险 + go run 子进程兜底）
-                // -sTCP:LISTEN 只杀监听进程（服务器），不杀客户端连接
                 var killCmd = $"lsof -ti:{gamePort},{adminPort} -sTCP:LISTEN | sort -u | xargs kill -9 2>/dev/null; sleep 0.3; " +
                               $"lsof -ti:{gamePort},{adminPort} -sTCP:LISTEN | sort -u | xargs kill -9 2>/dev/null";
                 Process.Start(new ProcessStartInfo
@@ -411,7 +598,6 @@ namespace BoomNetwork.GM.Editor
                     UseShellExecute = false, RedirectStandardOutput = true, CreateNoWindow = true,
                 })?.WaitForExit(3000);
 
-                // 验证：/health 应该失败
                 System.Threading.Thread.Sleep(500);
                 var check = _client.FetchHealth();
                 if (check.IsOnline)
@@ -425,6 +611,7 @@ namespace BoomNetwork.GM.Editor
                 _lastAlive = false; _health = default; _stats = default;
                 _messages = Array.Empty<AdminClient.MsgEntry>();
                 _rooms = Array.Empty<AdminClient.RoomDetail>();
+                _wsMsgBuffer.Clear();
                 Repaint();
                 ShowNotification(new GUIContent("Server stopped"));
             }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -27,7 +28,7 @@ var serverStartTime = time.Now()
 //	GET  /rooms            房间列表 + 玩家详情
 //	POST /kick/{pid}       踢出玩家
 //	POST /rooms/stop/{id}  强停房间
-func startAdminServer(addr, token string) {
+func startAdminServer(ctx context.Context, addr, token string) {
 	mux := http.NewServeMux()
 
 	// /health 不鉴权（健康检查探针需要无障碍访问）
@@ -44,13 +45,29 @@ func startAdminServer(addr, token string) {
 	mux.HandleFunc("/rates", withAuth(token, handleRates))
 	mux.HandleFunc("/netsim", withAuth(token, handleNetSim))
 
+	// WebSocket GM 长连接
+	hub := newGMHub(ctx)
+	go hub.Run()
+	mux.HandleFunc("/ws", hub.HandleUpgrade(token))
+
 	handler := gmTrafficMiddleware(mux)
 
-	log.Printf("[Admin] Listening on %s\n", addr)
+	srv := &http.Server{Addr: addr, Handler: handler}
+
+	// 优雅关闭
+	go func() {
+		<-ctx.Done()
+		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		srv.Shutdown(shutCtx)
+		hub.Stop()
+	}()
+
+	log.Printf("[Admin] Listening on %s (HTTP + WebSocket)\n", addr)
 	if token != "" {
 		log.Printf("[Admin] Auth enabled (Bearer Token)\n")
 	}
-	if err := http.ListenAndServe(addr, handler); err != nil {
+	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
 		log.Printf("[Admin] Failed: %v\n", err)
 	}
 }

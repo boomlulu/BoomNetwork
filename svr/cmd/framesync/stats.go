@@ -112,10 +112,18 @@ type MsgEntry struct {
 }
 
 type msgRing struct {
-	mu   sync.Mutex
-	ring [msgRingSize]MsgEntry
-	pos  int // 下次写入位置
-	len  int // 当前有效条目数
+	mu       sync.Mutex
+	ring     [msgRingSize]MsgEntry
+	pos      int // 下次写入位置
+	len      int // 当前有效条目数
+	notifyCh chan MsgEntry // WebSocket Hub 实时通知通道（非 nil 时启用）
+}
+
+// SetNotifyCh 设置实时通知通道，Hub 启动时调用；传 nil 可清除
+func (r *msgRing) SetNotifyCh(ch chan MsgEntry) {
+	r.mu.Lock()
+	r.notifyCh = ch
+	r.mu.Unlock()
 }
 
 func (r *msgRing) Push(e MsgEntry) {
@@ -125,7 +133,15 @@ func (r *msgRing) Push(e MsgEntry) {
 	if r.len < msgRingSize {
 		r.len++
 	}
+	ch := r.notifyCh
 	r.mu.Unlock()
+	// 非阻塞发送：Hub 消费慢时丢弃实时通知，订阅者可通过重新订阅恢复
+	if ch != nil {
+		select {
+		case ch <- e:
+		default:
+		}
+	}
 }
 
 // Recent 返回最近 limit 条（时间倒序）
@@ -384,6 +400,8 @@ var cmdNames = map[byte]string{
 	24: "PlayerOffline",
 	25: "PlayerOnline",
 	26: "RoomSnapshot",
+	27: "SendEntityState",
+	28: "PushEntityState",
 }
 
 func CmdName(cmd byte) string {

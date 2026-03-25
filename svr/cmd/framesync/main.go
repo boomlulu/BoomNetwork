@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/binary"
 	"flag"
 	"log"
@@ -146,9 +147,12 @@ func main() {
 		}()
 	}
 
-	// Admin HTTP server (health check / GM)
+	// 全局 context 用于优雅关闭
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Admin HTTP + WebSocket server
 	if *adminAddr != "" {
-		go startAdminServer(*adminAddr, *adminToken)
+		go startAdminServer(ctx, *adminAddr, *adminToken)
 	}
 
 	sig := make(chan os.Signal, 1)
@@ -156,6 +160,7 @@ func main() {
 	<-sig
 
 	log.Println("[FrameSync Server] Shutting down...")
+	cancel() // 通知 admin server + WS hub 优雅关闭
 	roomMgr.StopAll()
 	server.Close()
 }
