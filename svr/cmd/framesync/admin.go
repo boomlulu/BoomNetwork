@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"runtime"
 	"strconv"
@@ -99,6 +101,14 @@ func (cw *countingWriter) Write(b []byte) (int, error) {
 	n, err := cw.ResponseWriter.Write(b)
 	cw.bytes += int64(n)
 	return n, err
+}
+
+// Hijack 透传给底层 ResponseWriter，让 WebSocket Upgrade 可以接管 TCP 连接
+func (cw *countingWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if h, ok := cw.ResponseWriter.(http.Hijacker); ok {
+		return h.Hijack()
+	}
+	return nil, nil, fmt.Errorf("underlying ResponseWriter does not implement http.Hijacker")
 }
 
 func gmTrafficMiddleware(next http.Handler) http.Handler {
