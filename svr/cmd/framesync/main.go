@@ -512,6 +512,14 @@ func handleLeaveRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	log.Printf("[Server] Player %d left room %d\n", playerId, room.ID)
 
 	broadcastToRoom(room, playerId, framesync.CmdPlayerLeft, framesync.EncodePlayerId(playerId))
+
+	// 空房间立即清理
+	if room.TotalPlayerCount() == 0 {
+		room.Stop()
+		roomMgr.RemoveRoom(room.ID)
+		log.Printf("[Server] Room %d removed (empty after leave)\n", room.ID)
+	}
+
 	return &codec.Message{Cmd: framesync.CmdLeaveRoomRsp}
 }
 

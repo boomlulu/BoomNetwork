@@ -29,6 +29,7 @@ public class RoomLobby : MonoBehaviour
     private float _sendTimer;
     private float _lastH, _lastV;
     private string _status = "";
+    private Vector2 _roomScroll;
 
     private static readonly Color[] Colors = { Color.green, new(0.3f, 0.5f, 1f), Color.red, Color.yellow };
 
@@ -175,8 +176,9 @@ public class RoomLobby : MonoBehaviour
         }
         else if (state == FrameSyncClient.State.Connected)
         {
-            // --- 房间列表 ---
-            GUILayout.Label("Rooms:", label);
+            // --- 房间列表（滚动）---
+            GUILayout.Label($"Rooms ({_rooms.Length}):", label);
+            _roomScroll = GUILayout.BeginScrollView(_roomScroll, GUILayout.Height(200));
             if (_rooms.Length == 0)
                 GUILayout.Label("  (none)", label);
             foreach (var r in _rooms)
@@ -187,6 +189,7 @@ public class RoomLobby : MonoBehaviour
                     _network.Client.JoinRoom(r.RoomId);
                 GUILayout.EndHorizontal();
             }
+            GUILayout.EndScrollView();
             GUILayout.Space(5);
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("Refresh", btn)) RefreshRooms();
