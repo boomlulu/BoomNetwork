@@ -2,7 +2,6 @@ using System;
 using System.Buffers.Binary;
 using BoomNetwork.Core;
 using BoomNetwork.Core.FrameSync;
-using BoomNetwork.Core.Prediction;
 using BoomNetwork.Client.Transport;
 using BoomNetwork.Client.Session;
 using BoomNetwork.Client.Connection;
@@ -68,7 +67,6 @@ namespace BoomNetwork.Client.FrameSync
 
         // --- 配置 ---
         public uint SnapshotInterval { get; set; } = 100;
-        public PredictionManager? Prediction { get; set; }
 
         // --- 实体权威同步 ---
         /// <summary>远端实体状态到达 (senderPid, entityId, data, offset, length)</summary>
@@ -139,7 +137,6 @@ namespace BoomNetwork.Client.FrameSync
         public void Tick(float deltaTimeMs)
         {
             _connMgr?.Tick(deltaTimeMs);
-            Prediction?.ProcessServerFrames();
         }
 
         /// <summary>
@@ -258,13 +255,6 @@ namespace BoomNetwork.Client.FrameSync
                 _entityStateBuf, 0,
                 _authorityEntities.ToArray(), _authorityEntities.Count);
             _session.Send(FrameSyncCmd.SendEntityState, _entityStateBuf, written);
-        }
-
-        public void PredictWithInput(float deltaTimeMs, byte[] localInput)
-        {
-            if (CurrentState != State.Syncing || Prediction == null) return;
-            if (Prediction.UpdatePrediction(deltaTimeMs, localInput))
-                SendInput(localInput);
         }
 
         // ===================== Network Stack =====================
@@ -461,19 +451,9 @@ namespace BoomNetwork.Client.FrameSync
             if (!_frameSyncStarted || msg.DataLength == 0) return;
             var frame = FrameDataCodec.Decode(msg.DataSpan);
 
-            if (Prediction != null)
-            {
-                Prediction.OnServerFrame(frame);
-                LastFrameNumber = Prediction.PredictedFrame;
-                _connMgr?.UpdateFrameNumber(Prediction.ConfirmedFrame);
-                OnFrame?.Invoke(frame);
-            }
-            else
-            {
-                LastFrameNumber = frame.FrameNumber;
-                _connMgr?.UpdateFrameNumber(frame.FrameNumber);
-                OnFrame?.Invoke(frame);
-            }
+            LastFrameNumber = frame.FrameNumber;
+            _connMgr?.UpdateFrameNumber(frame.FrameNumber);
+            OnFrame?.Invoke(frame);
 
             CheckSnapshotUpload();
         }
