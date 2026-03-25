@@ -19,8 +19,23 @@
   "samples": [
     {
       "displayName": "Hello World",
-      "description": "最小接入示例 — 彩色方块同步移动（~100 行代码）",
+      "description": "Level 0 — 最小接入，QuickStart 一键跑通",
       "path": "Samples~/HelloWorld"
+    },
+    {
+      "displayName": "Room Lobby",
+      "description": "Level 1 — 房间大厅，手动控制连接/建房/加入/开始",
+      "path": "Samples~/RoomLobby"
+    },
+    {
+      "displayName": "Reconnect",
+      "description": "Level 2 — 断线重连，快照序列化/模拟断线/自动恢复",
+      "path": "Samples~/Reconnect"
+    },
+    {
+      "displayName": "Entity Sync",
+      "description": "Level 3 — 实体权威同步，IEntitySync/自权威零延迟/远端平滑",
+      "path": "Samples~/EntitySync"
     }
   ],
   "repository": {
