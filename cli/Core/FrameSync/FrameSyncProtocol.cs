@@ -1,5 +1,6 @@
 using System;
 using System.Buffers.Binary;
+using System.Collections.Generic;
 
 namespace BoomNetwork.Core.FrameSync
 {
@@ -381,7 +382,7 @@ namespace BoomNetwork.Core.FrameSync
     public static class EntityStateCodec
     {
         /// <summary>编码管理者实体状态（客户端发送用）</summary>
-        public static int Encode(byte[] buf, int offset, IEntitySync[] entities, int count)
+        public static int Encode(byte[] buf, int offset, IList<IEntitySync> entities, int count)
         {
             int start = offset;
             buf[offset++] = (byte)count;

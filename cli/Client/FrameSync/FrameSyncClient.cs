@@ -253,7 +253,7 @@ namespace BoomNetwork.Client.FrameSync
                 _entityStateBuf = new byte[maxSize];
             int written = EntityStateCodec.Encode(
                 _entityStateBuf, 0,
-                _authorityEntities.ToArray(), _authorityEntities.Count);
+                _authorityEntities, _authorityEntities.Count);
             _session.Send(FrameSyncCmd.SendEntityState, _entityStateBuf, written);
         }
 
