@@ -13,6 +13,7 @@ namespace BoomNetwork.GM.Editor
     public class AdminWsClient : IDisposable
     {
         public bool IsConnected => _ws != null && _ws.State == WebSocketState.Open && _authenticated;
+        public bool IsConnecting => _bgThread != null && _bgThread.IsAlive && !_authenticated;
 
         /// <summary>主线程从这里读取入站信封</summary>
         public readonly ConcurrentQueue<GmEnvelope> Inbound = new ConcurrentQueue<GmEnvelope>();
@@ -93,9 +94,9 @@ namespace BoomNetwork.GM.Editor
                     ConnectAndLoop(ct).GetAwaiter().GetResult();
                 }
                 catch (OperationCanceledException) { break; }
-                catch (Exception e)
+                catch (Exception)
                 {
-                    UnityEngine.Debug.LogWarning($"[GM-WS] Connection error: {e.Message}");
+                    // 连接失败静默处理（服务器可能未启动），自动重试
                 }
 
                 _authenticated = false;

@@ -131,8 +131,9 @@ namespace BoomNetwork.GM.Editor
 
                     if (_health.IsOnline)
                     {
-                        // 服务器在线但 WS 未连接 → 启动 WS
-                        _wsClient.Connect(_adminUrl, _adminToken);
+                        // 服务器在线且 WS 未连接/未连接中 → 启动 WS
+                        if (!_wsClient.IsConnecting)
+                            _wsClient.Connect(_adminUrl, _adminToken);
 
                         // HTTP fallback 拉数据
                         _stats = _client.FetchStats();
