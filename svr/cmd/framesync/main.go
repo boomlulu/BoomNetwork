@@ -114,8 +114,8 @@ func main() {
 	// 实体权威同步
 	router.On(framesync.CmdSendEntityState, txStats(handleSendEntityState))
 
-	// 在 router 外层包一层 RX 计数 + 消息日志
-	baseHandler := router.AsTransportHandler()
+	// 在 router 外层包一层 RX 计数 + 消息日志 + netsim 响应延迟
+	baseDispatch := router.Dispatch
 	rxHandler := func(conn *transport.Conn, msg *codec.Message) {
 		GameStats.RecordRx(int64(len(msg.Data)))
 		// 关键 RX 消息的日志在 txStats 中带 detail 记录，这里跳过避免双记
@@ -125,7 +125,17 @@ func main() {
 		default:
 			LogMsg("rx", msg.Cmd, connPid(conn), len(msg.Data))
 		}
-		baseHandler(conn, msg)
+
+		rsp := baseDispatch(conn, msg)
+		if rsp == nil {
+			return
+		}
+		rsp.HasSeq = msg.HasSeq
+		rsp.Seq = msg.Seq
+
+		// 通过全局 netsim 对响应也加延迟
+		sc := &simConn{inner: conn, cfg: GlobalNetSim}
+		sc.Send(rsp)
 	}
 	server := transport.NewServer(*proto, rxHandler)
 	server.SetOnDisconnect(onClientDisconnect)
