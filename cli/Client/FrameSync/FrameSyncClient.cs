@@ -255,6 +255,16 @@ namespace BoomNetwork.Client.FrameSync
             Log($"Requested start (initial snapshot: {snapshot?.Length ?? 0} bytes)");
         }
 
+        /// <summary>
+        /// 请求停止帧同步（所有玩家回到 InRoom 状态）
+        /// </summary>
+        public void RequestStop()
+        {
+            if (CurrentState != State.Syncing) return;
+            _session?.Send(FrameSyncCmd.StopFrameSync, null);
+            Log("Requested stop");
+        }
+
         public void SendInput(byte[] data, int dataLength = -1)
         {
             if (CurrentState != State.Syncing) return;

@@ -48,6 +48,7 @@ public class RoomLobby : MonoBehaviour
         c.OnPlayerJoined += pid => { if (!_roomPlayers.Contains(pid)) _roomPlayers.Add(pid); };
         c.OnPlayerLeft += pid => _roomPlayers.Remove(pid);
         c.OnFrameSyncStart += _ => _status = "Syncing";
+        c.OnFrameSyncStop += () => { _status = "In Room (stopped)"; ClearPlayers(); _lastFrame = 0; };
         c.OnFrame += OnFrame;
         c.OnLeftRoom += _ =>
         {
@@ -206,8 +207,13 @@ public class RoomLobby : MonoBehaviour
         }
         else if (state == FrameSyncClient.State.Syncing)
         {
-            GUILayout.Label("WASD to move. Game running!", label);
+            GUILayout.Label($"Game running! Frame: {_lastFrame}", label);
+            GUILayout.Label("WASD to move.", label);
+            GUILayout.Space(5);
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Stop Game", btn)) _network.Client.RequestStop();
             if (GUILayout.Button("Leave Room", btn)) _network.Client.LeaveRoom();
+            GUILayout.EndHorizontal();
         }
 
         GUILayout.Label($"\n{_status}", label);

@@ -99,6 +99,7 @@ func main() {
 	// 帧同步
 	router.On(framesync.CmdSessionBind, txStats(handleSessionBind))
 	router.On(framesync.CmdRequestStart, txStats(handleRequestStart))
+	router.On(framesync.CmdStopFrameSync, txStats(handleRequestStop))
 	router.On(framesync.CmdFrameInput, txStats(handleFrameInput))
 	router.On(framesync.CmdHeartbeat, txStats(handleHeartbeat))
 	router.On(framesync.CmdReconnect, txStats(handleReconnect))
@@ -627,6 +628,28 @@ func handleRequestStart(conn *transport.Conn, msg *codec.Message) *codec.Message
 		time.Sleep(10 * time.Millisecond) // 确保本消息处理完
 		room.Start()
 	}()
+	return nil
+}
+
+func handleRequestStop(conn *transport.Conn, msg *codec.Message) *codec.Message {
+	val, ok := connPlayerMap.Load(conn.ID)
+	if !ok {
+		return nil
+	}
+	playerId := val.(int32)
+
+	roomVal, ok := playerRoomMap.Load(playerId)
+	if !ok {
+		return nil
+	}
+	room := roomVal.(*framesync.Room)
+
+	if !room.IsRunning() {
+		return nil
+	}
+
+	log.Printf("[Server] Player %d requested stop room %d\n", playerId, room.ID)
+	room.Stop()
 	return nil
 }
 
