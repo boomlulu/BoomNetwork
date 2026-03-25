@@ -89,31 +89,39 @@ t=50ms:  帧 N+1: vel 从 (1,0,0) 变为 (0,1,0)
 ## 3. 分层设计
 
 ```
-┌─────────────────────────────────────────┐
-│  游戏层                                  │
-│  PlayerEntity : IEntitySync             │ ← 实现 2 个方法
-│  EntityView<T> (可选 MonoBehaviour)      │ ← 拖组件，自动处理 logical/visual
-│  SpringDamper / DeadZone (可选工具)      │ ← 按需使用
-├─────────────────────────────────────────┤
-│  框架层 — EntitySyncManager              │
-│  权威表维护 + 状态字节投递 + 权威转移     │ ← 框架核心
-├─────────────────────────────────────────┤
-│  网络层 — FrameSyncClient                │
-│  输入 + 权威状态编码 → 帧广播 → 解码分发  │ ← 已有，扩展
-├─────────────────────────────────────────┤
-│  传输层 — TCP / KCP                      │
-│  字节收发                                │ ← 已有，不变
-└─────────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│  Layer 4: 游戏层                              │
+│  PlayerEntity : IEntitySync（实现 2 个方法）   │
+│  定义状态结构体 T                              │
+├──────────────────────────────────────────────┤
+│  Layer 3: Unity 集成（可选）                   │
+│  EntityView<T> — MonoBehaviour，Inspector 配置 │
+│  拖上去就能用，自动 wire Layer 1 + Layer 2     │
+├──────────────────────────────────────────────┤
+│  Layer 2: 纠偏中间件（可插拔策略）             │
+│  IDeadReckoning   — 看起来在动                 │
+│  IInertiaModel    — 动得像人                   │
+│  ICorrectionStrategy — 错了怎么办              │
+│  默认实现开箱即用，可替换                       │
+├──────────────────────────────────────────────┤
+│  Layer 1: 框架核心（字节管道）                 │
+│  EntitySyncManager — 权威表 + 状态投递         │
+│  FrameSyncClient — 帧编码/广播/解码            │
+│  IAuthorityModel — 谁说了算（服务器裁决）      │
+├──────────────────────────────────────────────┤
+│  Layer 0: 传输层（已有，不变）                 │
+│  TCP / KCP                                    │
+└──────────────────────────────────────────────┘
 ```
 
-**框架管什么，不管什么：**
+### 层间职责边界
 
-| 框架管 | 框架不管 |
-|--------|---------|
-| 权威状态字节的可靠投递 | 状态字节内部格式 |
-| 权威表（谁管理谁） | 惯性/插值/弹簧算法 |
-| 权威转移协议 + 冲突裁决 | 多大偏差算"需要纠偏" |
-| 可选工具（EntityView, SpringDamper） | 游戏逻辑 |
+| 层 | 管什么 | 不管什么 |
+|----|--------|---------|
+| L1 框架核心 | 权威状态字节投递、权威表、权威转移协议 | 状态内容、纠偏算法 |
+| L2 中间件 | Dead Reckoning、惯性平滑、纠偏策略 | 网络协议、具体实体逻辑 |
+| L3 Unity 集成 | Logical/Visual 状态分离、Inspector 配置 | 传输细节 |
+| L4 游戏层 | 状态格式定义、WriteState/OnRemoteState | 一切框架和中间件已处理的 |
 
 ---
 
@@ -146,46 +154,184 @@ public interface IEntitySync
 }
 ```
 
-### 4.2 EntityView\<T\> — 可选 Unity 组件（框架提供）
+### 4.2 纠偏中间件接口（Layer 2，可插拔）
+
+四个问题 → 四个策略接口 → 各有默认实现：
+
+```csharp
+// ① 看起来在动？— 两帧之间的外推
+public interface IDeadReckoning
+{
+    /// <summary>用速度外推 logical state（每 Unity 帧调用）</summary>
+    void Extrapolate(ref Vector3 position, ref Quaternion rotation, Vector3 velocity, float dt);
+}
+
+// 默认实现：线性外推
+public class LinearDeadReckoning : IDeadReckoning
+{
+    public void Extrapolate(ref Vector3 pos, ref Quaternion rot, Vector3 vel, float dt)
+    {
+        pos += vel * dt;
+    }
+}
+```
+
+```csharp
+// ② 动得像人？— visual 追 logical 的平滑方式
+public interface IInertiaModel
+{
+    /// <summary>visual state 平滑追踪 logical state（每 Unity 帧调用）</summary>
+    void Smooth(ref Vector3 visualPos, ref Quaternion visualRot,
+                Vector3 logicalPos, Quaternion logicalRot, float dt);
+}
+
+// 默认实现：弹簧阻尼
+public class SpringInertia : IInertiaModel
+{
+    public float positionSmoothTime = 0.1f;
+    public float rotationSmoothTime = 0.05f;
+    private Vector3 _velRef;
+
+    public void Smooth(ref Vector3 vPos, ref Quaternion vRot,
+                       Vector3 lPos, Quaternion lRot, float dt)
+    {
+        vPos = Vector3.SmoothDamp(vPos, lPos, ref _velRef, positionSmoothTime, Mathf.Infinity, dt);
+        vRot = Quaternion.Slerp(vRot, lRot, 1f - Mathf.Exp(-dt / rotationSmoothTime));
+    }
+}
+```
+
+```csharp
+// ③ 错了怎么办？— 收到权威状态时的处理策略
+public interface ICorrectionStrategy
+{
+    /// <summary>权威状态到达，决定如何修正 logical state</summary>
+    /// <param name="logical">当前本地预测的逻辑状态（可修改）</param>
+    /// <param name="authority">管理者的权威状态</param>
+    void OnAuthorityReceived(ref Vector3 logicalPos, ref Quaternion logicalRot,
+                             ref Vector3 logicalVel,
+                             Vector3 authPos, Quaternion authRot, Vector3 authVel);
+}
+
+// 默认实现：死区 + 平滑 + 瞬移阈值
+public class SmoothCorrection : ICorrectionStrategy
+{
+    public float deadZone = 0.01f;      // 偏差 < 此值，不纠偏（避免抖动）
+    public float snapThreshold = 5.0f;  // 偏差 > 此值，直接瞬移（太远了平滑没意义）
+
+    public void OnAuthorityReceived(ref Vector3 lPos, ref Quaternion lRot, ref Vector3 lVel,
+                                    Vector3 aPos, Quaternion aRot, Vector3 aVel)
+    {
+        float dist = Vector3.Distance(lPos, aPos);
+        if (dist < deadZone) return;            // 微偏差，忽略
+        if (dist > snapThreshold)               // 巨偏差，瞬移
+        {
+            lPos = aPos; lRot = aRot; lVel = aVel;
+            return;
+        }
+        lPos = aPos; lRot = aRot; lVel = aVel;  // 正常：更新 logical，visual 靠惯性追
+    }
+}
+```
+
+```csharp
+// ④ 谁说了算？— 权威模型（Phase 2 可替换）
+public interface IAuthorityModel
+{
+    /// <summary>某实体的权威从哪来</summary>
+    int GetAuthority(int entityId);
+    bool IsLocalAuthority(int entityId, int localPlayerId);
+}
+
+// 默认实现：服务器分配 + 先到先得转移
+public class ServerAuthority : IAuthorityModel { ... }
+```
+
+**可插拔示例：**
+
+```csharp
+// 格斗游戏：用更激进的纠偏（容忍度低）
+entityView.correctionStrategy = new SmoothCorrection { deadZone = 0.001f, snapThreshold = 2f };
+
+// 休闲游戏：用更宽松的纠偏（容忍度高）
+entityView.correctionStrategy = new SmoothCorrection { deadZone = 0.1f, snapThreshold = 10f };
+
+// 自定义：贝塞尔曲线纠偏
+entityView.correctionStrategy = new BezierCorrection { curveDuration = 0.3f };
+```
+
+### 4.3 EntityView\<T\> — Unity 组件（组装 Layer 1 + Layer 2）
 
 ```csharp
 /// <summary>
-/// 拖到 GameObject 上，自动处理：
-/// - LogicalState（权威真值 + Dead Reckoning 外推）
-/// - VisualState（渲染用，惯性追踪 LogicalState）
-/// - 状态分离（逻辑帧率 = 服务器帧率，视觉帧率 = Unity 帧率）
+/// 拖到 GameObject → Inspector 选策略 → 自动 work。
+/// 组装框架核心（状态投递）+ 中间件（4 个策略）于一体。
 /// </summary>
-public class EntityView<T> : MonoBehaviour where T : struct, INetworkTransform
+public class EntityView<T> : MonoBehaviour, IEntitySync where T : struct, INetworkTransform
 {
-    public T LogicalState;    // 权威真值（每服务器帧更新）
-    public T VisualState;     // 渲染值（每 Unity 帧平滑追踪）
+    // --- 状态 ---
+    public T LogicalState;    // 权威真值 + Dead Reckoning 外推
+    public T VisualState;     // 渲染值，惯性追踪 Logical
 
-    [Header("Smoothing")]
-    public float positionSmoothTime = 0.1f;
-    public float rotationSmoothTime = 0.05f;
+    // --- 可插拔策略（Inspector 或代码设置）---
+    public IDeadReckoning deadReckoning = new LinearDeadReckoning();
+    public IInertiaModel inertia = new SpringInertia();
+    public ICorrectionStrategy correction = new SmoothCorrection();
+
+    // --- IEntitySync 实现（框架调用）---
+    public int EntityId { get; set; }
+    public int StateSize => ...; // sizeof(T)
+
+    public int WriteState(byte[] buf, int offset)
+    {
+        // 管理者：序列化本地 logical state
+        return Serialize(LogicalState, buf, offset);
+    }
+
+    public void OnRemoteState(ReadOnlySpan<byte> authorityState)
+    {
+        // 远端：收到权威状态
+        T auth = Deserialize<T>(authorityState);
+
+        // ③ Correction：决定怎么修正 logical
+        var lPos = LogicalState.Position;
+        var lRot = LogicalState.Rotation;
+        var lVel = LogicalState.Velocity;
+        correction.OnAuthorityReceived(
+            ref lPos, ref lRot, ref lVel,
+            auth.Position, auth.Rotation, auth.Velocity);
+        LogicalState.Position = lPos;
+        LogicalState.Rotation = lRot;
+        LogicalState.Velocity = lVel;
+        // VisualState 不动，由 Update 惯性追踪
+    }
 
     void Update()
     {
-        // Dead Reckoning：用速度外推 LogicalState
-        LogicalState.Position += LogicalState.Velocity * Time.deltaTime;
+        if (!isLocalAuthority)
+        {
+            // ① Dead Reckoning：帧间外推
+            var pos = LogicalState.Position;
+            var rot = LogicalState.Rotation;
+            deadReckoning.Extrapolate(ref pos, ref rot, LogicalState.Velocity, Time.deltaTime);
+            LogicalState.Position = pos;
+            LogicalState.Rotation = rot;
+        }
 
-        // 惯性追踪：VisualState 弹簧阻尼追 LogicalState
-        VisualState.Position = SmoothDamp(VisualState.Position, LogicalState.Position, ...);
-        VisualState.Rotation = SmoothDamp(VisualState.Rotation, LogicalState.Rotation, ...);
+        // ② Inertia：visual 平滑追 logical
+        var vp = VisualState.Position;
+        var vr = VisualState.Rotation;
+        inertia.Smooth(ref vp, ref vr, LogicalState.Position, LogicalState.Rotation, Time.deltaTime);
+        VisualState.Position = vp;
+        VisualState.Rotation = vr;
 
         // 应用到 Transform
         transform.position = VisualState.Position;
         transform.rotation = VisualState.Rotation;
     }
-
-    // 框架调用：权威状态到达
-    public void SetRemoteState(T state)
-    {
-        LogicalState = state; // VisualState 不跳，由 Update 自然追踪
-    }
 }
 
-/// <summary>状态必须包含这三个字段</summary>
+/// <summary>权威状态必须包含的基础字段</summary>
 public interface INetworkTransform
 {
     Vector3 Position { get; set; }
@@ -194,17 +340,20 @@ public interface INetworkTransform
 }
 ```
 
-### 4.3 可选工具
+**使用方式：**
 
 ```csharp
-// 弹簧阻尼器 — 比 Lerp 更物理，有减速过程
-class SpringDamper { Vector3 SmoothDamp(current, target, ref velocity, smoothTime, dt); }
+// 方式 1：默认策略（拖组件即可）
+var view = go.AddComponent<EntityView<PlayerState>>();
+// 开箱即用：LinearDeadReckoning + SpringInertia + SmoothCorrection
 
-// 死区 — 微小偏差不纠偏，避免抖动
-class DeadZone { bool ShouldCorrect(float divergence, float threshold); }
+// 方式 2：替换策略
+view.inertia = new SpringInertia { positionSmoothTime = 0.2f };
+view.correction = new SmoothCorrection { deadZone = 0.05f };
 
-// 速度预测器 — 用历史速度预测方向变化趋势
-class VelocityPredictor { Vector3 Predict(velocity, acceleration, dt); }
+// 方式 3：完全自定义
+view.deadReckoning = new MyQuadraticDeadReckoning();
+view.correction = new MyBezierCorrection();
 ```
 
 ---
