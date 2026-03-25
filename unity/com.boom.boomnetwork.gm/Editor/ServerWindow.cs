@@ -694,17 +694,30 @@ namespace BoomNetwork.GM.Editor
 
         void DrawActions()
         {
+            var profile = GetActiveProfile();
+            bool isRemote = profile != null && profile.Type == DeployProfileType.RemoteSSH;
+
             EditorGUILayout.BeginHorizontal();
             GUI.backgroundColor = _lastAlive ? Color.gray : Color.green;
             GUI.enabled = !_lastAlive;
-            if (GUILayout.Button("Start Server", GUILayout.Height(28))) StartServer();
+            if (GUILayout.Button(isRemote ? "Start (SSH)" : "Start Server", GUILayout.Height(28)))
+                StartServer();
             GUI.enabled = true;
             GUI.backgroundColor = _lastAlive ? new Color(1f, 0.4f, 0.3f) : Color.gray;
             GUI.enabled = _lastAlive;
-            if (GUILayout.Button("Stop Server", GUILayout.Height(28))) StopServer();
+            if (GUILayout.Button(isRemote ? "Stop (SSH)" : "Stop Server", GUILayout.Height(28)))
+                StopServer();
             GUI.enabled = true;
             GUI.backgroundColor = Color.white;
             EditorGUILayout.EndHorizontal();
+
+            if (isRemote && profile != null)
+            {
+                var prev = GUI.contentColor;
+                GUI.contentColor = Color.gray;
+                EditorGUILayout.LabelField($"  {profile.SshUser}@{profile.SshHost}  systemd: {(string.IsNullOrEmpty(profile.SystemdService) ? "nohup" : profile.SystemdService)}", EditorStyles.miniLabel);
+                GUI.contentColor = prev;
+            }
         }
 
         // ===================== Server Control =====================
@@ -716,55 +729,86 @@ namespace BoomNetwork.GM.Editor
 
         void StartServer()
         {
-            var cmd = BuildCommand();
-            Process.Start(new ProcessStartInfo
+            var profile = GetActiveProfile();
+            if (profile != null && profile.Type == DeployProfileType.RemoteSSH)
             {
-                FileName = "osascript",
-                Arguments = $"-e 'tell application \"Terminal\" to do script \"{cmd}\"'",
-                UseShellExecute = false, CreateNoWindow = true,
-            });
-            ShowNotification(new GUIContent("Server starting..."));
-            _nextCheckTime = EditorApplication.timeSinceStartup + 3.0;
+                string cmd = string.IsNullOrEmpty(profile.SystemdService)
+                    ? $"nohup {profile.RemoteBinaryPath} -config {profile.RemoteConfigPath} > /tmp/framesync.log 2>&1 &"
+                    : $"sudo systemctl start {profile.SystemdService}";
+                RunSshAsync(profile, cmd);
+                ShowNotification(new GUIContent($"Starting remote... ({profile.SshHost})"));
+                _nextCheckTime = EditorApplication.timeSinceStartup + 4.0;
+            }
+            else
+            {
+                var cmd = BuildCommand();
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = "osascript",
+                    Arguments = $"-e 'tell application \"Terminal\" to do script \"{cmd}\"'",
+                    UseShellExecute = false, CreateNoWindow = true,
+                });
+                ShowNotification(new GUIContent("Server starting..."));
+                _nextCheckTime = EditorApplication.timeSinceStartup + 3.0;
+            }
         }
 
         void StopServer()
         {
-            // 断开 WS
             _wsClient?.Disconnect();
 
-            var gamePort = _addr.TrimStart(':');
-            var adminPort = "9091";
-            try { var uri = new Uri(_adminUrl); adminPort = uri.Port.ToString(); } catch { }
-
-            try
+            var profile = GetActiveProfile();
+            if (profile != null && profile.Type == DeployProfileType.RemoteSSH)
             {
-                var killCmd = $"lsof -ti:{gamePort},{adminPort} -sTCP:LISTEN | sort -u | xargs kill -9 2>/dev/null; sleep 0.3; " +
-                              $"lsof -ti:{gamePort},{adminPort} -sTCP:LISTEN | sort -u | xargs kill -9 2>/dev/null";
-                Process.Start(new ProcessStartInfo
-                {
-                    FileName = "/bin/bash",
-                    Arguments = $"-c \"{killCmd}\"",
-                    UseShellExecute = false, RedirectStandardOutput = true, CreateNoWindow = true,
-                })?.WaitForExit(3000);
-
-                System.Threading.Thread.Sleep(500);
-                var check = _client.FetchHealth();
-                if (check.IsOnline)
-                {
-                    ShowNotification(new GUIContent("Kill failed — server still responding"));
-                    UnityEngine.Debug.LogWarning("[GM] Server still alive after kill. Try manually: " +
-                        $"lsof -ti:{gamePort},{adminPort} | xargs kill -9");
-                    return;
-                }
-
+                // 远程 SSH Stop
+                string cmd = string.IsNullOrEmpty(profile.SystemdService)
+                    ? $"pkill -f '{System.IO.Path.GetFileName(profile.RemoteBinaryPath)}' || true"
+                    : $"sudo systemctl stop {profile.SystemdService}";
+                RunSshAsync(profile, cmd);
+                // 清空本地状态，让 health 轮询自然检测到下线
                 _lastAlive = false; _health = default; _stats = default;
                 _messages = Array.Empty<AdminClient.MsgEntry>();
                 _rooms = Array.Empty<AdminClient.RoomDetail>();
                 _wsMsgBuffer.Clear();
                 Repaint();
-                ShowNotification(new GUIContent("Server stopped"));
+                ShowNotification(new GUIContent($"Stopping remote... ({profile.SshHost})"));
             }
-            catch (Exception e) { UnityEngine.Debug.LogError($"[GM] Kill failed: {e.Message}"); }
+            else
+            {
+                // 本地 Stop
+                var gamePort = _addr.TrimStart(':');
+                var adminPort = "9091";
+                try { var uri = new Uri(_adminUrl); adminPort = uri.Port.ToString(); } catch { }
+
+                try
+                {
+                    var killCmd = $"lsof -ti:{gamePort},{adminPort} -sTCP:LISTEN | sort -u | xargs kill -9 2>/dev/null; sleep 0.3; " +
+                                  $"lsof -ti:{gamePort},{adminPort} -sTCP:LISTEN | sort -u | xargs kill -9 2>/dev/null";
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = "/bin/bash",
+                        Arguments = $"-c \"{killCmd}\"",
+                        UseShellExecute = false, RedirectStandardOutput = true, CreateNoWindow = true,
+                    })?.WaitForExit(3000);
+
+                    System.Threading.Thread.Sleep(500);
+                    var check = _client.FetchHealth();
+                    if (check.IsOnline)
+                    {
+                        ShowNotification(new GUIContent("Kill failed — server still responding"));
+                        UnityEngine.Debug.LogWarning($"[GM] Server still alive after kill. Try manually: lsof -ti:{gamePort},{adminPort} | xargs kill -9");
+                        return;
+                    }
+
+                    _lastAlive = false; _health = default; _stats = default;
+                    _messages = Array.Empty<AdminClient.MsgEntry>();
+                    _rooms = Array.Empty<AdminClient.RoomDetail>();
+                    _wsMsgBuffer.Clear();
+                    Repaint();
+                    ShowNotification(new GUIContent("Server stopped"));
+                }
+                catch (Exception e) { UnityEngine.Debug.LogError($"[GM] Kill failed: {e.Message}"); }
+            }
         }
 
         // ===================== Tab 3: Deploy =====================
@@ -969,6 +1013,35 @@ namespace BoomNetwork.GM.Editor
         }
 
         // ===== Server Switcher =====
+
+        DeployProfile GetActiveProfile()
+        {
+            int count = DeployProfile.GetProfileCount();
+            if (count == 0 || _serverSwitcherIdx >= count) return null;
+            return DeployProfile.Load(_serverSwitcherIdx);
+        }
+
+        /// <summary>在后台线程执行 SSH 命令，不阻塞主线程</summary>
+        static void RunSshAsync(DeployProfile p, string remoteCmd)
+        {
+            var args = $"-i \"{p.SshKeyPath}\" -p {p.SshPort} " +
+                       $"-o StrictHostKeyChecking=no -o ConnectTimeout=10 " +
+                       $"{p.SshUser}@{p.SshHost} \"{remoteCmd}\"";
+            System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+            {
+                try
+                {
+                    var proc = Process.Start(new ProcessStartInfo
+                    {
+                        FileName = "ssh", Arguments = args,
+                        UseShellExecute = false, CreateNoWindow = true,
+                        RedirectStandardOutput = true, RedirectStandardError = true,
+                    });
+                    proc?.WaitForExit(15000);
+                }
+                catch { }
+            });
+        }
 
         void BuildServerSwitcher()
         {
