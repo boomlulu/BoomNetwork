@@ -25,10 +25,17 @@ namespace BoomNetwork.Unity
         [SerializeField] private float heartbeatIntervalMs = 3000;
         [SerializeField] private float heartbeatTimeoutMs = 10000;
 
+        [Header("Room")]
+        [SerializeField] private int maxPlayers = 4;
+        [SerializeField] private bool autoStart = true;
+
         [Header("Debug")]
         [SerializeField] private bool logEnabled = true;
 
         // --- 公开属性 ---
+
+        /// <summary>当前玩家 ID</summary>
+        public int PlayerId => Client?.PlayerId ?? 0;
 
         /// <summary>
         /// 帧同步客户端（注册 OnConnected / OnFrame / OnReconnected 等事件）
@@ -44,6 +51,8 @@ namespace BoomNetwork.Unity
         /// 是否在帧同步中
         /// </summary>
         public bool IsSyncing => Client?.CurrentState == FrameSyncClient.State.Syncing;
+
+        private bool _quickStartWired;
 
         private void Awake()
         {
@@ -91,6 +100,27 @@ namespace BoomNetwork.Unity
         public void Disconnect()
         {
             Client?.Disconnect();
+        }
+
+        /// <summary>
+        /// 一键启动：连接 → 建房/入房 → 开始帧同步
+        ///
+        /// 最简接入方式，适合 Hello World 和快速原型。
+        /// 连接后自动 CreateAndJoinRoom，入房后自动 RequestStart。
+        /// </summary>
+        public void QuickStart()
+        {
+            if (Client == null)
+                CreateClient();
+
+            if (!_quickStartWired)
+            {
+                _quickStartWired = true;
+                Client.OnConnected += () => Client.CreateAndJoinRoom(maxPlayers);
+                Client.OnReady += () => { if (autoStart) Client.RequestStart(); };
+            }
+
+            Connect();
         }
 
         /// <summary>

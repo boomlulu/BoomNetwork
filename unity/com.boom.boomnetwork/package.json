@@ -16,6 +16,13 @@
     "tcp",
     "kcp"
   ],
+  "samples": [
+    {
+      "displayName": "Hello World",
+      "description": "最小接入示例 — 彩色方块同步移动（~100 行代码）",
+      "path": "Samples~/HelloWorld"
+    }
+  ],
   "repository": {
     "type": "git",
     "url": "https://github.com/luwenyiCC/BoomNetwork.git"
