@@ -42,6 +42,7 @@ func startAdminServer(addr, token string) {
 	mux.HandleFunc("/players/", withAuth(token, handlePlayerDetail))
 	mux.HandleFunc("/perf", withAuth(token, handlePerf))
 	mux.HandleFunc("/rates", withAuth(token, handleRates))
+	mux.HandleFunc("/netsim", withAuth(token, handleNetSim))
 
 	handler := gmTrafficMiddleware(mux)
 
@@ -384,6 +385,56 @@ func handleRates(w http.ResponseWriter, r *http.Request) {
 	top := PlayerRates.TopPlayers(20)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(top)
+}
+
+// ===================== GET/POST /netsim (网络模拟) =====================
+
+func handleNetSim(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w,
+			`{"enabled":%v,"latency_ms":%d,"jitter_ms":%d,"loss_percent":%d,"stats_dropped":%d,"stats_delayed":%d}`,
+			GlobalNetSim.IsEnabled(),
+			atomic.LoadInt32(&GlobalNetSim.LatencyMs),
+			atomic.LoadInt32(&GlobalNetSim.JitterMs),
+			atomic.LoadInt32(&GlobalNetSim.LossPercent),
+			atomic.LoadInt64(&simDropped),
+			atomic.LoadInt64(&simDelayed),
+		)
+	case http.MethodPost:
+		var req struct {
+			Enabled     *bool `json:"enabled"`
+			LatencyMs   *int  `json:"latency_ms"`
+			JitterMs    *int  `json:"jitter_ms"`
+			LossPercent *int  `json:"loss_percent"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if req.Enabled != nil {
+			GlobalNetSim.SetEnabled(*req.Enabled)
+		}
+		if req.LatencyMs != nil {
+			atomic.StoreInt32(&GlobalNetSim.LatencyMs, int32(*req.LatencyMs))
+		}
+		if req.JitterMs != nil {
+			atomic.StoreInt32(&GlobalNetSim.JitterMs, int32(*req.JitterMs))
+		}
+		if req.LossPercent != nil {
+			atomic.StoreInt32(&GlobalNetSim.LossPercent, int32(*req.LossPercent))
+		}
+		log.Printf("[Admin] NetSim updated: enabled=%v latency=%dms jitter=%dms loss=%d%%\n",
+			GlobalNetSim.IsEnabled(),
+			atomic.LoadInt32(&GlobalNetSim.LatencyMs),
+			atomic.LoadInt32(&GlobalNetSim.JitterMs),
+			atomic.LoadInt32(&GlobalNetSim.LossPercent))
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"ok":true}`)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 func jsonError(w http.ResponseWriter, code int, msg string) {

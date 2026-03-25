@@ -503,7 +503,7 @@ func bindPlayerToRoom(playerId int32, conn *transport.Conn, room *framesync.Room
 	connPlayerMap.Store(conn.ID, playerId)
 	playerRoomMap.Store(playerId, room)
 	playerConnMap.Store(playerId, conn)
-	room.AddPlayer(playerId, &statsConn{inner: conn, pid: playerId})
+	room.AddPlayer(playerId, &statsConn{inner: &simConn{inner: conn, cfg: GlobalNetSim}, pid: playerId})
 }
 
 func handleRequestStart(conn *transport.Conn, msg *codec.Message) *codec.Message {
