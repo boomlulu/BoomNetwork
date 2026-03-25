@@ -18,7 +18,7 @@ namespace BoomNetwork.Unity
     public class BoomNetworkManager : MonoBehaviour
     {
         [Header("Server")]
-        [SerializeField] private string host = "127.0.0.1";
+        [SerializeField] private string host = "124.220.6.174";
         [SerializeField] private int port = 9000;
 
         [Header("Heartbeat")]
