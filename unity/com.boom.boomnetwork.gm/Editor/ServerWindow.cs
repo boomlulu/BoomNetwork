@@ -47,6 +47,10 @@ namespace BoomNetwork.GM.Editor
         private Vector2 _deployLogScroll;
         private string _newEnvName = "";
 
+        // ===== Server Switcher =====
+        private int _serverSwitcherIdx;
+        private string[] _serverSwitcherNames;
+
         // ===== Messages page =====
         private Vector2 _msgScroll;
         private int _cmdFilter = -1;
@@ -71,6 +75,7 @@ namespace BoomNetwork.GM.Editor
             _wsClient = new AdminWsClient();
             _deployTool = new DeployTool(() => Repaint());
             LoadDeployProfiles();
+            BuildServerSwitcher();
             BuildCmdFilter();
             EditorApplication.update += OnEditorUpdate;
         }
@@ -308,9 +313,20 @@ namespace BoomNetwork.GM.Editor
         {
             EditorGUILayout.Space(4);
             EditorGUILayout.BeginHorizontal();
-            var prev = GUI.contentColor;
 
-            // 服务器状态
+            // ===== 服务器切换器 =====
+            if (_serverSwitcherNames != null && _serverSwitcherNames.Length > 0)
+            {
+                int newIdx = EditorGUILayout.Popup(_serverSwitcherIdx, _serverSwitcherNames, GUILayout.Width(148));
+                if (newIdx != _serverSwitcherIdx)
+                {
+                    _serverSwitcherIdx = newIdx;
+                    ApplyServerProfile(newIdx);
+                }
+            }
+
+            // ===== 状态指示 =====
+            var prev = GUI.contentColor;
             GUI.contentColor = _lastAlive ? Color.green : Color.gray;
             EditorGUILayout.LabelField($"● {(_lastAlive ? "RUNNING" : "STOPPED")}",
                 EditorStyles.boldLabel, GUILayout.Width(90));
@@ -320,12 +336,10 @@ namespace BoomNetwork.GM.Editor
             {
                 EditorGUILayout.LabelField($"Rooms: {_health.Rooms}  Players: {_health.Players}  Up: {_health.Uptime}");
 
-                // WS 连接指示
                 GUILayout.FlexibleSpace();
                 bool wsOn = _wsClient != null && _wsClient.IsConnected;
-                var wsColor = wsOn ? Color.cyan : Color.yellow;
                 prev = GUI.contentColor;
-                GUI.contentColor = wsColor;
+                GUI.contentColor = wsOn ? Color.cyan : Color.yellow;
                 EditorGUILayout.LabelField(wsOn ? "WS" : "HTTP", EditorStyles.miniLabel, GUILayout.Width(30));
                 GUI.contentColor = prev;
             }
@@ -831,7 +845,8 @@ namespace BoomNetwork.GM.Editor
             }
             EditorGUILayout.EndHorizontal();
 
-            _deployProfile.HealthUrl = EditorGUILayout.TextField("Health URL", _deployProfile.HealthUrl);
+            _deployProfile.HealthUrl   = EditorGUILayout.TextField("Health URL",   _deployProfile.HealthUrl);
+            _deployProfile.AdminToken  = EditorGUILayout.TextField("Admin Token",  _deployProfile.AdminToken);
             _deployProfile.HealthTimeoutSec = EditorGUILayout.IntField("Health Timeout (s)", _deployProfile.HealthTimeoutSec);
 
             // ===== Build Target =====
@@ -953,6 +968,31 @@ namespace BoomNetwork.GM.Editor
             EditorGUILayout.EndScrollView();
         }
 
+        // ===== Server Switcher =====
+
+        void BuildServerSwitcher()
+        {
+            int count = DeployProfile.GetProfileCount();
+            _serverSwitcherNames = new string[count];
+            _serverSwitcherIdx = 0;
+            for (int i = 0; i < count; i++)
+            {
+                var p = DeployProfile.Load(i);
+                string icon = p.Type == DeployProfileType.Local ? "◉" : "☁";
+                _serverSwitcherNames[i] = $"{icon} {p.Name}";
+                if (p.HealthUrl == _adminUrl)
+                    _serverSwitcherIdx = i;
+            }
+        }
+
+        void ApplyServerProfile(int idx)
+        {
+            var p = DeployProfile.Load(idx);
+            _adminUrl   = p.HealthUrl;
+            _adminToken = p.AdminToken;
+            SavePrefs();
+        }
+
         // ===== Deploy Profile 管理 =====
 
         void LoadDeployProfiles()
@@ -981,12 +1021,16 @@ namespace BoomNetwork.GM.Editor
                 var p = DeployProfile.Load(i);
                 _deployProfileNames[i] = $"{p.Name} ({p.Type})";
             }
+            BuildServerSwitcher();
         }
 
         void SaveDeployProfile()
         {
             if (_deployProfile != null)
+            {
                 DeployProfile.Save(_deployProfileIndex, _deployProfile);
+                BuildServerSwitcher();
+            }
         }
 
         // ===================== EditorPrefs =====================

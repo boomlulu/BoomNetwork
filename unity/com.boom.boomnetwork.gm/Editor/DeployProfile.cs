@@ -31,8 +31,9 @@ namespace BoomNetwork.GM.Editor
         public string RemoteConfigPath = "/etc/boomnetwork/config.yaml";
         public string SystemdService = ""; // 空 = 用 nohup
 
-        // 健康检查
+        // 健康检查 + Admin 鉴权
         public string HealthUrl = "http://127.0.0.1:9091";
+        public string AdminToken = "";
         public int HealthTimeoutSec = 15;
 
         // ===================== OS/Arch 选项 =====================
@@ -98,6 +99,7 @@ namespace BoomNetwork.GM.Editor
             profile.RemoteConfigPath = EditorPrefs.GetString(p + "remoteCfg", profile.RemoteConfigPath);
             profile.SystemdService   = EditorPrefs.GetString(p + "systemd", profile.SystemdService);
             profile.HealthUrl        = EditorPrefs.GetString(p + "healthUrl", profile.HealthUrl);
+            profile.AdminToken       = EditorPrefs.GetString(p + "adminToken", profile.AdminToken);
             profile.HealthTimeoutSec = EditorPrefs.GetInt(p + "healthTimeout", profile.HealthTimeoutSec);
             return profile;
         }
@@ -118,6 +120,7 @@ namespace BoomNetwork.GM.Editor
             EditorPrefs.SetString(p + "remoteCfg", profile.RemoteConfigPath);
             EditorPrefs.SetString(p + "systemd", profile.SystemdService);
             EditorPrefs.SetString(p + "healthUrl", profile.HealthUrl);
+            EditorPrefs.SetString(p + "adminToken", profile.AdminToken);
             EditorPrefs.SetInt(p + "healthTimeout", profile.HealthTimeoutSec);
         }
 
@@ -144,7 +147,7 @@ namespace BoomNetwork.GM.Editor
             string p = PP + $"profile.{index}.";
             string[] keys = { "name", "type", "targetOs", "targetArch", "configFile",
                 "sshHost", "sshPort", "sshUser", "sshKeyPath", "remoteBin", "remoteCfg",
-                "systemd", "healthUrl", "healthTimeout" };
+                "systemd", "healthUrl", "adminToken", "healthTimeout" };
             foreach (var k in keys) EditorPrefs.DeleteKey(p + k);
         }
 
