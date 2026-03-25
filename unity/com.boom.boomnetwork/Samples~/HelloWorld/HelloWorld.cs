@@ -17,7 +17,7 @@ using BoomNetwork.Unity;
 public class HelloWorld : MonoBehaviour
 {
     [Header("Game")]
-    [SerializeField] private float moveSpeed = 5f;
+    [SerializeField] private float moveSpeed = 1f;
 
     private BoomNetworkManager _network;
     private readonly Dictionary<int, Transform> _players = new();
@@ -65,7 +65,7 @@ public class HelloWorld : MonoBehaviour
         _lastFrame = frame.FrameNumber;
         if (frame.Inputs == null) return;
 
-        float delta = moveSpeed * (1f / 20f); // 20fps frame interval
+        float delta = moveSpeed; // 每次输入移动 moveSpeed 格
 
         for (int i = 0; i < frame.Inputs.Length; i++)
         {
