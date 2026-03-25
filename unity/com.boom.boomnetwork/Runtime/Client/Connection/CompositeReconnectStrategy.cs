@@ -19,17 +19,6 @@ namespace BoomNetwork.Client.Connection
         private int _currentAttempts;
         private bool _cancelled;
 
-        /// <summary>
-        /// 创建默认组合策略: 快速重连(3次) → 快照重连(2次)
-        /// </summary>
-        public static CompositeReconnectStrategy Default()
-        {
-            return new CompositeReconnectStrategy(
-                (new QuickReconnectStrategy(), 3),
-                (new SnapshotReconnectStrategy(), 2)
-            );
-        }
-
         public CompositeReconnectStrategy(params (IReconnectStrategy strategy, int maxAttempts)[] chain)
         {
             _chain = chain;
