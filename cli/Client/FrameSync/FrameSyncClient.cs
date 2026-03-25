@@ -76,9 +76,14 @@ namespace BoomNetwork.Client.FrameSync
         private readonly System.Collections.Generic.List<IEntitySync> _authorityEntities = new();
         private byte[]? _entityStateBuf;
 
-        /// <summary>注册本地管理的实体（每帧自动发送其状态）</summary>
+        /// <summary>注册本地管理的实体（每帧自动发送其状态），幂等</summary>
         public void RegisterAuthorityEntity(IEntitySync entity)
         {
+            // 幂等：已注册的 entityId 不重复添加
+            for (int i = 0; i < _authorityEntities.Count; i++)
+                if (_authorityEntities[i].EntityId == entity.EntityId)
+                    return;
+
             _authorityEntities.Add(entity);
             if (_entityStateBuf == null || _entityStateBuf.Length < 1 + _authorityEntities.Count * (6 + 64))
                 _entityStateBuf = new byte[1 + _authorityEntities.Count * (6 + 128)];
