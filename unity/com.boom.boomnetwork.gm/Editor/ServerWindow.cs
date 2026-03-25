@@ -1029,29 +1029,49 @@ namespace BoomNetwork.GM.Editor
             return DeployProfile.Load(_serverSwitcherIdx);
         }
 
-        /// <summary>在后台线程执行 SSH 命令，不阻塞主线程</summary>
+        /// <summary>在后台线程执行 SSH 命令，结果输出到 Unity Console</summary>
         static void RunSshAsync(DeployProfile p, string remoteCmd)
         {
-            // 展开 ~ 为实际 HOME 路径，Process.Start 不走 shell 无法做 tilde 展开
             var keyPath = p.SshKeyPath.Replace("~",
                 System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile));
 
             var args = $"-i \"{keyPath}\" -p {p.SshPort} " +
                        $"-o StrictHostKeyChecking=no -o ConnectTimeout=10 " +
                        $"{p.SshUser}@{p.SshHost} \"{remoteCmd}\"";
+
+            UnityEngine.Debug.Log($"[GM-SSH] /usr/bin/ssh {args}");
+
             System.Threading.ThreadPool.QueueUserWorkItem(_ =>
             {
                 try
                 {
-                    var proc = Process.Start(new ProcessStartInfo
+                    var psi = new ProcessStartInfo
                     {
                         FileName = "/usr/bin/ssh", Arguments = args,
                         UseShellExecute = false, CreateNoWindow = true,
                         RedirectStandardOutput = true, RedirectStandardError = true,
-                    });
-                    proc?.WaitForExit(15000);
+                    };
+                    var proc = Process.Start(psi);
+                    if (proc == null)
+                    {
+                        UnityEngine.Debug.LogError("[GM-SSH] Process.Start returned null");
+                        return;
+                    }
+                    string stdout = proc.StandardOutput.ReadToEnd();
+                    string stderr = proc.StandardError.ReadToEnd();
+                    proc.WaitForExit(15000);
+                    int code = proc.ExitCode;
+
+                    if (!string.IsNullOrEmpty(stdout))
+                        UnityEngine.Debug.Log($"[GM-SSH] stdout: {stdout.Trim()}");
+                    if (!string.IsNullOrEmpty(stderr))
+                        UnityEngine.Debug.LogWarning($"[GM-SSH] stderr: {stderr.Trim()}");
+                    UnityEngine.Debug.Log($"[GM-SSH] exit code: {code}");
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    UnityEngine.Debug.LogError($"[GM-SSH] Exception: {ex.Message}");
+                }
             });
         }
 
