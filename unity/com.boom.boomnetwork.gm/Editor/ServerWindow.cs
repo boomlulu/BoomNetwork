@@ -742,6 +742,7 @@ namespace BoomNetwork.GM.Editor
                     ? $"nohup {profile.RemoteBinaryPath} -config {profile.RemoteConfigPath} > /tmp/framesync.log 2>&1 &"
                     : $"sudo systemctl start {profile.SystemdService}";
                 RunSshAsync(profile, cmd);
+                _stopCooldownUntil = 0; // 清除 Stop 冷却，允许 Health 检测到上线后立即重连
                 ShowNotification(new GUIContent($"Starting remote... ({profile.SshHost})"));
                 _nextCheckTime = EditorApplication.timeSinceStartup + 4.0;
             }
