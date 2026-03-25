@@ -304,23 +304,6 @@ namespace BoomNetwork.Core.FrameSync
     }
 
     /// <summary>
-    /// 游戏层实现此接口，库只管传输不关心快照内容
-    /// </summary>
-    public interface ISnapshotable
-    {
-        /// <summary>
-        /// 序列化当前游戏状态（帧执行完毕后调用）
-        /// </summary>
-        byte[] TakeSnapshot();
-
-        /// <summary>
-        /// 从快照恢复游戏状态
-        /// 加载后帧同步从 snapshotFrame+1 继续执行
-        /// </summary>
-        void LoadSnapshot(byte[] data);
-    }
-
-    /// <summary>
     /// 快照编解码
     /// </summary>
     public static class SnapshotCodec
