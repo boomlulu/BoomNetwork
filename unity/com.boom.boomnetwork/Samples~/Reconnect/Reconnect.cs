@@ -31,6 +31,8 @@ public class Reconnect : MonoBehaviour
 
     // 重连状态
     private bool _isReconnecting;
+    private float _dropTimer;      // 断开倒计时
+    private float _dropDuration;   // 目标断开时长
     private int _reconnectCount;
     private string _lastEvent = "";
 
@@ -45,23 +47,42 @@ public class Reconnect : MonoBehaviour
         c.OnTakeSnapshot = TakeSnapshot;
         c.OnLoadSnapshot = LoadSnapshot;
 
-        c.OnDisconnected += () =>
-        {
-            _isReconnecting = true;
-            _lastEvent = $"[{DateTime.Now:HH:mm:ss}] Disconnected — reconnecting...";
-        };
         c.OnReconnected += () =>
         {
             _isReconnecting = false;
             _reconnectCount++;
             _lastEvent = $"[{DateTime.Now:HH:mm:ss}] Reconnected! (total: {_reconnectCount})";
         };
+        c.OnDisconnected += () =>
+        {
+            _isReconnecting = false;
+            _lastEvent = $"[{DateTime.Now:HH:mm:ss}] Disconnected (all retries exhausted)";
+        };
 
         _network.QuickStart();
     }
 
+    /// <summary>断开连接 N 秒后自动重连</summary>
+    void DropForSeconds(float seconds)
+    {
+        if (_isReconnecting) return;
+        _isReconnecting = true;
+        _dropDuration = seconds;
+        _dropTimer = 0;
+        _network.Client.SimulateNetworkDrop();
+        _lastEvent = $"[{DateTime.Now:HH:mm:ss}] Dropped! waiting {seconds}s before reconnect...";
+    }
+
     void Update()
     {
+        // 断开倒计时：到时间后框架自动重连（SimulateNetworkDrop 保留身份，ConnectionManager 自动重试）
+        if (_isReconnecting)
+        {
+            _dropTimer += Time.deltaTime;
+            // 不需要手动重连——ConnectionManager 的 CompositeReconnectStrategy 自动处理
+            // 这里只做 UI 倒计时显示
+        }
+
         if (!_network.IsSyncing) return;
 
         _sendTimer += Time.deltaTime * 1000f;
@@ -162,10 +183,12 @@ public class Reconnect : MonoBehaviour
         GUILayout.EndArea();
 
         // 右上角 — 断线测试按钮
-        GUILayout.BeginArea(new Rect(Screen.width - 180, 10, 170, 120));
+        GUILayout.BeginArea(new Rect(Screen.width - 180, 10, 170, 150));
         GUILayout.Label("Test Disconnect", title);
-        if (GUILayout.Button("Drop Connection", btn))
-            _network.Client.SimulateNetworkDrop();
+        if (GUILayout.Button("Drop 1s (Quick Reconnect)", btn))
+            DropForSeconds(1f);
+        if (GUILayout.Button("Drop 8s (Snapshot Reconnect)", btn))
+            DropForSeconds(8f);
         GUILayout.EndArea();
 
         // 重连遮罩
@@ -176,8 +199,9 @@ public class Reconnect : MonoBehaviour
             overlay.alignment = TextAnchor.MiddleCenter;
             overlay.normal.textColor = Color.white;
             GUI.Box(new Rect(0, 0, Screen.width, Screen.height), "");
+            float remaining = Mathf.Max(0, _dropDuration - _dropTimer);
             GUI.Label(new Rect(0, Screen.height / 2 - 30, Screen.width, 60),
-                "Reconnecting...", overlay);
+                $"Reconnecting... {remaining:F1}s", overlay);
         }
     }
 }
