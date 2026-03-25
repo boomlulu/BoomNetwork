@@ -174,10 +174,24 @@ while (running)
 // Person 是游戏层的薄包装，内部持有 FrameSyncClient
 var person = new Person();
 person.Connect(networkConfig);
-person.OnConnected += p => Debug.Log($"Player {p.PlayerId} connected");
+person.OnConnected += p => Debug.Log($"Player {p.PlayerId} connected, RTT={p.RttMs}ms");
 person.CreateAndJoinRoom(4);
 person.RequestStart();
 ```
+
+### 实体权威同步（Demo02）
+
+```csharp
+// 每个实体实现 IEntitySync 接口
+// 权威实体：本地立刻执行输入 + 自动发送状态给远端
+// 远端实体：Dead Reckoning + 惯性模型平滑追踪
+person.RegisterAuthorityEntity(myEntitySync);
+person.OnEntityState += (senderPid, entityId, data, offset, len) => {
+    remoteEntity.OnRemoteState(data, offset, len, senderPid);
+};
+```
+
+详细设计：[design-entity-authority-sync.md](design-entity-authority-sync.md)
 
 ---
 

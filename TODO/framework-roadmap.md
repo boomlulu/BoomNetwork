@@ -20,6 +20,9 @@
 | 房间管理 | 创建/加入/离开/列表，autoroom 模式 |
 | 预测回滚 | PredictionManager 框架（Demo02 待完善） |
 | FrameSyncClient 重构 | 长生命周期，内置完整网络栈，Person 瘦身为纯适配器 |
+| 实体权威同步 Phase 1 | Cmd 27/28 + IEntitySync + Dead Reckoning + 惯性模型 + Demo02 |
+| 网络状态模拟 | S→C 延迟/抖动/丢包 + GM 面板实时控制 |
+| 心跳 RTT 测量 | ConnectionManager → FrameSyncClient → Person.RttMs |
 
 ### GM 工具
 
@@ -86,7 +89,7 @@
 
 | # | 任务 | 说明 | 状态 |
 |---|------|------|------|
-| N13 | **Demo02 预测回滚完善** | 框架代码已有，Demo 场景未完成 | 待做 |
+| N13 | ~~Demo02 预测回滚~~ → **Entity Authority Sync** | **已完成** — PredictionManager 替换为实体权威同步。L1-L4 全部实现，Demo02 可用 | ✅ |
 | N14 | **F13 重连 ConnPlayerMap 原子化** | 多次快速重连可能映射不一致 | 待做 |
 | N15 | **F14 Room panic 恢复一致性** | recover 后 running=false 但玩家还在 | 待做 |
 | N16 | **F16 autoroom 整合到 config.yaml** | 目前是命令行 flag，不在配置中 | 待做 |

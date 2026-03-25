@@ -56,6 +56,22 @@ person.SendInput(inputBytes);
 
 Person 是纯代理，所有网络能力来自内部的 FrameSyncClient。
 
+### 方式三：实体权威同步（推荐用于需要预测的游戏）
+
+每个实体实现 `IEntitySync` 接口，权威实体本地立刻响应，远端通过 Dead Reckoning + 惯性模型平滑追踪。
+
+```csharp
+// 注册权威实体（每帧自动发送状态）
+person.RegisterAuthorityEntity(myEntity); // myEntity : IEntitySync
+
+// 接收远端实体状态
+person.OnEntityState += (senderPid, entityId, data, offset, len) =>
+    remoteEntity.OnRemoteState(data, offset, len, senderPid);
+
+// 延迟查看
+Debug.Log($"RTT: {person.RttMs}ms");
+```
+
 ## 服务器
 
 ```bash

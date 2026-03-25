@@ -1,6 +1,13 @@
 # 实体权威同步（Entity Authority Sync）设计文档
 
-> **状态**：设计确认中
+> **状态**：Phase 1 已实施（2026-03-25）
+>
+> - L1 框架核心：Cmd 27/28 + IEntitySync + EntityStateCodec（BoomNetwork `e45555e`）
+> - L2 纠偏中间件：IDeadReckoning + IInertiaModel + ICorrectionStrategy（BoomNetworkUnity）
+> - L3 NetworkTransformSync：2D 具体实现（BoomNetworkUnity）
+> - L4 Demo02：EntitySyncDemoManager（BoomNetworkUnity）
+> - 网络模拟：netsim 延迟/抖动/丢包 + GM 面板
+> - 待做：Phase 2 权威转移 / Phase 3 生产加固
 >
 > **核心思想**：帧驱动状态同步，用增量带宽换确定性。不依赖确定性数学库。
 >

@@ -43,6 +43,7 @@ go run ./cmd/framesync/ -admin=:9091 -admin-token=your-secret
 | | 房间列表 + 玩家详情 | `GET /rooms` | 需鉴权 |
 | **控制** | 踢出玩家 | `POST /kick/{pid}` | 需鉴权 |
 | | 强制停止房间 | `POST /rooms/stop/{id}` | 需鉴权 |
+| **控制** | 网络状态模拟（延迟/抖动/丢包） | `GET/POST /netsim` | 需鉴权 |
 | **诊断** | 单玩家详情 + 最近消息 | `GET /players/{pid}` | 需鉴权 |
 | | 服务器性能（内存/GC/goroutine） | `GET /perf` | 需鉴权 |
 | | 玩家消息速率 Top 20 | `GET /rates` | 需鉴权 |
@@ -152,6 +153,37 @@ curl -X POST -H "Authorization: Bearer your-secret" http://127.0.0.1:9091/rooms/
 ```json
 {"ok":true,"stopped":1}
 ```
+
+---
+
+#### GET/POST /netsim
+
+模拟网络延迟、抖动、丢包（S→C 出站方向）。
+
+```bash
+# 查看当前配置
+curl http://127.0.0.1:9091/netsim
+
+# 开启：100ms 延迟 + 20ms 抖动 + 5% 丢包
+curl -X POST http://127.0.0.1:9091/netsim \
+  -d '{"enabled":true,"latency_ms":100,"jitter_ms":20,"loss_percent":5}'
+
+# 关闭
+curl -X POST http://127.0.0.1:9091/netsim -d '{"enabled":false}'
+```
+
+```json
+{
+  "enabled": true,
+  "latency_ms": 100,
+  "jitter_ms": 20,
+  "loss_percent": 5,
+  "stats_dropped": 12,
+  "stats_delayed": 456
+}
+```
+
+Unity ServerWindow Dashboard 中也有滑块控制面板，实时调整。
 
 ---
 

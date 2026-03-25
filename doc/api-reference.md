@@ -22,6 +22,7 @@ public enum PersonState { Idle, Connecting, Connected, InRoom, Syncing, Disconne
 | `RoomId` | `int` | 当前房间 ID |
 | `FrameNumber` | `uint` | 当前帧号 |
 | `HasPreviousIdentity` | `bool` | 断线后是否保留了身份（可重连） |
+| `RttMs` | `float` | 最近心跳 RTT（毫秒），-1 = 未测量 |
 
 ### 方法
 
@@ -41,6 +42,8 @@ public enum PersonState { Idle, Connecting, Connected, InRoom, Syncing, Disconne
 | `GetRooms(Action<RoomInfo[]>)` | 获取房间列表 |
 | `CreateRoom(int maxPlayers, Action<int>)` | 创建房间，回调返回 roomId |
 | `GetFrameSyncInitData()` | 获取服务器下发的帧同步配置 |
+| `RegisterAuthorityEntity(IEntitySync)` | 注册本地管理的实体（每帧自动发送权威状态） |
+| `UnregisterAuthorityEntity(int entityId)` | 注销实体 |
 | `SetPrediction(PredictionManager)` | 设置预测管理器（启用预测模式） |
 | `ClearPrediction()` | 关闭预测模式 |
 
@@ -61,6 +64,7 @@ public enum PersonState { Idle, Connecting, Connected, InRoom, Syncing, Disconne
 | `OnDisconnected` | `Action<Person>` | 断开连接 |
 | `OnLeftRoom` | `Action<Person, int>` | 离开房间（oldPlayerId） |
 | `OnLog` | `Action<Person, string>` | 内部日志 |
+| `OnEntityState` | `Action<int, int, byte[], int, int>` | 远端实体权威状态到达 (senderPid, entityId, data, offset, len) |
 
 ### 回调
 
@@ -278,3 +282,26 @@ interface ISnapshotable
 | 25 | PlayerOnline | S→C | 推送：玩家恢复在线 |
 | 26 | RoomSnapshot | S→C | 推送：房间快照（迟到者加入） |
 | 23 | UploadSnapshotRsp | S→C | 上传确认 |
+| 27 | SendEntityState | C→S | 管理者发送实体权威状态 |
+| 28 | PushEntityState | S→C | 广播实体权威状态（带 senderPid） |
+
+---
+
+## IEntitySync（实体权威同步接口）
+
+游戏层为每个需要网络同步的实体实现此接口。框架只关心字节，不关心内容。
+
+```csharp
+public interface IEntitySync
+{
+    int EntityId { get; }
+    int StateSize { get; }
+    int WriteState(byte[] buffer, int offset);                              // 管理者：序列化状态
+    void OnRemoteState(byte[] data, int offset, int length, int senderPid); // 远端：收到权威状态
+}
+```
+
+使用方式：
+- 权威实体：`person.RegisterAuthorityEntity(entity)` → 每帧自动 WriteState 发给服务器
+- 远端实体：`person.OnEntityState` → 框架自动解码 → 调用 `entity.OnRemoteState`
+- 详细设计：[design-entity-authority-sync.md](design-entity-authority-sync.md)
