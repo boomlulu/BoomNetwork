@@ -22,6 +22,10 @@ namespace BoomNetwork.GM.Editor
         private AdminClient.StatsResult  _stats;
         private AdminClient.MsgEntry[]   _messages = Array.Empty<AdminClient.MsgEntry>();
         private AdminClient.RoomDetail[] _rooms = Array.Empty<AdminClient.RoomDetail>();
+        private AdminClient.NetSimResult _netSim;
+        private bool _netSimEnabled;
+        private int _netSimLatency, _netSimJitter, _netSimLoss;
+        private bool _netSimDirty; // UI 值和服务器值不同步
         private double _nextCheckTime;
         private double _nextPingTime;
         private bool _lastAlive;
@@ -227,6 +231,28 @@ namespace BoomNetwork.GM.Editor
                             _rooms = rooms.ToArray();
                         }
                         break;
+
+                    case GmTopics.Netsim:
+                        var ns = payload;
+                        _netSim = new AdminClient.NetSimResult
+                        {
+                            HasData     = true,
+                            Enabled     = MsgPackLite.GetBool(ns, "enabled"),
+                            LatencyMs   = MsgPackLite.GetInt(ns, "latency_ms"),
+                            JitterMs    = MsgPackLite.GetInt(ns, "jitter_ms"),
+                            LossPercent = MsgPackLite.GetInt(ns, "loss_percent"),
+                            Dropped     = MsgPackLite.GetLong(ns, "stats_dropped"),
+                            Delayed     = MsgPackLite.GetLong(ns, "stats_delayed"),
+                        };
+                        // 服务器推送时只更新显示，不覆盖用户正在编辑的值
+                        if (!_netSimDirty)
+                        {
+                            _netSimEnabled = _netSim.Enabled;
+                            _netSimLatency = _netSim.LatencyMs;
+                            _netSimJitter  = _netSim.JitterMs;
+                            _netSimLoss    = _netSim.LossPercent;
+                        }
+                        break;
                 }
             }
             else if (env.Type == "rsp")
@@ -307,6 +333,10 @@ namespace BoomNetwork.GM.Editor
                 TrafficRow("5 sec", _stats.GmTx5Sec / 5, _stats.GmRx5Sec / 5, true);
             }
 
+            // ===== Network Simulation =====
+            if (_lastAlive)
+                DrawNetSim();
+
             EditorGUILayout.Space(6);
             DrawConfig();
             EditorGUILayout.Space(6);
@@ -335,6 +365,94 @@ namespace BoomNetwork.GM.Editor
             GUI.contentColor = new Color(0.5f, 1f, 0.5f);
             EditorGUILayout.LabelField($"C→S {AdminClient.FmtBytes(rx)}{suffix}");
             GUI.contentColor = prev;
+            EditorGUILayout.EndHorizontal();
+        }
+
+        // ===================== Network Simulation =====================
+
+        void DrawNetSim()
+        {
+            EditorGUILayout.Space(4);
+
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField("Network Simulation", EditorStyles.boldLabel);
+
+            // 统计
+            if (_netSim.HasData)
+            {
+                var prev = GUI.contentColor;
+                GUI.contentColor = _netSim.Enabled ? Color.yellow : Color.gray;
+                EditorGUILayout.LabelField(
+                    _netSim.Enabled ? $"ON  dropped:{_netSim.Dropped} delayed:{_netSim.Delayed}" : "OFF",
+                    EditorStyles.miniLabel);
+                GUI.contentColor = prev;
+            }
+            EditorGUILayout.EndHorizontal();
+
+            // 控制
+            EditorGUI.BeginChangeCheck();
+
+            _netSimEnabled = EditorGUILayout.Toggle("Enabled", _netSimEnabled);
+
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField("Latency", GUILayout.Width(55));
+            _netSimLatency = EditorGUILayout.IntSlider(_netSimLatency, 0, 500);
+            EditorGUILayout.LabelField("ms", GUILayout.Width(20));
+            EditorGUILayout.EndHorizontal();
+
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField("Jitter", GUILayout.Width(55));
+            _netSimJitter = EditorGUILayout.IntSlider(_netSimJitter, 0, 200);
+            EditorGUILayout.LabelField("ms", GUILayout.Width(20));
+            EditorGUILayout.EndHorizontal();
+
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField("Loss", GUILayout.Width(55));
+            _netSimLoss = EditorGUILayout.IntSlider(_netSimLoss, 0, 50);
+            EditorGUILayout.LabelField("%", GUILayout.Width(20));
+            EditorGUILayout.EndHorizontal();
+
+            if (EditorGUI.EndChangeCheck())
+                _netSimDirty = true;
+
+            // Apply 按钮
+            EditorGUILayout.BeginHorizontal();
+            GUILayout.FlexibleSpace();
+
+            GUI.enabled = _netSimDirty;
+            GUI.backgroundColor = _netSimDirty ? Color.yellow : Color.gray;
+            if (GUILayout.Button("Apply", GUILayout.Width(60)))
+            {
+                if (_wsClient != null && _wsClient.IsConnected)
+                {
+                    _wsClient.SendRpc("netsim", new Dictionary<string, object>
+                    {
+                        ["enabled"] = _netSimEnabled,
+                        ["latency_ms"] = _netSimLatency,
+                        ["jitter_ms"] = _netSimJitter,
+                        ["loss_percent"] = _netSimLoss,
+                    });
+                }
+                else
+                {
+                    var r = _client.SetNetSim(_netSimEnabled, _netSimLatency, _netSimJitter, _netSimLoss);
+                    if (!r.Ok)
+                        ShowNotification(new GUIContent($"NetSim error: {r.Error}"));
+                }
+                _netSimDirty = false;
+            }
+            GUI.backgroundColor = Color.white;
+            GUI.enabled = true;
+
+            // Reset 按钮
+            if (GUILayout.Button("Reset", GUILayout.Width(50)))
+            {
+                _netSimEnabled = false;
+                _netSimLatency = 0;
+                _netSimJitter = 0;
+                _netSimLoss = 0;
+                _netSimDirty = true;
+            }
             EditorGUILayout.EndHorizontal();
         }
 

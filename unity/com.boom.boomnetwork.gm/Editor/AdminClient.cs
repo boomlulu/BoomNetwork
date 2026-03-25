@@ -123,6 +123,37 @@ namespace BoomNetwork.GM.Editor
 
         public ActionResult StopRoom(int roomId) => Post($"/rooms/stop/{roomId}");
 
+        // ===================== GET/POST /netsim =====================
+
+        public struct NetSimResult
+        {
+            public bool HasData;
+            public bool Enabled;
+            public int LatencyMs, JitterMs, LossPercent;
+            public long Dropped, Delayed;
+        }
+
+        public NetSimResult FetchNetSim()
+        {
+            var r = new NetSimResult();
+            var j = Get("/netsim");
+            if (j == null) return r;
+            r.HasData     = true;
+            r.Enabled     = ParseBool(j, "enabled");
+            r.LatencyMs   = ParseInt(j, "latency_ms");
+            r.JitterMs    = ParseInt(j, "jitter_ms");
+            r.LossPercent = ParseInt(j, "loss_percent");
+            r.Dropped     = ParseLong(j, "stats_dropped");
+            r.Delayed     = ParseLong(j, "stats_delayed");
+            return r;
+        }
+
+        public ActionResult SetNetSim(bool enabled, int latencyMs, int jitterMs, int lossPercent)
+        {
+            return PostJson("/netsim",
+                $"{{\"enabled\":{(enabled ? "true" : "false")},\"latency_ms\":{latencyMs},\"jitter_ms\":{jitterMs},\"loss_percent\":{lossPercent}}}");
+        }
+
         // ===================== HTTP Core =====================
 
         private string Get(string path)
@@ -139,6 +170,24 @@ namespace BoomNetwork.GM.Editor
                 return readTask.IsCompletedSuccessfully ? readTask.Result : null;
             }
             catch { return null; }
+        }
+
+        private ActionResult PostJson(string path, string jsonBody)
+        {
+            try
+            {
+                var req = new HttpRequestMessage(HttpMethod.Post, BaseUrl.TrimEnd('/') + path);
+                AddAuth(req);
+                req.Content = new StringContent(jsonBody, Encoding.UTF8, "application/json");
+                var task = _http.SendAsync(req);
+                task.Wait(TimeoutMs + 100);
+                if (!task.IsCompletedSuccessfully) return new ActionResult { Error = "timeout" };
+                var readTask = task.Result.Content.ReadAsStringAsync();
+                readTask.Wait(TimeoutMs);
+                var json = readTask.IsCompletedSuccessfully ? readTask.Result : "";
+                return new ActionResult { Ok = json.Contains("\"ok\":true"), Error = ParseStr(json, "error") };
+            }
+            catch (Exception e) { return new ActionResult { Error = e.Message }; }
         }
 
         private ActionResult Post(string path)
