@@ -503,8 +503,9 @@ func handleLeaveRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	}
 	room := roomVal.(*framesync.Room)
 	room.RemovePlayer(playerId)
-	connPlayerMap.Delete(conn.ID)
-	playerConnMap.Delete(playerId)
+	// 注意：不删除 connPlayerMap / playerConnMap
+	// 这两个映射是 SessionBind 建立的，LeaveRoom 只清理房间关系
+	// 删了会导致 re-JoinRoom 失败（"SessionBind missing"）
 
 	log.Printf("[Server] Player %d left room %d\n", playerId, room.ID)
 
