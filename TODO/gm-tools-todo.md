@@ -1,6 +1,19 @@
 # GM 工具迭代 TODO
 
-> 基于 9 端点现状的 gap 分析，按优先级排列
+> 基于 gap 分析 + WebSocket 传输层升级后的状态
+
+---
+
+## 已完成 ✅
+
+| # | 任务 | 完成日期 |
+|---|------|---------|
+| G0 | **WebSocket + MessagePack 传输层** | 2026-03-25 |
+|    | Go: gorilla/websocket + vmihailenco/msgpack, Hub 订阅推送 | |
+|    | Unity: AdminWsClient (后台线程) + MsgPackLite (零依赖) | |
+|    | ServerWindow: WS queue drain + HTTP fallback | |
+| G5 | **Cmd 27/28 名称映射** | 2026-03-25 |
+| G6 | **ServerWindow Cmd 过滤器补 27/28** | 2026-03-25 |
 
 ---
 
@@ -8,12 +21,10 @@
 
 | # | 任务 | 说明 | 状态 |
 |---|------|------|------|
-| G1 | **AdminClient + UI: /perf** | 加 `FetchPerf()` + `PerfResult` 结构体 + ServerWindow 展示（Dashboard 或新 Tab） | 待做 |
-| G2 | **AdminClient + UI: /rates** | 加 `FetchRates()` + `PlayerRateInfo[]` + ServerWindow 展示（标红异常速率） | 待做 |
-| G3 | **AdminClient + UI: /players/{pid}** | 加 `FetchPlayerDetail(pid)` + `PlayerDetailResult` + 点击玩家弹出详情面板 | 待做 |
-| G4 | **MsgEntry.detail 字段补全** | AdminClient.MsgEntry 缺 Detail 字段，ParseMsgArray 未读取。Messages Tab 静默丢弃 payload 摘要 | 待做 |
-| G5 | **Cmd 27/28 名称映射** | stats.go `cmdNames` 缺 CmdSendEntityState(27) / CmdPushEntityState(28)，消息日志显示 "Unknown" | 待做 |
-| G6 | **ServerWindow Cmd 过滤器补 27/28** | BuildCmdFilter() 下拉菜单未包含实体同步命令 | 待做 |
+| G1 | **ServerWindow UI: /perf** | WS 已推送 perf topic → 加 Dashboard 展示 | 待做 |
+| G2 | **ServerWindow UI: /rates** | WS 已推送 rates topic → 加 UI 展示（标红异常速率） | 待做 |
+| G3 | **ServerWindow UI: /players/{pid}** | 需加 RPC 或 HTTP 端点调用 + 玩家详情面板 | 待做 |
+| G4 | **MsgEntry.detail 字段补全** | HTTP AdminClient.MsgEntry 缺 Detail 字段（WS 侧已有 GmMsgEntry.Detail） | 待做 |
 
 ## P1 — 新增能力
 
@@ -30,10 +41,10 @@
 
 | # | 任务 | 说明 | 状态 |
 |---|------|------|------|
-| G13 | **ParseMsgArray 健壮性** | 当前用 IndexOf('{'/'}') 切分 JSON 对象，detail 含嵌套大括号会炸。改用状态机或正则 | 待做 |
-| G14 | **ParseRoom 同上** | players 子数组解析同样脆弱 | 待做 |
-| G15 | **请求失败 UI 提示** | FetchHealth/Stats/Messages/Rooms 失败时静默返回空值，无错误提示。应在 ServerWindow 显示错误横幅 | 待做 |
-| G16 | **按需轮询** | 当前 /stats + /health 每 2s 无条件轮询。切到 Messages Tab 时不需要刷 stats，切到 Dashboard 时不需要刷 messages | 待做 |
+| G13 | **ParseMsgArray 健壮性** | HTTP fallback 路径的 JSON 解析仍脆弱（WS 路径用 MsgPackLite 已无此问题） | 低优先 |
+| G14 | **ParseRoom 同上** | HTTP fallback 路径 | 低优先 |
+| G15 | **请求失败 UI 提示** | HTTP fallback 模式下静默返回空值（WS 模式有 err 信封推送） | 待做 |
+| G16 | ~~按需轮询~~ | **已解决**: WS 模式下按订阅推送，不再轮询 | ✅ |
 | G17 | **StopServer 跨平台** | 当前 osascript macOS-only，加 Windows (taskkill) + Linux (kill) 路径 | 待做 |
 | G18 | **disconnect_time 展示** | Rooms Tab 玩家 OFFLINE 时显示断线时间戳（从 /players/{pid} 或扩展 /rooms 响应） | 待做 |
 
@@ -42,18 +53,18 @@
 ## 建议迭代顺序
 
 ```
-第一轮（补齐缺口，1-2 天）:
-  G5 + G6 → G4 → G1 → G2 → G3
-  先修数据层（Cmd 名称 + detail 字段），再加三个缺失端点的 Unity 封装
+第一轮（WS 数据已有，只差 UI）:
+  G1 + G2 → G7（Performance Tab）→ G4
+  perf/rates 数据已通过 WS push，只需在 ServerWindow 加展示
 
-第二轮（新 Tab + 面板）:
-  G7 → G8
-  有了 P0 的 AdminClient 方法后，加 UI 展示
+第二轮（玩家详情）:
+  G3 → G8
+  点击玩家 → 弹出详情面板
 
 第三轮（新服务器能力）:
   G10 → G9 → G11 → G12
-  按调试价值排序：暂停房间 > 看日志 > 广播 > 热更新
+  暂停房间 > 看日志 > 广播 > 热更新
 
 第四轮（打磨）:
-  G13-G18 按需穿插
+  G13-G18 按需穿插（G16 已解决）
 ```
