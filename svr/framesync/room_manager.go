@@ -102,6 +102,26 @@ func (rm *RoomManager) CreateRoomWithMaxPlayers(maxPlayers int) *Room {
 	return room
 }
 
+// CleanupEmptyRooms 清理空房间（TotalPlayerCount==0 且未运行）
+func (rm *RoomManager) CleanupEmptyRooms() int {
+	rm.mu.Lock()
+	var toRemove []int32
+	for id, r := range rm.rooms {
+		if r.TotalPlayerCount() == 0 && !r.IsRunning() {
+			toRemove = append(toRemove, id)
+		}
+	}
+	for _, id := range toRemove {
+		delete(rm.rooms, id)
+	}
+	rm.mu.Unlock()
+
+	if len(toRemove) > 0 {
+		log.Printf("[RoomManager] Cleaned up %d empty room(s): %v\n", len(toRemove), toRemove)
+	}
+	return len(toRemove)
+}
+
 // StopAll 停止所有房间
 func (rm *RoomManager) StopAll() {
 	rm.mu.Lock()

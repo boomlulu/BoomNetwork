@@ -167,6 +167,20 @@ func main() {
 		go startAdminServer(ctx, *adminAddr, *adminToken)
 	}
 
+	// 空房间定期清理（每 10 秒）
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				roomMgr.CleanupEmptyRooms()
+			}
+		}
+	}()
+
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	<-sig
