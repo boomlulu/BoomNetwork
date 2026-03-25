@@ -1,5 +1,7 @@
 # 核心概念
 
+> 框架核心哲学见 [core-philosophy.md](core-philosophy.md) — 自权威、不回滚、冲突仲裁。
+
 ## 帧驱动状态同步 (Frame-Driven State Sync)
 
 BoomNetwork 采用**帧驱动状态同步**方案——不是纯帧同步（Lockstep），也不是传统状态同步。

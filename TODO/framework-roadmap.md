@@ -1,10 +1,12 @@
 # BoomNetwork 路线图
 
-> **核心定位**：通用帧同步框架，先自己用 → 验证 → 开源推广
+> **核心定位**：自权威帧同步框架，先自己用 → 验证 → 开源推广
 >
 > **当前阶段**：技术基础设施已完成，下一步是**降低接入复杂度**
 >
 > **第一性原理**：框架的价值 = 用户能多快跑通第一个多人游戏
+>
+> **核心哲学**：自权威、不回滚、冲突仲裁 — 详见 [doc/core-philosophy.md](../doc/core-philosophy.md)
 
 ---
 
@@ -18,7 +20,7 @@
 | 帧同步 | 帧收发、输入广播、快照上传/恢复、迟到者加入 |
 | 重连 | CompositeReconnectStrategy（快速重连 + 快照降级） |
 | 房间管理 | 创建/加入/离开/列表，autoroom 模式 |
-| 预测回滚 | PredictionManager 框架（Demo02 待完善） |
+| ~~预测回滚~~ | ~~PredictionManager~~ → 已确立自权威模型，回滚仅作为可选中间件（见 core-philosophy.md） |
 | FrameSyncClient 重构 | 长生命周期，内置完整网络栈，Person 瘦身为纯适配器 |
 | 实体权威同步 Phase 1 | Cmd 27/28 + IEntitySync + Dead Reckoning + 惯性模型 + Demo02 |
 | 网络状态模拟 | S→C 延迟/抖动/丢包 + GM 面板实时控制 |
