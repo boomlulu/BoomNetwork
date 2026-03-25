@@ -110,13 +110,21 @@ namespace BoomNetwork.GM.Editor
             }
 
             // 检查 Process 退出
-            if (_activeProcess != null && _activeProcess.HasExited)
+            if (_activeProcess != null)
             {
-                int code = _activeProcess.ExitCode;
-                _activeProcess.Dispose();
-                _activeProcess = null;
-                OnProcessExit(code);
-                dirty = true;
+                bool exited;
+                try { exited = _activeProcess.HasExited; }
+                catch { exited = true; } // 无关联进程时视为已退出
+
+                if (exited)
+                {
+                    int code = 0;
+                    try { code = _activeProcess.ExitCode; } catch { code = -1; }
+                    _activeProcess.Dispose();
+                    _activeProcess = null;
+                    OnProcessExit(code);
+                    dirty = true;
+                }
             }
 
             if (dirty) _onRepaint?.Invoke();
@@ -467,9 +475,18 @@ namespace BoomNetwork.GM.Editor
             _activeProcess = new Process { StartInfo = psi };
             _activeProcess.OutputDataReceived += (s, e) => { if (e.Data != null) _logQueue.Enqueue(e.Data); };
             _activeProcess.ErrorDataReceived += (s, e) => { if (e.Data != null) _logQueue.Enqueue(e.Data); };
-            _activeProcess.Start();
-            _activeProcess.BeginOutputReadLine();
-            _activeProcess.BeginErrorReadLine();
+            try
+            {
+                _activeProcess.Start();
+                _activeProcess.BeginOutputReadLine();
+                _activeProcess.BeginErrorReadLine();
+            }
+            catch (Exception ex)
+            {
+                Log($"[Error] Failed to start process '{fileName}': {ex.Message}");
+                _activeProcess = null;
+                SetStage(DeployStage.Failed);
+            }
         }
 
         void LaunchSsh(string remoteCmd)
@@ -490,10 +507,15 @@ namespace BoomNetwork.GM.Editor
 
         void KillProcess()
         {
-            if (_activeProcess != null && !_activeProcess.HasExited)
+            if (_activeProcess != null)
             {
-                try { _activeProcess.Kill(); } catch { }
-                _activeProcess.Dispose();
+                try
+                {
+                    if (!_activeProcess.HasExited)
+                        _activeProcess.Kill();
+                }
+                catch { }
+                try { _activeProcess.Dispose(); } catch { }
             }
             _activeProcess = null;
         }
