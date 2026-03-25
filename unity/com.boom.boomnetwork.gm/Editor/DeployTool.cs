@@ -508,7 +508,7 @@ namespace BoomNetwork.GM.Editor
         }
 
         static string ExpandPath(string path) =>
-            path.Replace("~", System.Environment.GetFolderPath(
+            path.Trim().Replace("~", System.Environment.GetFolderPath(
                 System.Environment.SpecialFolder.UserProfile));
 
         /// <summary>在常见安装路径中查找可执行文件，解决 Unity 子进程 PATH 受限问题</summary>

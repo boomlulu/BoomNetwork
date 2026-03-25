@@ -1032,7 +1032,7 @@ namespace BoomNetwork.GM.Editor
         /// <summary>在后台线程执行 SSH 命令，结果输出到 Unity Console</summary>
         static void RunSshAsync(DeployProfile p, string remoteCmd)
         {
-            var keyPath = p.SshKeyPath.Replace("~",
+            var keyPath = p.SshKeyPath.Trim().Replace("~",
                 System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile));
 
             var args = $"-i \"{keyPath}\" -p {p.SshPort} " +
