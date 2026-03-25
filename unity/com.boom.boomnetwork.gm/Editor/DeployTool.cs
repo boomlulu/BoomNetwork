@@ -492,18 +492,24 @@ namespace BoomNetwork.GM.Editor
         void LaunchSsh(string remoteCmd)
         {
             string keyPath = ExpandPath(_profile.SshKeyPath);
-            string args = $"-i \"{keyPath}\" -p {_profile.SshPort} " +
+            string host = _profile.SshHost.Trim();
+            string user = _profile.SshUser.Trim();
+            string port = _profile.SshPort.Trim();
+            string args = $"-i \"{keyPath}\" -p {port} " +
                           $"-o StrictHostKeyChecking=no -o ConnectTimeout=10 " +
-                          $"{_profile.SshUser}@{_profile.SshHost} \"{remoteCmd}\"";
+                          $"{user}@{host} \"{remoteCmd}\"";
             LaunchProcess("/usr/bin/ssh", args, _serverPath);
         }
 
         void LaunchScp(string localPath, string remotePath)
         {
             string keyPath = ExpandPath(_profile.SshKeyPath);
-            string args = $"-i \"{keyPath}\" -P {_profile.SshPort} " +
+            string host = _profile.SshHost.Trim();
+            string user = _profile.SshUser.Trim();
+            string port = _profile.SshPort.Trim();
+            string args = $"-i \"{keyPath}\" -P {port} " +
                           $"-o StrictHostKeyChecking=no " +
-                          $"\"{localPath}\" {_profile.SshUser}@{_profile.SshHost}:\"{remotePath}\"";
+                          $"\"{localPath}\" {user}@{host}:\"{remotePath}\"";
             LaunchProcess("/usr/bin/scp", args, _serverPath);
         }
 

@@ -139,7 +139,10 @@ namespace BoomNetwork.GM.Editor
                     {
                         // Stop 冷却期内不重连（等 SSH stop 命令完成）
                         if (EditorApplication.timeSinceStartup < _stopCooldownUntil)
+                        {
+                            _health = default; // 冷却期内视为离线，防止状态栏闪现 RUNNING
                             goto skipReconnect;
+                        }
 
                         // 服务器在线且 WS 未连接/未连接中 → 启动 WS
                         if (!_wsClient.IsConnecting)
@@ -1035,9 +1038,9 @@ namespace BoomNetwork.GM.Editor
             var keyPath = p.SshKeyPath.Trim().Replace("~",
                 System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile));
 
-            var args = $"-i \"{keyPath}\" -p {p.SshPort} " +
+            var args = $"-i \"{keyPath}\" -p {p.SshPort.Trim()} " +
                        $"-o StrictHostKeyChecking=no -o ConnectTimeout=10 " +
-                       $"{p.SshUser}@{p.SshHost} \"{remoteCmd}\"";
+                       $"{p.SshUser.Trim()}@{p.SshHost.Trim()} \"{remoteCmd}\"";
 
             UnityEngine.Debug.Log($"[GM-SSH] /usr/bin/ssh {args}");
 
