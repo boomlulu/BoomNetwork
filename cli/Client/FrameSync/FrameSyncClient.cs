@@ -67,6 +67,26 @@ namespace BoomNetwork.Client.FrameSync
         public uint SnapshotInterval { get; set; } = 100;
         public PredictionManager? Prediction { get; set; }
 
+        // --- 实体权威同步 ---
+        /// <summary>远端实体状态到达 (senderPid, entityId, data, offset, length)</summary>
+        public event Action<int, int, byte[], int, int>? OnEntityState;
+        private readonly System.Collections.Generic.List<IEntitySync> _authorityEntities = new();
+        private byte[]? _entityStateBuf;
+
+        /// <summary>注册本地管理的实体（每帧自动发送其状态）</summary>
+        public void RegisterAuthorityEntity(IEntitySync entity)
+        {
+            _authorityEntities.Add(entity);
+            if (_entityStateBuf == null || _entityStateBuf.Length < 1 + _authorityEntities.Count * (6 + 64))
+                _entityStateBuf = new byte[1 + _authorityEntities.Count * (6 + 128)];
+        }
+
+        /// <summary>注销实体</summary>
+        public void UnregisterAuthorityEntity(int entityId)
+        {
+            _authorityEntities.RemoveAll(e => e.EntityId == entityId);
+        }
+
         // --- 内部网络栈（创建一次，不重建）---
         private TcpClientTransport? _transport;
         private NetworkSession? _session;
@@ -215,6 +235,20 @@ namespace BoomNetwork.Client.FrameSync
             if (CurrentState != State.Syncing) return;
             int len = dataLength >= 0 ? dataLength : data.Length;
             _session?.Send(FrameSyncCmd.FrameInput, data, len);
+            SendAuthorityEntityStates();
+        }
+
+        private void SendAuthorityEntityStates()
+        {
+            if (_authorityEntities.Count == 0 || _session == null) return;
+            // 确保 buffer 够大
+            int maxSize = 1 + _authorityEntities.Count * (6 + 128);
+            if (_entityStateBuf == null || _entityStateBuf.Length < maxSize)
+                _entityStateBuf = new byte[maxSize];
+            int written = EntityStateCodec.Encode(
+                _entityStateBuf, 0,
+                _authorityEntities.ToArray(), _authorityEntities.Count);
+            _session.Send(FrameSyncCmd.SendEntityState, _entityStateBuf, written);
         }
 
         public void PredictWithInput(float deltaTimeMs, byte[] localInput)
@@ -368,6 +402,10 @@ namespace BoomNetwork.Client.FrameSync
                     HandleRoomSnapshot(msg);
                     break;
 
+                case FrameSyncCmd.PushEntityState:
+                    HandlePushEntityState(msg);
+                    break;
+
                 case FrameSyncCmd.PushFrames:
                     HandlePushFrames(msg);
                     break;
@@ -450,6 +488,15 @@ namespace BoomNetwork.Client.FrameSync
             _frameSyncStarted = false;
             CurrentState = State.InRoom;
             OnFrameSyncStop?.Invoke();
+        }
+
+        private void HandlePushEntityState(Message msg)
+        {
+            if (msg.DataLength < 5) return;
+            EntityStateCodec.Decode(msg.DataSpan, (senderPid, entityId, data, offset, length) =>
+            {
+                OnEntityState?.Invoke(senderPid, entityId, data, offset, length);
+            });
         }
 
         private void Log(string msg) => OnLog?.Invoke($"[FrameSyncClient] {msg}");

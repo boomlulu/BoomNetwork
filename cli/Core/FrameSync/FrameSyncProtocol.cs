@@ -45,6 +45,10 @@ namespace BoomNetwork.Core.FrameSync
         // 快照
         public const byte UploadSnapshot    = 22;  // 客户端 → 服务器：上传快照
         public const byte UploadSnapshotRsp = 23;  // 服务器 → 客户端：上传确认
+
+        // 实体权威同步
+        public const byte SendEntityState   = 27;  // 客户端 → 服务器：管理者发送实体状态
+        public const byte PushEntityState   = 28;  // 服务器 → 客户端：广播实体状态（带 senderPid）
     }
 
     /// <summary>
@@ -356,6 +360,87 @@ namespace BoomNetwork.Core.FrameSync
             }
 
             return (result, roomId, serverFrame, snapshotFrame, snapshotData);
+        }
+    }
+
+    // ===================== 实体权威同步 =====================
+
+    /// <summary>
+    /// 实体同步接口 — 游戏层为每个需要同步的实体实现
+    ///
+    /// 框架只关心字节，不关心内容。
+    /// </summary>
+    public interface IEntitySync
+    {
+        /// <summary>实体唯一标识</summary>
+        int EntityId { get; }
+
+        /// <summary>状态字节大小（固定大小或最大大小）</summary>
+        int StateSize { get; }
+
+        /// <summary>管理者调用：序列化当前状态到 buffer，返回写入字节数</summary>
+        int WriteState(byte[] buffer, int offset);
+
+        /// <summary>远端调用：收到管理者的权威状态</summary>
+        /// <remarks>
+        /// 游戏层决定如何使用此状态（惯性追踪 / 直接应用 / 忽略）。
+        /// 框架只负责送达。
+        /// </remarks>
+        void OnRemoteState(byte[] authorityState, int offset, int length, int senderPlayerId);
+    }
+
+    /// <summary>
+    /// 实体状态编解码
+    ///
+    /// C→S (Cmd 27): [entityCount:1B] + N × [entityId:4B][stateLen:2B][stateData]
+    /// S→C (Cmd 28): [senderPid:4B] + [entityCount:1B] + N × [entityId:4B][stateLen:2B][stateData]
+    /// </summary>
+    public static class EntityStateCodec
+    {
+        /// <summary>编码管理者实体状态（客户端发送用）</summary>
+        public static int Encode(byte[] buf, int offset, IEntitySync[] entities, int count)
+        {
+            int start = offset;
+            buf[offset++] = (byte)count;
+            for (int i = 0; i < count; i++)
+            {
+                var e = entities[i];
+                BinaryPrimitives.WriteInt32LittleEndian(new Span<byte>(buf, offset, 4), e.EntityId);
+                offset += 4;
+                int stateStart = offset + 2; // reserve 2B for stateLen
+                int stateLen = e.WriteState(buf, stateStart);
+                BinaryPrimitives.WriteUInt16LittleEndian(new Span<byte>(buf, offset, 2), (ushort)stateLen);
+                offset = stateStart + stateLen;
+            }
+            return offset - start;
+        }
+
+        /// <summary>解码推送的实体状态（客户端接收用）</summary>
+        /// <summary>
+        /// 解码 PushEntityState (Cmd 28)
+        /// onEntity(senderPid, entityId, data, offset, length)
+        /// </summary>
+        public static void Decode(ReadOnlySpan<byte> data, Action<int, int, byte[], int, int> onEntity)
+        {
+            if (data.Length < 5) return;
+            int senderPid = BinaryPrimitives.ReadInt32LittleEndian(data);
+            int count = data[4];
+            int offset = 5;
+
+            // 需要复制到 byte[] 因为 ReadOnlySpan 不能跨回调边界
+            var buf = data.ToArray();
+
+            for (int i = 0; i < count && offset < buf.Length; i++)
+            {
+                if (offset + 6 > buf.Length) break;
+                int entityId = BinaryPrimitives.ReadInt32LittleEndian(new ReadOnlySpan<byte>(buf, offset, 4));
+                offset += 4;
+                int stateLen = BinaryPrimitives.ReadUInt16LittleEndian(new ReadOnlySpan<byte>(buf, offset, 2));
+                offset += 2;
+                if (offset + stateLen > buf.Length) break;
+                onEntity(senderPid, entityId, buf, offset, stateLen);
+                offset += stateLen;
+            }
         }
     }
 }

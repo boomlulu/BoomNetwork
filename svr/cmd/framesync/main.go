@@ -98,6 +98,8 @@ func main() {
 	router.On(framesync.CmdLeaveRoom, txStats(handleLeaveRoom))
 	// 快照
 	router.On(framesync.CmdUploadSnapshot, txStats(handleUploadSnapshot))
+	// 实体权威同步
+	router.On(framesync.CmdSendEntityState, txStats(handleSendEntityState))
 
 	// 在 router 外层包一层 RX 计数 + 消息日志
 	baseHandler := router.AsTransportHandler()
@@ -580,4 +582,32 @@ func handleUploadSnapshot(conn *transport.Conn, msg *codec.Message) *codec.Messa
 		return &codec.Message{Cmd: framesync.CmdUploadSnapshotRsp, Data: []byte{1}}
 	}
 	return &codec.Message{Cmd: framesync.CmdUploadSnapshotRsp, Data: []byte{0}}
+}
+
+// handleSendEntityState 实体权威同步：透传给同房其他玩家（prepend senderPid）
+func handleSendEntityState(conn *transport.Conn, msg *codec.Message) *codec.Message {
+	val, ok := connPlayerMap.Load(conn.ID)
+	if !ok {
+		return nil
+	}
+	playerId := val.(int32)
+
+	roomVal, ok := playerRoomMap.Load(playerId)
+	if !ok {
+		return nil
+	}
+	room := roomVal.(*framesync.Room)
+
+	// 构造 PushEntityState: [senderPid:4B] + 原始数据
+	push := make([]byte, 4+len(msg.Data))
+	binary.LittleEndian.PutUint32(push[0:4], uint32(playerId))
+	copy(push[4:], msg.Data)
+
+	pushMsg := &codec.Message{Cmd: framesync.CmdPushEntityState, Data: push}
+	room.ForEachOnlinePlayer(func(id int32, c framesync.PlayerConn) {
+		if id != playerId {
+			c.Send(pushMsg)
+		}
+	})
+	return nil
 }

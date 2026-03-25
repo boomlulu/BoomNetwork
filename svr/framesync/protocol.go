@@ -40,6 +40,10 @@ const (
 	// 快照
 	CmdUploadSnapshot    = 22 // 客户端 → 服务器：上传快照
 	CmdUploadSnapshotRsp = 23 // 服务器 → 客户端：上传确认
+
+	// 实体权威同步
+	CmdSendEntityState = 27 // 客户端 → 服务器：管理者发送实体状态
+	CmdPushEntityState = 28 // 服务器 → 客户端：广播实体状态（带 senderPid）
 )
 
 // InitData 帧同步初始化数据
