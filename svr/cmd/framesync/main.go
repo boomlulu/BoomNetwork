@@ -19,6 +19,12 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
+// 构建版本信息（通过 -ldflags 注入）
+var (
+	BuildHash string
+	BuildTime string
+)
+
 var cfg ServerConfig
 
 var (
@@ -47,6 +53,10 @@ var playerMu sync.Mutex
 func main() {
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
 	flag.Parse()
+
+	if BuildHash != "" {
+		log.Printf("[Server] version hash=%s built=%s\n", BuildHash, BuildTime)
+	}
 
 	// 生成默认配置文件
 	if *genConfig {

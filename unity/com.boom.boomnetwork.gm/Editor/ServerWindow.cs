@@ -37,7 +37,15 @@ namespace BoomNetwork.GM.Editor
 
         // ===== Tab =====
         private int _tab;
-        private static readonly string[] TabNames = { "Dashboard", "Messages", "Rooms" };
+        private static readonly string[] TabNames = { "Dashboard", "Messages", "Rooms", "Deploy" };
+
+        // ===== Deploy =====
+        private DeployTool _deployTool;
+        private DeployProfile _deployProfile;
+        private int _deployProfileIndex;
+        private string[] _deployProfileNames;
+        private Vector2 _deployLogScroll;
+        private string _newEnvName = "";
 
         // ===== Messages page =====
         private Vector2 _msgScroll;
@@ -61,6 +69,8 @@ namespace BoomNetwork.GM.Editor
             LoadPrefs();
             _client = new AdminClient(_adminUrl) { Token = _adminToken };
             _wsClient = new AdminWsClient();
+            _deployTool = new DeployTool(() => Repaint());
+            LoadDeployProfiles();
             BuildCmdFilter();
             EditorApplication.update += OnEditorUpdate;
         }
@@ -69,6 +79,8 @@ namespace BoomNetwork.GM.Editor
         {
             EditorApplication.update -= OnEditorUpdate;
             SavePrefs();
+            SaveDeployProfile();
+            _deployTool?.Dispose();
             _wsClient?.Dispose();
             _client?.Dispose();
         }
@@ -139,6 +151,9 @@ namespace BoomNetwork.GM.Editor
                     dirty = true;
                 }
             }
+
+            // Deploy tool tick
+            _deployTool?.Tick();
 
             // 更新存活状态
             bool alive = wsConnected || _health.IsOnline;
@@ -282,6 +297,7 @@ namespace BoomNetwork.GM.Editor
                 case 0: DrawDashboard(); break;
                 case 1: DrawMessages(); break;
                 case 2: DrawRooms(); break;
+                case 3: DrawDeploy(); break;
             }
         }
 
@@ -734,6 +750,242 @@ namespace BoomNetwork.GM.Editor
                 ShowNotification(new GUIContent("Server stopped"));
             }
             catch (Exception e) { UnityEngine.Debug.LogError($"[GM] Kill failed: {e.Message}"); }
+        }
+
+        // ===================== Tab 3: Deploy =====================
+
+        void DrawDeploy()
+        {
+            // ===== Profile 选择器 =====
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField("Profile:", GUILayout.Width(50));
+            int newIdx = EditorGUILayout.Popup(_deployProfileIndex, _deployProfileNames, GUILayout.Width(150));
+            if (newIdx != _deployProfileIndex)
+            {
+                SaveDeployProfile();
+                _deployProfileIndex = newIdx;
+                DeployProfile.SetActiveIndex(newIdx);
+                _deployProfile = DeployProfile.Load(newIdx);
+            }
+
+            if (GUILayout.Button("+ Local", GUILayout.Width(60)))
+            {
+                SaveDeployProfile();
+                var p = DeployProfile.CreateDefaultLocal();
+                int count = DeployProfile.GetProfileCount();
+                DeployProfile.Save(count, p);
+                DeployProfile.SetProfileCount(count + 1);
+                _deployProfileIndex = count;
+                DeployProfile.SetActiveIndex(count);
+                _deployProfile = p;
+                RefreshProfileNames();
+            }
+            if (GUILayout.Button("+ SSH", GUILayout.Width(55)))
+            {
+                SaveDeployProfile();
+                var p = DeployProfile.CreateDefaultRemote();
+                int count = DeployProfile.GetProfileCount();
+                DeployProfile.Save(count, p);
+                DeployProfile.SetProfileCount(count + 1);
+                _deployProfileIndex = count;
+                DeployProfile.SetActiveIndex(count);
+                _deployProfile = p;
+                RefreshProfileNames();
+            }
+            GUI.enabled = DeployProfile.GetProfileCount() > 1;
+            if (GUILayout.Button("Del", GUILayout.Width(35)))
+            {
+                DeployProfile.Delete(_deployProfileIndex);
+                _deployProfileIndex = DeployProfile.GetActiveIndex();
+                _deployProfile = DeployProfile.Load(_deployProfileIndex);
+                RefreshProfileNames();
+            }
+            GUI.enabled = true;
+            EditorGUILayout.EndHorizontal();
+
+            if (_deployProfile == null) return;
+
+            EditorGUILayout.Space(4);
+
+            // ===== 基本信息 =====
+            _deployProfile.Name = EditorGUILayout.TextField("Name", _deployProfile.Name);
+            _deployProfile.Type = (DeployProfileType)EditorGUILayout.EnumPopup("Type", _deployProfile.Type);
+
+            _deployProfile.ConfigFile = EditorGUILayout.TextField("Config", _deployProfile.ConfigFile);
+
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField("New Env:", GUILayout.Width(55));
+            _newEnvName = EditorGUILayout.TextField(_newEnvName, GUILayout.Width(100));
+            if (GUILayout.Button("Create", GUILayout.Width(55)) && !string.IsNullOrEmpty(_newEnvName))
+            {
+                var path = DeployTool.CreateEnvConfig(_serverPath, _newEnvName);
+                if (path != null)
+                {
+                    _deployProfile.ConfigFile = $"configs/config.{_newEnvName}.yaml";
+                    ShowNotification(new GUIContent($"Created: {path}"));
+                }
+                else
+                    ShowNotification(new GUIContent("Config already exists"));
+                _newEnvName = "";
+            }
+            EditorGUILayout.EndHorizontal();
+
+            _deployProfile.HealthUrl = EditorGUILayout.TextField("Health URL", _deployProfile.HealthUrl);
+            _deployProfile.HealthTimeoutSec = EditorGUILayout.IntField("Health Timeout (s)", _deployProfile.HealthTimeoutSec);
+
+            // ===== Build Target =====
+            EditorGUILayout.Space(4);
+            if (_deployProfile.Type == DeployProfileType.Local)
+            {
+                EditorGUILayout.LabelField("Build Target",
+                    $"{DeployProfile.DetectLocalOS()}/{DeployProfile.DetectLocalArch()} (auto)", EditorStyles.miniLabel);
+            }
+            else
+            {
+                EditorGUILayout.BeginHorizontal();
+                EditorGUILayout.LabelField("Target OS", GUILayout.Width(65));
+                int osIdx = Array.IndexOf(DeployProfile.OSOptions, _deployProfile.TargetOS);
+                if (osIdx < 0) osIdx = 0;
+                osIdx = EditorGUILayout.Popup(osIdx, DeployProfile.OSOptions, GUILayout.Width(80));
+                _deployProfile.TargetOS = DeployProfile.OSOptions[osIdx];
+
+                EditorGUILayout.LabelField("Arch", GUILayout.Width(35));
+                int archIdx = Array.IndexOf(DeployProfile.ArchOptions, _deployProfile.TargetArch);
+                if (archIdx < 0) archIdx = 0;
+                archIdx = EditorGUILayout.Popup(archIdx, DeployProfile.ArchOptions, GUILayout.Width(70));
+                _deployProfile.TargetArch = DeployProfile.ArchOptions[archIdx];
+                EditorGUILayout.EndHorizontal();
+            }
+
+            // ===== Remote SSH =====
+            if (_deployProfile.Type == DeployProfileType.RemoteSSH)
+            {
+                EditorGUILayout.Space(4);
+                EditorGUILayout.LabelField("Remote SSH", EditorStyles.boldLabel);
+
+                EditorGUILayout.BeginHorizontal();
+                _deployProfile.SshHost = EditorGUILayout.TextField("Host", _deployProfile.SshHost);
+                EditorGUILayout.LabelField("Port", GUILayout.Width(30));
+                _deployProfile.SshPort = EditorGUILayout.TextField(_deployProfile.SshPort, GUILayout.Width(50));
+                EditorGUILayout.EndHorizontal();
+
+                _deployProfile.SshUser = EditorGUILayout.TextField("User", _deployProfile.SshUser);
+                _deployProfile.SshKeyPath = EditorGUILayout.TextField("SSH Key", _deployProfile.SshKeyPath);
+                _deployProfile.RemoteBinaryPath = EditorGUILayout.TextField("Remote Bin", _deployProfile.RemoteBinaryPath);
+                _deployProfile.RemoteConfigPath = EditorGUILayout.TextField("Remote Cfg", _deployProfile.RemoteConfigPath);
+
+                EditorGUILayout.BeginHorizontal();
+                _deployProfile.SystemdService = EditorGUILayout.TextField("Systemd", _deployProfile.SystemdService);
+                if (GUILayout.Button("Gen .service", GUILayout.Width(85)))
+                {
+                    var path = DeployTool.GenSystemdService(_serverPath, _deployProfile);
+                    ShowNotification(new GUIContent($"Generated: {path}"));
+                }
+                EditorGUILayout.EndHorizontal();
+            }
+
+            // ===== Deploy 按钮 + 状态 =====
+            EditorGUILayout.Space(6);
+            EditorGUILayout.BeginHorizontal();
+
+            bool running = _deployTool != null && _deployTool.IsRunning;
+            GUI.enabled = !running;
+            GUI.backgroundColor = running ? Color.gray : Color.green;
+            if (GUILayout.Button(running ? "Deploying..." : "Deploy", GUILayout.Height(28)))
+            {
+                SaveDeployProfile();
+                _deployTool.StartDeploy(_deployProfile, _serverPath);
+            }
+            GUI.backgroundColor = Color.white;
+            GUI.enabled = true;
+
+            // Stage 指示
+            if (_deployTool != null && _deployTool.Stage != DeployStage.Idle)
+            {
+                var stageColor = _deployTool.Stage == DeployStage.Done ? Color.green :
+                                 _deployTool.Stage == DeployStage.Failed ? Color.red : Color.yellow;
+                var prev = GUI.contentColor;
+                GUI.contentColor = stageColor;
+                EditorGUILayout.LabelField($"● {_deployTool.Stage}", EditorStyles.boldLabel, GUILayout.Width(120));
+                GUI.contentColor = prev;
+            }
+            EditorGUILayout.EndHorizontal();
+
+            // ===== 日志面板 =====
+            EditorGUILayout.Space(4);
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField("Log", EditorStyles.boldLabel);
+            GUILayout.FlexibleSpace();
+            if (GUILayout.Button("Clear", GUILayout.Width(45))) _deployTool?.ClearLog();
+            if (GUILayout.Button("Copy", GUILayout.Width(40)))
+            {
+                if (_deployTool != null)
+                {
+                    var sb = new System.Text.StringBuilder();
+                    foreach (var line in _deployTool.LogLines) sb.AppendLine(line);
+                    GUIUtility.systemCopyBuffer = sb.ToString();
+                    ShowNotification(new GUIContent("Log copied"));
+                }
+            }
+            EditorGUILayout.EndHorizontal();
+
+            _deployLogScroll = EditorGUILayout.BeginScrollView(_deployLogScroll);
+            if (_deployTool != null)
+            {
+                foreach (var line in _deployTool.LogLines)
+                {
+                    var prev = GUI.contentColor;
+                    if (line.Contains("[Error]") || line.Contains("FAILED"))
+                        GUI.contentColor = Color.red;
+                    else if (line.Contains("[Build]"))
+                        GUI.contentColor = new Color(0.7f, 0.7f, 0.7f);
+                    else if (line.Contains("[Upload]"))
+                        GUI.contentColor = Color.yellow;
+                    else if (line.Contains("[Health]"))
+                        GUI.contentColor = Color.cyan;
+                    else if (line.Contains("[Deploy] Completed"))
+                        GUI.contentColor = Color.green;
+                    EditorGUILayout.LabelField(line, EditorStyles.miniLabel);
+                    GUI.contentColor = prev;
+                }
+            }
+            EditorGUILayout.EndScrollView();
+        }
+
+        // ===== Deploy Profile 管理 =====
+
+        void LoadDeployProfiles()
+        {
+            int count = DeployProfile.GetProfileCount();
+            if (count == 0)
+            {
+                // 第一次：创建默认 Local profile
+                var p = DeployProfile.CreateDefaultLocal();
+                DeployProfile.Save(0, p);
+                DeployProfile.SetProfileCount(1);
+                count = 1;
+            }
+            _deployProfileIndex = DeployProfile.GetActiveIndex();
+            if (_deployProfileIndex >= count) _deployProfileIndex = 0;
+            _deployProfile = DeployProfile.Load(_deployProfileIndex);
+            RefreshProfileNames();
+        }
+
+        void RefreshProfileNames()
+        {
+            int count = DeployProfile.GetProfileCount();
+            _deployProfileNames = new string[count];
+            for (int i = 0; i < count; i++)
+            {
+                var p = DeployProfile.Load(i);
+                _deployProfileNames[i] = $"{p.Name} ({p.Type})";
+            }
+        }
+
+        void SaveDeployProfile()
+        {
+            if (_deployProfile != null)
+                DeployProfile.Save(_deployProfileIndex, _deployProfile);
         }
 
         // ===================== EditorPrefs =====================

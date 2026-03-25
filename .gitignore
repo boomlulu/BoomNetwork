@@ -6,3 +6,7 @@ obj/
 .idea/
 *.DotSettings
 BenchmarkDotNet.Artifacts/
+
+# Deploy tool
+svr/dist/
+svr/configs/config.prod.yaml
