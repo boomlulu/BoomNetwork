@@ -24,6 +24,7 @@ public class HelloWorld : MonoBehaviour
     private readonly byte[] _inputBuf = new byte[8];
     private uint _lastFrame;
     private float _sendTimer;
+    private float _lastH, _lastV;
 
     private static readonly Color[] Colors = { Color.green, new(0.3f, 0.5f, 1f), Color.red, Color.yellow };
 
@@ -48,8 +49,11 @@ public class HelloWorld : MonoBehaviour
         float h = Input.GetAxisRaw("Horizontal");
         float v = Input.GetAxisRaw("Vertical");
 
-        if (Mathf.Abs(h) > 0.01f || Mathf.Abs(v) > 0.01f)
+        // 只在输入变化时发送（包括松开按键 → 归零）
+        if (Mathf.Abs(h - _lastH) > 0.01f || Mathf.Abs(v - _lastV) > 0.01f)
         {
+            _lastH = h;
+            _lastV = v;
             BitConverter.TryWriteBytes(_inputBuf.AsSpan(0, 4), h);
             BitConverter.TryWriteBytes(_inputBuf.AsSpan(4, 4), v);
             _network.SendInput(_inputBuf);
