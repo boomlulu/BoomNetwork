@@ -30,6 +30,7 @@ namespace BoomNetwork.GM.Editor
         private double _nextPingTime;
         private bool _lastAlive;
         private string _lastAdminUrl, _lastAdminToken; // 检测配置变更
+        private double _stopCooldownUntil; // Stop 后抑制重连的截止时间
 
         // WS 消息缓冲（追加模式，最多保留 200 条）
         private readonly List<AdminClient.MsgEntry> _wsMsgBuffer = new List<AdminClient.MsgEntry>();
@@ -136,6 +137,10 @@ namespace BoomNetwork.GM.Editor
 
                     if (_health.IsOnline)
                     {
+                        // Stop 冷却期内不重连（等 SSH stop 命令完成）
+                        if (EditorApplication.timeSinceStartup < _stopCooldownUntil)
+                            goto skipReconnect;
+
                         // 服务器在线且 WS 未连接/未连接中 → 启动 WS
                         if (!_wsClient.IsConnecting)
                             _wsClient.Connect(_adminUrl, _adminToken);
@@ -154,6 +159,7 @@ namespace BoomNetwork.GM.Editor
                         _rooms = Array.Empty<AdminClient.RoomDetail>();
                         _wsMsgBuffer.Clear();
                     }
+                    skipReconnect:
                     dirty = true;
                 }
             }
@@ -765,6 +771,7 @@ namespace BoomNetwork.GM.Editor
                     ? $"pkill -f '{System.IO.Path.GetFileName(profile.RemoteBinaryPath)}' || true"
                     : $"sudo systemctl stop {profile.SystemdService}";
                 RunSshAsync(profile, cmd);
+                _stopCooldownUntil = EditorApplication.timeSinceStartup + 10.0; // 10s 内不重连
                 // 清空本地状态，让 health 轮询自然检测到下线
                 _lastAlive = false; _health = default; _stats = default;
                 _messages = Array.Empty<AdminClient.MsgEntry>();
@@ -1024,7 +1031,11 @@ namespace BoomNetwork.GM.Editor
         /// <summary>在后台线程执行 SSH 命令，不阻塞主线程</summary>
         static void RunSshAsync(DeployProfile p, string remoteCmd)
         {
-            var args = $"-i \"{p.SshKeyPath}\" -p {p.SshPort} " +
+            // 展开 ~ 为实际 HOME 路径，Process.Start 不走 shell 无法做 tilde 展开
+            var keyPath = p.SshKeyPath.Replace("~",
+                System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile));
+
+            var args = $"-i \"{keyPath}\" -p {p.SshPort} " +
                        $"-o StrictHostKeyChecking=no -o ConnectTimeout=10 " +
                        $"{p.SshUser}@{p.SshHost} \"{remoteCmd}\"";
             System.Threading.ThreadPool.QueueUserWorkItem(_ =>
@@ -1033,7 +1044,7 @@ namespace BoomNetwork.GM.Editor
                 {
                     var proc = Process.Start(new ProcessStartInfo
                     {
-                        FileName = "ssh", Arguments = args,
+                        FileName = "/usr/bin/ssh", Arguments = args,
                         UseShellExecute = false, CreateNoWindow = true,
                         RedirectStandardOutput = true, RedirectStandardError = true,
                     });

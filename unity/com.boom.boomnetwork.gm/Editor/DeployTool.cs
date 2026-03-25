@@ -491,19 +491,25 @@ namespace BoomNetwork.GM.Editor
 
         void LaunchSsh(string remoteCmd)
         {
-            string args = $"-i \"{_profile.SshKeyPath}\" -p {_profile.SshPort} " +
+            string keyPath = ExpandPath(_profile.SshKeyPath);
+            string args = $"-i \"{keyPath}\" -p {_profile.SshPort} " +
                           $"-o StrictHostKeyChecking=no -o ConnectTimeout=10 " +
                           $"{_profile.SshUser}@{_profile.SshHost} \"{remoteCmd}\"";
-            LaunchProcess("ssh", args, _serverPath);
+            LaunchProcess("/usr/bin/ssh", args, _serverPath);
         }
 
         void LaunchScp(string localPath, string remotePath)
         {
-            string args = $"-i \"{_profile.SshKeyPath}\" -P {_profile.SshPort} " +
+            string keyPath = ExpandPath(_profile.SshKeyPath);
+            string args = $"-i \"{keyPath}\" -P {_profile.SshPort} " +
                           $"-o StrictHostKeyChecking=no " +
                           $"\"{localPath}\" {_profile.SshUser}@{_profile.SshHost}:\"{remotePath}\"";
-            LaunchProcess("scp", args, _serverPath);
+            LaunchProcess("/usr/bin/scp", args, _serverPath);
         }
+
+        static string ExpandPath(string path) =>
+            path.Replace("~", System.Environment.GetFolderPath(
+                System.Environment.SpecialFolder.UserProfile));
 
         void KillProcess()
         {
