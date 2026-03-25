@@ -44,6 +44,10 @@ const (
 	// 实体权威同步
 	CmdSendEntityState = 27 // 客户端 → 服务器：管理者发送实体状态
 	CmdPushEntityState = 28 // 服务器 → 客户端：广播实体状态（带 senderPid）
+
+	// 匹配
+	CmdMatchRoom    = 29 // 客户端 → 服务器：请求匹配房间（有空位就加入，否则创建）
+	CmdMatchRoomRsp = 30 // 服务器 → 客户端：匹配结果（格式同 JoinRoomRsp）
 )
 
 // InitData 帧同步初始化数据

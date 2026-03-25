@@ -101,6 +101,32 @@ namespace BoomNetwork.Client.Room
         }
 
         /// <summary>
+        /// 匹配房间（有空位加入，否则创建新房间）
+        /// </summary>
+        /// <param name="onJoined">回调: (playerId, roomId, existingPlayerIds)</param>
+        public void MatchRoom(int maxPlayers, Action<int, int, int[]>? onJoined = null)
+        {
+            var data = RoomCodec.EncodeCreateRoom(maxPlayers); // 同格式: [maxPlayers:2]
+            _session.SendAsync(FrameSyncCmd.MatchRoom, data, 5000,
+                onResponse: msg =>
+                {
+                    var (playerId, rspRoomId, existingPlayers) = RoomCodec.DecodeJoinRoomRsp(msg.DataSpan);
+                    if (playerId == 0)
+                    {
+                        OnError?.Invoke(new NetworkError(ErrorCode.JoinRoomFailed, "MatchRoom failed"));
+                        return;
+                    }
+                    MyPlayerId = playerId;
+                    CurrentRoomId = rspRoomId;
+                    onJoined?.Invoke(playerId, rspRoomId, existingPlayers);
+                },
+                onTimeout: err =>
+                {
+                    OnError?.Invoke(err);
+                });
+        }
+
+        /// <summary>
         /// 离开房间
         /// </summary>
         public void LeaveRoom(Action? onLeft = null)

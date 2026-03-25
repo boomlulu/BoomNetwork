@@ -50,6 +50,10 @@ namespace BoomNetwork.Core.FrameSync
         // 实体权威同步
         public const byte SendEntityState   = 27;  // 客户端 → 服务器：管理者发送实体状态
         public const byte PushEntityState   = 28;  // 服务器 → 客户端：广播实体状态（带 senderPid）
+
+        // 匹配
+        public const byte MatchRoom         = 29;  // 客户端 → 服务器：匹配房间（有空位加入，否则创建）
+        public const byte MatchRoomRsp      = 30;  // 服务器 → 客户端：匹配结果（格式同 JoinRoomRsp）
     }
 
     /// <summary>

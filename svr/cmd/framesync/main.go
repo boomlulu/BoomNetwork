@@ -107,6 +107,7 @@ func main() {
 	router.On(framesync.CmdCreateRoom, txStats(handleCreateRoom))
 	router.On(framesync.CmdJoinRoom, txStats(handleJoinRoom))
 	router.On(framesync.CmdLeaveRoom, txStats(handleLeaveRoom))
+	router.On(framesync.CmdMatchRoom, txStats(handleMatchRoom))
 	// 快照
 	router.On(framesync.CmdUploadSnapshot, txStats(handleUploadSnapshot))
 	// 实体权威同步
@@ -511,6 +512,78 @@ func handleLeaveRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 
 	broadcastToRoom(room, playerId, framesync.CmdPlayerLeft, framesync.EncodePlayerId(playerId))
 	return &codec.Message{Cmd: framesync.CmdLeaveRoomRsp}
+}
+
+func handleMatchRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
+	maxPlayers := *ppr
+	if len(msg.Data) >= 2 {
+		maxPlayers = int(binary.LittleEndian.Uint16(msg.Data[0:2]))
+	}
+	if maxPlayers < 1 {
+		maxPlayers = 1
+	}
+	if maxPlayers > 100 {
+		maxPlayers = 100
+	}
+
+	val, ok := connPlayerMap.Load(conn.ID)
+	if !ok {
+		log.Printf("[Server] MatchRoom failed: conn %d not bound\n", conn.ID)
+		return &codec.Message{Cmd: framesync.CmdMatchRoomRsp, Data: make([]byte, 8)}
+	}
+	playerId := val.(int32)
+
+	room := roomMgr.MatchRoom(maxPlayers)
+	existingPlayers := room.GetPlayerIds()
+	bindPlayerToRoom(playerId, conn, room)
+
+	log.Printf("[Server] Player %d matched to room %d (online=%d/%d)\n",
+		playerId, room.ID, room.PlayerCount(), room.MaxPlayers())
+
+	broadcastToRoom(room, playerId, framesync.CmdPlayerJoined, framesync.EncodePlayerId(playerId))
+
+	// 迟到加入（房间已在运行）
+	if room.IsRunning() {
+		snapshotFrame, snapshotData := room.GetSnapshot()
+		currentFrame := room.CurrentFrameNumber()
+
+		go func() {
+			time.Sleep(10 * time.Millisecond)
+
+			var replayFrom uint32
+			if snapshotData != nil && len(snapshotData) > 0 {
+				snapshotMsg := framesync.EncodeSnapshot(snapshotFrame, snapshotData)
+				sendMsg(conn, &codec.Message{Cmd: framesync.CmdRoomSnapshot, Data: snapshotMsg})
+				replayFrom = snapshotFrame
+			} else {
+				oldestFrame := room.OldestBufferedFrame()
+				if oldestFrame > 0 {
+					replayFrom = oldestFrame - 1
+				}
+			}
+
+			initData := framesync.InitData{
+				FrameRate:           room.FrameRate(),
+				FrameInterval:       1000 / room.FrameRate(),
+				StartTime:           room.StartTime(),
+				SnapshotInterval:    int32(cfg.SnapshotIntervalFrames),
+				QuickReconnectMaxMs: int32(cfg.QuickReconnectMaxMs),
+			}
+			sendMsg(conn, &codec.Message{
+				Cmd:  framesync.CmdStartFrameSync,
+				Data: framesync.EncodeInitData(&initData),
+			})
+
+			if replayFrom > 0 && replayFrom < currentFrame {
+				frames := room.GetFramesSince(replayFrom)
+				for _, cf := range frames {
+					sendMsg(conn, &codec.Message{Cmd: framesync.CmdPushFrames, Data: cf.EncodedData})
+				}
+			}
+		}()
+	}
+
+	return &codec.Message{Cmd: framesync.CmdMatchRoomRsp, Data: framesync.EncodeJoinRoomRsp(playerId, room.ID, existingPlayers)}
 }
 
 // ===================== 工具函数 =====================

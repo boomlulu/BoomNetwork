@@ -103,10 +103,10 @@ namespace BoomNetwork.Unity
         }
 
         /// <summary>
-        /// 一键启动：连接 → 建房/入房 → 开始帧同步
+        /// 一键启动：连接 → 匹配房间 → 开始帧同步
         ///
         /// 最简接入方式，适合 Hello World 和快速原型。
-        /// 连接后自动 CreateAndJoinRoom，入房后自动 RequestStart。
+        /// 连接后自动 MatchRoom（有空位加入，否则创建），入房后自动 RequestStart。
         /// </summary>
         public void QuickStart()
         {
@@ -116,7 +116,7 @@ namespace BoomNetwork.Unity
             if (!_quickStartWired)
             {
                 _quickStartWired = true;
-                Client.OnConnected += () => Client.CreateAndJoinRoom(maxPlayers);
+                Client.OnConnected += () => Client.MatchRoom(maxPlayers);
                 Client.OnReady += () => { if (autoStart) Client.RequestStart(); };
             }
 

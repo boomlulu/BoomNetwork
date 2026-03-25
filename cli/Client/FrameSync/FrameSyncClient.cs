@@ -208,6 +208,25 @@ namespace BoomNetwork.Client.FrameSync
             });
         }
 
+        /// <summary>
+        /// 匹配房间：有空位就加入，否则创建新房间（一步完成）
+        /// </summary>
+        public void MatchRoom(int maxPlayers)
+        {
+            if (CurrentState != State.Connected) return;
+
+            _roomClient?.MatchRoom(maxPlayers, (pid, rid, existingPlayers) =>
+            {
+                PlayerId = pid;
+                RoomId = rid;
+                _connMgr?.SetPlayerId(pid);
+                CurrentState = State.InRoom;
+                Log($"Matched room {rid} as Player {pid} (existing: [{string.Join(",", existingPlayers)}])");
+                OnJoinedRoom?.Invoke(rid, existingPlayers);
+                OnReady?.Invoke();
+            });
+        }
+
         public void LeaveRoom()
         {
             if (CurrentState != State.InRoom && CurrentState != State.Syncing) return;
