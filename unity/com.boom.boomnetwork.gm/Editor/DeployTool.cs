@@ -144,7 +144,7 @@ namespace BoomNetwork.GM.Editor
             _builtBinaryPath = Path.Combine(distDir, "framesync" + ext);
 
             // git hash
-            string gitHash = RunCapture("git", $"-C \"{_serverPath}\" rev-parse --short HEAD");
+            string gitHash = RunCapture(ResolveToolPath("git"), $"-C \"{_serverPath}\" rev-parse --short HEAD");
             string buildTime = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
             string ldflags = $"-s -w -X main.BuildHash={gitHash} -X main.BuildTime={buildTime}";
 
@@ -157,7 +157,7 @@ namespace BoomNetwork.GM.Editor
                 ["GOARCH"] = arch,
                 ["CGO_ENABLED"] = "0",
             };
-            LaunchProcess("go", args, _serverPath, env);
+            LaunchProcess(ResolveToolPath("go"), args, _serverPath, env);
         }
 
         // ===================== Upload 阶段（远程 SSH）=====================
@@ -510,6 +510,25 @@ namespace BoomNetwork.GM.Editor
         static string ExpandPath(string path) =>
             path.Replace("~", System.Environment.GetFolderPath(
                 System.Environment.SpecialFolder.UserProfile));
+
+        /// <summary>在常见安装路径中查找可执行文件，解决 Unity 子进程 PATH 受限问题</summary>
+        static string ResolveToolPath(string name)
+        {
+            string[] searchDirs =
+            {
+                "/opt/homebrew/bin",    // Apple Silicon Homebrew
+                "/usr/local/bin",       // Intel Homebrew / 手动安装
+                "/usr/local/go/bin",    // 官方 Go 安装包
+                "/usr/bin",
+                "/bin",
+            };
+            foreach (var dir in searchDirs)
+            {
+                var full = Path.Combine(dir, name);
+                if (File.Exists(full)) return full;
+            }
+            return name; // 找不到时回退，让系统自己报错
+        }
 
         void KillProcess()
         {
