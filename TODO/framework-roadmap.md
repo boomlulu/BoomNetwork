@@ -20,7 +20,7 @@
 | 帧同步 | 帧收发、输入广播、快照上传/恢复、迟到者加入 |
 | 重连 | CompositeReconnectStrategy（快速重连 + 快照降级） |
 | 房间管理 | 创建/加入/离开/列表，autoroom 模式 |
-| ~~预测回滚~~ | ~~PredictionManager~~ → 已确立自权威模型，回滚仅作为可选中间件（见 core-philosophy.md） |
+| ~~预测回滚~~ | ~~PredictionManager~~ → 已从核心层删除（2026-03-25）。回滚仅作为外部可选中间件（见 core-philosophy.md） |
 | FrameSyncClient 重构 | 长生命周期，内置完整网络栈，Person 瘦身为纯适配器 |
 | 实体权威同步 Phase 1 | Cmd 27/28 + IEntitySync + Dead Reckoning + 惯性模型 + Demo02 |
 | 网络状态模拟 | S→C 延迟/抖动/丢包 + GM 面板实时控制 |
@@ -91,7 +91,7 @@
 
 | # | 任务 | 说明 | 状态 |
 |---|------|------|------|
-| N13 | ~~Demo02 预测回滚~~ → **Entity Authority Sync** | **已完成** — PredictionManager 替换为实体权威同步。L1-L4 全部实现，Demo02 可用 | ✅ |
+| N13 | ~~Demo02 预测回滚~~ → **Entity Authority Sync** | **已完成** — PredictionManager 已从核心层删除（cli/ + unity UPM 包），替换为实体权威同步。L1-L4 全部实现，Demo02/03 可用 | ✅ |
 | N14 | **F13 重连 ConnPlayerMap 原子化** | 多次快速重连可能映射不一致 | 待做 |
 | N15 | **F14 Room panic 恢复一致性** | recover 后 running=false 但玩家还在 | 待做 |
 | N16 | **F16 autoroom 整合到 config.yaml** | 目前是命令行 flag，不在配置中 | 待做 |

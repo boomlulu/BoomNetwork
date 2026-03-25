@@ -129,10 +129,8 @@ _client.RequestStart(snapshot);
 ```csharp
 // 之前: Person(reconnectStrategy: null) + 自己发 Reconnect
 // 之后: FrameSyncClient 内置 CompositeReconnectStrategy
-_client = new FrameSyncClient(config)
-{
-    ReconnectStrategy = CompositeReconnectStrategy.Default(),
-};
+_client = new FrameSyncClient(config);
+// 内置 CompositeReconnectStrategy（快速重连 3 次 → 快照重连 2 次）
 // 断线 → 自动重连 → OnReconnected 事件
 ```
 

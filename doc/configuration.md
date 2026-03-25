@@ -51,10 +51,8 @@ var snapshot = new SnapshotReconnectStrategy { TimeoutMs = 10000 };
 | 策略链 | `(策略, 最大尝试次数)` 的有序列表 |
 
 ```csharp
-// 默认: 快速重连 3 次 → 快照重连 2 次
-var strategy = CompositeReconnectStrategy.Default();
-
-// 自定义
+// FrameSyncClient 内部默认: 快速重连(5s) 3 次 → 快照重连(10s) 2 次
+// 自定义示例:
 var strategy = new CompositeReconnectStrategy(
     (new QuickReconnectStrategy { TimeoutMs = 3000 }, 3),   // 先快速，最多 3 次
     (new SnapshotReconnectStrategy { TimeoutMs = 8000 }, 2) // 再快照，最多 2 次

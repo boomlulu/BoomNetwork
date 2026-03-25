@@ -11,7 +11,7 @@
 >
 > **核心思想**：帧驱动状态同步，用增量带宽换确定性。不依赖确定性数学库。
 >
-> **替换**：PredictionManager（全局回滚）→ EntitySyncManager（实体级权威 + Dead Reckoning）
+> **替换**：PredictionManager（全局回滚）→ 实体权威同步（实体级权威 + Dead Reckoning）。Prediction 子系统已从核心层删除。
 
 ---
 
@@ -392,25 +392,15 @@ Phase 1（1 人 1 实体）典型大小：`2 + 8 + 1 + 4 + 2 + 24 = 41 bytes/fra
 ### Phase 1：MVP（1 人 = 1 实体，无权威转移）
 
 ```
-Core/EntitySync/（新目录，替换 Core/Prediction/）
-  IEntitySync.cs           核心接口
-  EntitySyncManager.cs     权威表 + 状态投递调度
-  EntitySyncCodec.cs       输入 + 权威状态编解码
+✅ 已完成:
+  Core/Prediction/* — 已从 cli/ 和 unity UPM 包中删除
+  FrameSyncClient — Prediction 属性、PredictWithInput() 已删除
+  IEntitySync + EntityStateCodec — 在 FrameSyncProtocol.cs 中实现
+  FrameSyncClient.RegisterAuthorityEntity / SendAuthorityEntityStates — 已实现
+  Demo02 用新系统重写
 
-Client/FrameSync/FrameSyncClient.cs
-  EntitySync 属性替换 Prediction
-  SendInput 追加权威状态
-  HandlePushFrames 触发 OnRemoteState
-
-Unity 包:
-  Runtime/EntitySync/EntityView.cs      EntityView<T> 组件
-  Runtime/EntitySync/INetworkTransform.cs
-  Runtime/EntitySync/SpringDamper.cs    弹簧工具
-
-Demo02/ 用新系统重写
-
-删除:
-  Core/Prediction/* (Phase 1 通过后)
+待做:
+  Unity 包: Runtime/EntitySync/EntityView<T> 组件（L2+L3 反哺 UPM 包）
 ```
 
 ### Phase 2：权威转移 + 多实体
@@ -449,15 +439,15 @@ StateHash 反同步检测（上报，不强制纠偏）
 
 ## 8. 与现有系统的关系
 
-| 组件 | 变化 |
-|------|------|
-| PredictionManager | Phase 1 通过后删除 |
-| ISimulation | 删除（被 IEntitySync 替代） |
-| InputBuffer / SnapshotBuffer | 删除（不需要全局快照缓冲） |
-| FrameSyncClient | `Prediction` → `EntitySync` |
-| Person | `SetPrediction` → `RegisterEntity` |
-| TakeSnapshot / LoadSnapshot | 保留（重连用，独立于实体同步） |
-| 服务器 | 仅新增权威转移裁决，状态字节纯透传 |
+| 组件 | 变化 | 状态 |
+|------|------|------|
+| PredictionManager | 已从核心层删除 | ✅ 已完成 |
+| ISimulation | 已删除（被 IEntitySync 替代） | ✅ 已完成 |
+| InputBuffer / SnapshotBuffer | 已删除（不需要全局快照缓冲） | ✅ 已完成 |
+| ISnapshotable | 已删除（被 OnTakeSnapshot/OnLoadSnapshot 委托替代） | ✅ 已完成 |
+| FrameSyncClient | `Prediction` 属性、`PredictWithInput()` 已删除；实体同步通过 `RegisterAuthorityEntity` | ✅ 已完成 |
+| TakeSnapshot / LoadSnapshot | 保留（重连用，独立于实体同步） | — |
+| 服务器 | 仅新增权威转移裁决，状态字节纯透传 | — |
 
 ---
 
@@ -473,5 +463,5 @@ StateHash 反同步检测（上报，不强制纠偏）
 | 权威状态内容 | pos + rot + vel（~24B） | 支持 Dead Reckoning |
 | 逻辑/视觉分离 | EntityView\<T\> 组件 | 框架提供，游戏层可选 |
 | 权威转移冲突 | 服务器裁决（先到先得） | 客户端做不可靠 |
-| 全局回滚 | 删除（替换） | 实体级纠偏更轻量、更通用 |
+| 全局回滚 | 已删除 | 实体级纠偏更轻量、更通用。Prediction 子系统已从核心层移除 |
 | 带宽估算 | ~41B/frame/entity @ 20fps | Phase 1 限 1 人 1 实体 |

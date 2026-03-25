@@ -97,17 +97,14 @@ SessionBind 时携带 token，服务端校验。防止非法连接。
 
 ## Phase 3: 帧同步能力增强
 
-### 3.1 帧预测 + 回滚 (Prediction & Rollback)
-**优先级: P2**
+### 3.1 ~~帧预测 + 回滚~~ (Prediction & Rollback)
+**状态: 核心层代码已删除（2026-03-25）**
 
-客户端不等服务器确认，提前预测执行。服务器数据到达后校验，预测错误则回滚。
-
-需要的基础设施：
-- 游戏状态快照 (Snapshot): 每 N 帧保存，可恢复
-- 确定性回放: 相同输入 → 相同结果
-- 快速重执行: 回滚后一口气重跑 N 帧，不渲染
-
-适用场景：格斗/竞技类对延迟极敏感的游戏。当前跑酷/派对类游戏优先级低。
+> Per [core-philosophy.md](core-philosophy.md)：回滚不在核心层，只能作为可选中间件。
+> PredictionManager / ISimulation / InputBuffer / SnapshotBuffer 已从 `Core/Prediction/` 删除。
+> FrameSyncClient 不再暴露 `Prediction` 属性和 `PredictWithInput()` 方法。
+>
+> 如未来需要（格斗/竞技场景），以外部中间件形式实现，不进入框架核心包。
 
 ### 3.2 帧压缩
 **优先级: P2**

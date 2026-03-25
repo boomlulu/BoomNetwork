@@ -34,7 +34,6 @@ public enum PersonState { Idle, Connecting, Connected, InRoom, Syncing, Disconne
 | `LeaveRoom()` | 离开当前房间 |
 | `RequestStart()` | 请求开始帧同步。自动携带初始快照 |
 | `SendInput(byte[] data)` | 发送玩家输入（帧同步运行中） |
-| `PredictWithInput(float deltaTimeMs, byte[] data)` | 预测模式：喂入输入并本地预测 |
 | `Tick(float deltaTimeMs)` | **每帧调用**，驱动网络收发和心跳 |
 | `SimulateNetworkDrop()` | 测试用：只断 TCP，保留身份，触发断线流程 |
 | `Disconnect()` | 断开连接，保留身份（可重连） |
@@ -44,8 +43,6 @@ public enum PersonState { Idle, Connecting, Connected, InRoom, Syncing, Disconne
 | `GetFrameSyncInitData()` | 获取服务器下发的帧同步配置 |
 | `RegisterAuthorityEntity(IEntitySync)` | 注册本地管理的实体（每帧自动发送权威状态） |
 | `UnregisterAuthorityEntity(int entityId)` | 注销实体 |
-| `SetPrediction(PredictionManager)` | 设置预测管理器（启用预测模式） |
-| `ClearPrediction()` | 关闭预测模式 |
 
 ### 事件
 
@@ -105,7 +102,6 @@ public enum State { Disconnected, Connecting, Connected, InRoom, Syncing, Reconn
 | `LastFrameNumber` | `uint` | 最后处理的帧号 |
 | `SnapshotInterval` | `uint` | 快照上传间隔（帧数），由服务器下发覆盖 |
 | `HasPreviousIdentity` | `bool` | 断线后是否保留身份（PlayerId > 0 且 RoomId > 0） |
-| `Prediction` | `PredictionManager?` | 预测管理器（null=传统模式） |
 
 ### 方法
 
@@ -126,7 +122,8 @@ public enum State { Disconnected, Connecting, Connected, InRoom, Syncing, Reconn
 | **帧同步** | |
 | `RequestStart()` | 请求开始帧同步（自动携带初始快照） |
 | `SendInput(byte[] data, int dataLength)` | 发送玩家输入 |
-| `PredictWithInput(float deltaTimeMs, byte[] localInput)` | 预测模式每帧调用 |
+| `RegisterAuthorityEntity(IEntitySync entity)` | 注册本地管理的实体（每帧自动发送权威状态），幂等 |
+| `UnregisterAuthorityEntity(int entityId)` | 注销实体 |
 
 ### 事件
 
@@ -236,17 +233,6 @@ static class ReconnectResult
     const byte Fail = 0;         // 通用失败
     const byte Success = 1;      // 成功
     const byte BufferStale = 2;  // 帧缓冲区过期，需降级到快照重连
-}
-```
-
-### ISnapshotable
-
-```csharp
-// 游戏层可选实现（Person 用 TakeSnapshot/LoadSnapshot 回调替代）
-interface ISnapshotable
-{
-    byte[] TakeSnapshot();       // 序列化当前状态
-    void LoadSnapshot(byte[] data); // 恢复状态
 }
 ```
 
