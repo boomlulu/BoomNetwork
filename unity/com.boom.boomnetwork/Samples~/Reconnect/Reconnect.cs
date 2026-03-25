@@ -29,10 +29,11 @@ public class Reconnect : MonoBehaviour
     private float _sendTimer;
     private float _lastH, _lastV;
 
-    // 重连状态
-    private bool _isReconnecting;
-    private float _dropTimer;      // 断开倒计时
-    private float _dropDuration;   // 目标断开时长
+    // 断线测试状态
+    private bool _dropping;           // 正在断线测试中
+    private float _dropTimer;         // 已断开时长
+    private float _dropDuration;      // 目标断线时长
+    private bool _reconnected;        // 框架已完成重连（等 overlay 计时结束再显示）
     private int _reconnectCount;
     private string _lastEvent = "";
 
@@ -49,38 +50,59 @@ public class Reconnect : MonoBehaviour
 
         c.OnReconnected += () =>
         {
-            _isReconnecting = false;
             _reconnectCount++;
-            _lastEvent = $"[{DateTime.Now:HH:mm:ss}] Reconnected! (total: {_reconnectCount})";
+            if (_dropping)
+            {
+                // 框架已重连，但 overlay 还在显示——标记等计时结束
+                _reconnected = true;
+            }
+            else
+            {
+                _lastEvent = $"[{DateTime.Now:HH:mm:ss}] Reconnected! (total: {_reconnectCount})";
+            }
         };
         c.OnDisconnected += () =>
         {
-            _isReconnecting = false;
+            _dropping = false;
             _lastEvent = $"[{DateTime.Now:HH:mm:ss}] Disconnected (all retries exhausted)";
         };
 
         _network.QuickStart();
     }
 
-    /// <summary>断开连接 N 秒后自动重连</summary>
+    /// <summary>断开连接 N 秒，暂停自动重连，到时间后恢复</summary>
     void DropForSeconds(float seconds)
     {
-        if (_isReconnecting) return;
-        _isReconnecting = true;
+        if (_dropping) return;
+        _dropping = true;
+        _reconnected = false;
         _dropDuration = seconds;
         _dropTimer = 0;
-        _network.Client.SimulateNetworkDrop();
-        _lastEvent = $"[{DateTime.Now:HH:mm:ss}] Dropped! waiting {seconds}s before reconnect...";
+        // 暂停自动重连 + 断开 TCP
+        _network.Client.SimulateNetworkDropAndPause();
+        _lastEvent = $"[{DateTime.Now:HH:mm:ss}] Dropped! will reconnect in {seconds}s";
     }
 
     void Update()
     {
-        // 断开倒计时：到时间后框架自动重连（SimulateNetworkDrop 保留身份，ConnectionManager 自动重试）
-        if (_isReconnecting)
+        // 断线测试计时
+        if (_dropping)
         {
             _dropTimer += Time.deltaTime;
-            // 不需要手动重连——ConnectionManager 的 CompositeReconnectStrategy 自动处理
-            // 这里只做 UI 倒计时显示
+
+            // 到指定时长 → 恢复自动重连
+            if (_dropTimer >= _dropDuration && !_reconnected)
+            {
+                _network.Client.ResumeReconnect();
+                _lastEvent = $"[{DateTime.Now:HH:mm:ss}] Resuming reconnect...";
+            }
+
+            // 重连成功 → 结束 overlay
+            if (_reconnected)
+            {
+                _dropping = false;
+                _lastEvent = $"[{DateTime.Now:HH:mm:ss}] Reconnected after {_dropTimer:F1}s! (total: {_reconnectCount})";
+            }
         }
 
         if (!_network.IsSyncing) return;
@@ -183,25 +205,34 @@ public class Reconnect : MonoBehaviour
         GUILayout.EndArea();
 
         // 右上角 — 断线测试按钮
-        GUILayout.BeginArea(new Rect(Screen.width - 180, 10, 170, 150));
+        GUILayout.BeginArea(new Rect(Screen.width - 220, 10, 210, 150));
         GUILayout.Label("Test Disconnect", title);
+        GUI.enabled = !_dropping;
         if (GUILayout.Button("Drop 1s (Quick Reconnect)", btn))
             DropForSeconds(1f);
         if (GUILayout.Button("Drop 8s (Snapshot Reconnect)", btn))
             DropForSeconds(8f);
+        GUI.enabled = true;
         GUILayout.EndArea();
 
-        // 重连遮罩
-        if (_isReconnecting)
+        // 断线遮罩 + 计时
+        if (_dropping)
         {
-            var overlay = new GUIStyle(GUI.skin.box);
-            overlay.fontSize = 24;
+            // 半透明黑色背景
+            GUI.color = new Color(0, 0, 0, 0.6f);
+            GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), Texture2D.whiteTexture);
+            GUI.color = Color.white;
+
+            var overlay = new GUIStyle(GUI.skin.label);
+            overlay.fontSize = 28;
             overlay.alignment = TextAnchor.MiddleCenter;
             overlay.normal.textColor = Color.white;
-            GUI.Box(new Rect(0, 0, Screen.width, Screen.height), "");
-            float remaining = Mathf.Max(0, _dropDuration - _dropTimer);
-            GUI.Label(new Rect(0, Screen.height / 2 - 30, Screen.width, 60),
-                $"Reconnecting... {remaining:F1}s", overlay);
+
+            string status = _reconnected
+                ? $"Reconnected! closing in {Mathf.Max(0, _dropDuration - _dropTimer):F1}s"
+                : $"Disconnected  {_dropTimer:F1}s";
+
+            GUI.Label(new Rect(0, Screen.height / 2 - 30, Screen.width, 60), status, overlay);
         }
     }
 }
