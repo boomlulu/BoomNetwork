@@ -5,38 +5,40 @@ using System.Buffers.Binary;
 namespace BoomNetwork.Core.Codec
 {
     /// <summary>
-    /// 消息编解码器 — 新动态包头格式
+    /// 消息编解码器 — 三层 Cmd 动态包头
     ///
-    /// Wire: [FlagsCmd:1][BodyLen:2/4][Seq:0/4][Data:N]
+    /// Wire: [FlagsCmd:1][BodyLen:2/4][Seq:0/4][ExtCmd/GameCmd:0/2/4][Data:N]
     ///
     /// FlagsCmd byte:
-    ///   bit 0:   LenSize (0=2B, 1=4B)
-    ///   bit 1:   HasSeq  (0=无, 1=4B)
-    ///   bit 2-7: Cmd     (0-63)
+    ///   bit 0:   LenSize  (0=2B, 1=4B)
+    ///   bit 1:   HasSeq   (0=无, 1=4B)
+    ///   bit 2-3: CmdType  (00=Core, 01=Extended, 10=Game)
+    ///   bit 4-7: CoreCmd  (0-15, 仅 CmdType=Core)
     /// </summary>
     public static class MessageCodec
     {
-        /// <summary>
-        /// 编码 Message（含包头）
-        /// </summary>
         public static int Encode(in Message msg, Span<byte> output)
         {
-            int totalSize = EncodedSize(msg);
+            int totalSize = msg.TotalSize;
             if (output.Length < totalSize)
                 throw new ArgumentException($"Buffer too small: need {totalSize}, got {output.Length}");
 
-            bool largeLen = msg.NeedLargeLen;
             int dataLen = msg.DataLength;
+            int extra = msg.CmdExtraSize;
+            int totalPayload = dataLen + extra;
+            bool largeLen = totalPayload > 65530;
 
             // FlagsCmd
-            byte flagsCmd = (byte)(msg.Cmd << 2);
+            byte flagsCmd = (byte)(((byte)msg.MsgType & 0x03) << 2);
+            if (msg.MsgType == CmdType.Core)
+                flagsCmd |= (byte)((msg.Cmd & 0x0F) << 4);
             if (largeLen) flagsCmd |= (byte)MessageFlags.LenSize4;
             if (msg.HasSeq) flagsCmd |= (byte)MessageFlags.HasSeq;
             output[0] = flagsCmd;
             int offset = 1;
 
-            // BodyLen (不含 FlagsCmd 本身，包含 BodyLen 之后的所有字节)
-            int bodyLen = dataLen + (msg.HasSeq ? 4 : 0);
+            // BodyLen
+            int bodyLen = totalPayload + (msg.HasSeq ? 4 : 0);
             if (largeLen)
             {
                 BinaryPrimitives.WriteInt32LittleEndian(output.Slice(offset), bodyLen);
@@ -55,6 +57,19 @@ namespace BoomNetwork.Core.Codec
                 offset += 4;
             }
 
+            // ExtCmd / GameCmd
+            switch (msg.MsgType)
+            {
+                case CmdType.Extended:
+                    BinaryPrimitives.WriteUInt16LittleEndian(output.Slice(offset), msg.ExtCmd);
+                    offset += 2;
+                    break;
+                case CmdType.Game:
+                    BinaryPrimitives.WriteUInt32LittleEndian(output.Slice(offset), msg.GameCmd);
+                    offset += 4;
+                    break;
+            }
+
             // Data
             if (dataLen > 0)
             {
@@ -65,25 +80,10 @@ namespace BoomNetwork.Core.Codec
             return offset;
         }
 
-        /// <summary>
-        /// 编码后的总大小
-        /// </summary>
-        public static int EncodedSize(in Message msg)
-        {
-            return msg.TotalSize;
-        }
+        public static int EncodedSize(in Message msg) => msg.TotalSize;
 
-        /// <summary>
-        /// 从 buffer 解码一条消息
-        /// </summary>
-        public static Message Decode(ReadOnlySpan<byte> buffer)
-        {
-            return Decode(buffer, usePool: false);
-        }
+        public static Message Decode(ReadOnlySpan<byte> buffer) => Decode(buffer, usePool: false);
 
-        /// <summary>
-        /// 解码，可选 ArrayPool
-        /// </summary>
         public static Message Decode(ReadOnlySpan<byte> buffer, bool usePool)
         {
             if (buffer.Length < Message.MinHeaderSize)
@@ -92,7 +92,7 @@ namespace BoomNetwork.Core.Codec
             byte flagsCmd = buffer[0];
             bool largeLen = (flagsCmd & (byte)MessageFlags.LenSize4) != 0;
             bool hasSeq = (flagsCmd & (byte)MessageFlags.HasSeq) != 0;
-            byte cmd = (byte)(flagsCmd >> 2);
+            var cmdType = (CmdType)((flagsCmd >> 2) & 0x03);
             int offset = 1;
 
             // BodyLen
@@ -108,35 +108,53 @@ namespace BoomNetwork.Core.Codec
                 offset += 2;
             }
 
-            // Seq
-            int seq = 0;
-            if (hasSeq)
-            {
-                seq = BinaryPrimitives.ReadInt32LittleEndian(buffer.Slice(offset));
-                offset += 4;
-            }
-
-            // Data
-            int dataLen = bodyLen - (hasSeq ? 4 : 0);
             var msg = new Message
             {
-                Cmd = cmd,
-                Seq = seq,
+                MsgType = cmdType,
                 HasSeq = hasSeq,
             };
 
-            if (dataLen > 0)
+            int remainLen = bodyLen;
+
+            // Seq
+            if (hasSeq)
+            {
+                msg.Seq = BinaryPrimitives.ReadInt32LittleEndian(buffer.Slice(offset));
+                offset += 4;
+                remainLen -= 4;
+            }
+
+            // Cmd / ExtCmd / GameCmd
+            switch (cmdType)
+            {
+                case CmdType.Core:
+                    msg.Cmd = (byte)(flagsCmd >> 4);
+                    break;
+                case CmdType.Extended:
+                    msg.ExtCmd = BinaryPrimitives.ReadUInt16LittleEndian(buffer.Slice(offset));
+                    offset += 2;
+                    remainLen -= 2;
+                    break;
+                case CmdType.Game:
+                    msg.GameCmd = BinaryPrimitives.ReadUInt32LittleEndian(buffer.Slice(offset));
+                    offset += 4;
+                    remainLen -= 4;
+                    break;
+            }
+
+            // Data
+            if (remainLen > 0)
             {
                 if (usePool)
                 {
-                    msg.Data = ArrayPool<byte>.Shared.Rent(dataLen);
-                    buffer.Slice(offset, dataLen).CopyTo(msg.Data);
+                    msg.Data = ArrayPool<byte>.Shared.Rent(remainLen);
+                    buffer.Slice(offset, remainLen).CopyTo(msg.Data);
                 }
                 else
                 {
-                    msg.Data = buffer.Slice(offset, dataLen).ToArray();
+                    msg.Data = buffer.Slice(offset, remainLen).ToArray();
                 }
-                msg.DataLength = dataLen;
+                msg.DataLength = remainLen;
             }
             else
             {
@@ -147,10 +165,6 @@ namespace BoomNetwork.Core.Codec
             return msg;
         }
 
-        /// <summary>
-        /// 从 buffer 开头解析出总帧长度（用于 Framing 层）
-        /// 返回 -1 表示数据不够
-        /// </summary>
         public static int PeekFrameSize(ReadOnlySpan<byte> buffer)
         {
             if (buffer.Length < 1)
@@ -163,22 +177,13 @@ namespace BoomNetwork.Core.Codec
             if (buffer.Length < 1 + lenFieldSize)
                 return -1;
 
-            int bodyLen;
-            if (largeLen)
-            {
-                bodyLen = BinaryPrimitives.ReadInt32LittleEndian(buffer.Slice(1));
-            }
-            else
-            {
-                bodyLen = BinaryPrimitives.ReadUInt16LittleEndian(buffer.Slice(1));
-            }
+            int bodyLen = largeLen
+                ? BinaryPrimitives.ReadInt32LittleEndian(buffer.Slice(1))
+                : BinaryPrimitives.ReadUInt16LittleEndian(buffer.Slice(1));
 
             return 1 + lenFieldSize + bodyLen;
         }
 
-        /// <summary>
-        /// 归还 ArrayPool 的 Data
-        /// </summary>
         public static void ReturnData(ref Message msg)
         {
             if (msg.Data != null && msg.Data.Length > 0 && msg.DataLength > 0)

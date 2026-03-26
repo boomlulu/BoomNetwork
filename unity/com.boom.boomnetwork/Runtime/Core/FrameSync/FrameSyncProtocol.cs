@@ -5,59 +5,62 @@ using System.Collections.Generic;
 namespace BoomNetwork.Core.FrameSync
 {
     /// <summary>
-    /// 帧同步协议 Cmd 定义（客户端服务器共用）
+    /// 帧同步协议 Cmd 定义 — 三层分级
+    ///
+    /// Core (0-15):     高频核心命令，包头 3B
+    /// Extended (uint16): 框架扩展命令，包头 5B
+    /// Game (uint32):   游戏自定义命令，服务器透传，包头 7B
     /// </summary>
     public static class FrameSyncCmd
     {
-        // 注意: FlagsCmd 只有 6 bit 给 Cmd，范围 0-63
-        public const byte SessionBind       = 1;
-        public const byte SessionBindRsp    = 2;
+        // === Core Cmd (0-15) — 高频，最小包头 ===
+        public const byte SessionBind     = 1;
+        public const byte SessionBindRsp  = 2;
+        public const byte RequestStart    = 3;  // 客户端 → 服务器：请求开始
+        public const byte StartFrameSync  = 4;  // 服务器 → 客户端：帧同步开始
+        public const byte StopFrameSync   = 5;  // 双向：帧同步结束
+        public const byte FrameInput      = 6;
+        public const byte PushFrames      = 7;
+        public const byte Heartbeat       = 8;
+        public const byte HeartbeatRsp    = 9;
+        public const byte Reconnect       = 10;
+        public const byte ReconnectRsp    = 11;
+    }
 
-        public const byte RequestStart     = 3;  // 客户端 → 服务器：请求开始帧同步
-        public const byte StartFrameSync  = 4;  // 服务器 → 客户端：帧同步开始（广播）
-        public const byte StopFrameSync   = 21; // 服务器 → 客户端：帧同步结束
-
-        public const byte FrameInput       = 5;
-        public const byte PushFrames       = 6;
-
-        public const byte Heartbeat        = 7;
-        public const byte HeartbeatRsp     = 8;
-
-        public const byte Reconnect        = 9;
-        public const byte ReconnectRsp     = 10;
-
+    /// <summary>
+    /// Extended Cmd (uint16) — 框架扩展命令
+    /// </summary>
+    public static class FrameSyncExtCmd
+    {
         // 房间管理
-        public const byte GetRooms         = 11;
-        public const byte GetRoomsRsp      = 12;
-        public const byte CreateRoom       = 13;
-        public const byte CreateRoomRsp    = 14;
-        public const byte JoinRoom         = 15;
-        public const byte JoinRoomRsp      = 16;
-        public const byte LeaveRoom        = 17;
-        public const byte LeaveRoomRsp     = 18;
+        public const ushort GetRooms         = 1;
+        public const ushort GetRoomsRsp      = 2;
+        public const ushort CreateRoom       = 3;
+        public const ushort CreateRoomRsp    = 4;
+        public const ushort JoinRoom         = 5;
+        public const ushort JoinRoomRsp      = 6;
+        public const ushort LeaveRoom        = 7;
+        public const ushort LeaveRoomRsp     = 8;
+        public const ushort MatchRoom        = 9;  // 匹配房间
+        public const ushort MatchRoomRsp     = 10; // 匹配结果
 
         // 服务器推送
-        public const byte PlayerJoined     = 19;
-        public const byte PlayerLeft       = 20;
-        public const byte PlayerOffline    = 24;  // 玩家临时掉线
-        public const byte PlayerOnline     = 25;  // 玩家恢复在线（重连成功）
-        public const byte RoomSnapshot     = 26;  // 服务器 → 客户端：房间快照（迟到者加入）
+        public const ushort PlayerJoined     = 20;
+        public const ushort PlayerLeft       = 21;
+        public const ushort PlayerOffline    = 22; // 玩家临时掉线
+        public const ushort PlayerOnline     = 23; // 玩家恢复在线
+        public const ushort RoomSnapshot     = 24; // 房间快照
 
         // 快照
-        public const byte UploadSnapshot    = 22;  // 客户端 → 服务器：上传快照
-        public const byte UploadSnapshotRsp = 23;  // 服务器 → 客户端：上传确认
+        public const ushort UploadSnapshot    = 30;
+        public const ushort UploadSnapshotRsp = 31;
 
         // 实体权威同步
-        public const byte SendEntityState   = 27;  // 客户端 → 服务器：管理者发送实体状态
-        public const byte PushEntityState   = 28;  // 服务器 → 客户端：广播实体状态（带 senderPid）
+        public const ushort SendEntityState   = 40; // 管理者发送实体状态
+        public const ushort PushEntityState   = 41; // 广播实体状态（带 senderPid）
 
-        // 匹配
-        public const byte MatchRoom         = 29;  // 客户端 → 服务器：匹配房间（有空位加入，否则创建）
-        public const byte MatchRoomRsp      = 30;  // 服务器 → 客户端：匹配结果（格式同 JoinRoomRsp）
-
-        // 权威转移
-        public const byte RequestAuthorityTransfer = 31;  // 客户端 → 服务器：请求/释放实体权威
-        public const byte AuthorityTransferResult  = 32;  // 服务器 → 客户端：广播权威变更
+        // 权威转移（双向，Data[0] 区分 request=0 / result=1）
+        public const ushort AuthorityTransfer = 42;
     }
 
     /// <summary>

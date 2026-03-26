@@ -6,38 +6,71 @@ import (
 	"sync"
 )
 
-// 新包头格式:
-// [FlagsCmd: 1B][BodyLen: 2B/4B][Seq: 0B/4B][Data: NB]
+// 包头格式:
+// [FlagsCmd: 1B][BodyLen: 2B/4B][Seq: 0B/4B][ExtCmd/GameCmd: 0/2/4B][Data: NB]
 //
 // FlagsCmd byte:
-//   bit 0:   LenSize (0=BodyLen 2B, 1=BodyLen 4B)
-//   bit 1:   HasSeq  (0=no Seq, 1=Seq 4B)
-//   bit 2-7: Cmd     (0-63)
+//   bit 0:   LenSize  (0=BodyLen 2B, 1=BodyLen 4B)
+//   bit 1:   HasSeq   (0=no Seq, 1=Seq 4B)
+//   bit 2-3: CmdType  (00=Core, 01=Extended, 10=Game, 11=Reserved)
+//   bit 4-7: CoreCmd  (0-15, 仅 CmdType=Core 时有意义)
+//
+// CmdType=00 Core:     高频帧同步命令, Cmd 在 FlagsCmd 高 4 位     → 包头 3B
+// CmdType=01 Extended: 房间/实体管理, ExtCmd uint16 在 body 内      → 包头 5B
+// CmdType=10 Game:     游戏自定义命令, GameCmd uint32 在 body 内    → 包头 7B
 
 const (
 	FlagLenSize4 = 0x01
 	FlagHasSeq   = 0x02
 
-	MinHeaderSize = 3  // FlagsCmd(1) + BodyLen(2)
+	CmdTypeCore     = 0 // bits 2-3 = 00
+	CmdTypeExtended = 1 // bits 2-3 = 01
+	CmdTypeGame     = 2 // bits 2-3 = 10
+
+	MinHeaderSize      = 3 // FlagsCmd(1) + BodyLen(2)
 	LargeBodyThreshold = 65530
 )
 
 // Message 网络消息
 type Message struct {
-	Cmd    byte
-	Seq    int32
-	HasSeq bool
-	Data   []byte
+	CmdType byte   // CmdTypeCore / CmdTypeExtended / CmdTypeGame
+	Cmd     byte   // Core Cmd (0-15)
+	ExtCmd  uint16 // Extended Cmd (0-65535)
+	GameCmd uint32 // Game Cmd (0-4294967295)
+	Seq     int32
+	HasSeq  bool
+	Data    []byte
 }
 
 func (m *Message) String() string {
-	return fmt.Sprintf("[Msg Cmd=%d Seq=%d DataLen=%d]", m.Cmd, m.Seq, len(m.Data))
+	switch m.CmdType {
+	case CmdTypeExtended:
+		return fmt.Sprintf("[ExtMsg ExtCmd=%d Seq=%d DataLen=%d]", m.ExtCmd, m.Seq, len(m.Data))
+	case CmdTypeGame:
+		return fmt.Sprintf("[GameMsg GameCmd=%d DataLen=%d]", m.GameCmd, len(m.Data))
+	default:
+		return fmt.Sprintf("[Msg Cmd=%d Seq=%d DataLen=%d]", m.Cmd, m.Seq, len(m.Data))
+	}
+}
+
+// CmdSize 当前 CmdType 对应的额外字节数（在 body 内）
+func cmdExtraSize(cmdType byte) int {
+	switch cmdType {
+	case CmdTypeExtended:
+		return 2
+	case CmdTypeGame:
+		return 4
+	default:
+		return 0
+	}
 }
 
 // HeaderSize 包头大小
 func (m *Message) HeaderSize() int {
+	extra := cmdExtraSize(m.CmdType)
+	totalPayload := len(m.Data) + extra
 	size := 1 // FlagsCmd
-	if len(m.Data) > LargeBodyThreshold {
+	if totalPayload > LargeBodyThreshold {
 		size += 4
 	} else {
 		size += 2
@@ -45,6 +78,7 @@ func (m *Message) HeaderSize() int {
 	if m.HasSeq {
 		size += 4
 	}
+	size += extra
 	return size
 }
 
@@ -84,10 +118,16 @@ func PutBuf(buf []byte) {
 // EncodeTo 编码到指定 buffer
 func EncodeTo(msg *Message, buf []byte) int {
 	dataLen := len(msg.Data)
-	largeLen := dataLen > LargeBodyThreshold
+	extra := cmdExtraSize(msg.CmdType)
+	totalPayload := dataLen + extra
+	largeLen := totalPayload > LargeBodyThreshold
 
 	// FlagsCmd
-	flagsCmd := msg.Cmd << 2
+	var flagsCmd byte
+	flagsCmd = (msg.CmdType & 0x03) << 2
+	if msg.CmdType == CmdTypeCore {
+		flagsCmd |= (msg.Cmd & 0x0F) << 4
+	}
 	if largeLen {
 		flagsCmd |= FlagLenSize4
 	}
@@ -97,8 +137,8 @@ func EncodeTo(msg *Message, buf []byte) int {
 	buf[0] = flagsCmd
 	offset := 1
 
-	// BodyLen
-	bodyLen := dataLen
+	// BodyLen (covers: Seq + ExtCmd/GameCmd + Data)
+	bodyLen := totalPayload
 	if msg.HasSeq {
 		bodyLen += 4
 	}
@@ -113,6 +153,16 @@ func EncodeTo(msg *Message, buf []byte) int {
 	// Seq
 	if msg.HasSeq {
 		binary.LittleEndian.PutUint32(buf[offset:], uint32(msg.Seq))
+		offset += 4
+	}
+
+	// ExtCmd / GameCmd
+	switch msg.CmdType {
+	case CmdTypeExtended:
+		binary.LittleEndian.PutUint16(buf[offset:], msg.ExtCmd)
+		offset += 2
+	case CmdTypeGame:
+		binary.LittleEndian.PutUint32(buf[offset:], msg.GameCmd)
 		offset += 4
 	}
 
@@ -134,7 +184,7 @@ func Decode(buf []byte) (*Message, error) {
 	flagsCmd := buf[0]
 	largeLen := flagsCmd&FlagLenSize4 != 0
 	hasSeq := flagsCmd&FlagHasSeq != 0
-	cmd := flagsCmd >> 2
+	cmdType := (flagsCmd >> 2) & 0x03
 	offset := 1
 
 	// BodyLen
@@ -151,9 +201,11 @@ func Decode(buf []byte) (*Message, error) {
 	}
 
 	msg := &Message{
-		Cmd:    cmd,
-		HasSeq: hasSeq,
+		CmdType: cmdType,
+		HasSeq:  hasSeq,
 	}
+
+	remainLen := bodyLen
 
 	// Seq
 	if hasSeq {
@@ -162,15 +214,32 @@ func Decode(buf []byte) (*Message, error) {
 		}
 		msg.Seq = int32(binary.LittleEndian.Uint32(buf[offset:]))
 		offset += 4
+		remainLen -= 4
+	}
+
+	// Cmd / ExtCmd / GameCmd
+	switch cmdType {
+	case CmdTypeCore:
+		msg.Cmd = flagsCmd >> 4
+	case CmdTypeExtended:
+		if len(buf) < offset+2 {
+			return nil, fmt.Errorf("buffer too short for ExtCmd")
+		}
+		msg.ExtCmd = binary.LittleEndian.Uint16(buf[offset:])
+		offset += 2
+		remainLen -= 2
+	case CmdTypeGame:
+		if len(buf) < offset+4 {
+			return nil, fmt.Errorf("buffer too short for GameCmd")
+		}
+		msg.GameCmd = binary.LittleEndian.Uint32(buf[offset:])
+		offset += 4
+		remainLen -= 4
 	}
 
 	// Data
-	dataLen := bodyLen
-	if hasSeq {
-		dataLen -= 4
-	}
-	if dataLen > 0 {
-		msg.Data = buf[offset : offset+dataLen]
+	if remainLen > 0 {
+		msg.Data = buf[offset : offset+remainLen]
 	}
 
 	return msg, nil
@@ -213,4 +282,21 @@ func PeekFrameSize(buf []byte) int {
 	}
 
 	return 1 + lenFieldSize + bodyLen
+}
+
+// === 便捷构造函数 ===
+
+// NewCoreMessage 创建核心消息 (Cmd 0-15)
+func NewCoreMessage(cmd byte, data []byte) *Message {
+	return &Message{CmdType: CmdTypeCore, Cmd: cmd, Data: data}
+}
+
+// NewExtMessage 创建扩展消息 (ExtCmd uint16)
+func NewExtMessage(extCmd uint16, data []byte) *Message {
+	return &Message{CmdType: CmdTypeExtended, ExtCmd: extCmd, Data: data}
+}
+
+// NewGameMessage 创建游戏消息 (GameCmd uint32)
+func NewGameMessage(gameCmd uint32, data []byte) *Message {
+	return &Message{CmdType: CmdTypeGame, GameCmd: gameCmd, Data: data}
 }

@@ -4,54 +4,87 @@ import (
 	"encoding/binary"
 )
 
-// Cmd 定义 (FlagsCmd 6bit, 范围 0-63)
+// === Cmd 定义（三层分级）===
+//
+// FlagsCmd byte: bit 0=LenSize, bit 1=HasSeq, bit 2-3=CmdType, bit 4-7=CoreCmd
+//
+// Core (CmdType=0):     高频核心命令, CoreCmd 0-15, 包头 3B
+// Extended (CmdType=1): 框架扩展命令, ExtCmd uint16, 包头 5B
+// Game (CmdType=2):     游戏自定义命令, GameCmd uint32, 包头 7B, 服务器透传
+
+// --- Core Cmd (0-15) ---
 const (
-	CmdSessionBind    = 1
-	CmdSessionBindRsp = 2
-	CmdRequestStart   = 3  // 客户端 → 服务器：请求开始
-	CmdStartFrameSync = 4  // 服务器 → 客户端：帧同步开始（广播）
-	CmdStopFrameSync  = 21 // 服务器 → 客户端：帧同步结束
-	CmdFrameInput     = 5
-	CmdPushFrames     = 6
+	CmdSessionBind    byte = 1
+	CmdSessionBindRsp byte = 2
+	CmdRequestStart   byte = 3  // 客户端 → 服务器：请求开始
+	CmdStartFrameSync byte = 4  // 服务器 → 客户端：帧同步开始（广播）
+	CmdStopFrameSync  byte = 5  // 双向：帧同步结束
+	CmdFrameInput     byte = 6
+	CmdPushFrames     byte = 7
+	CmdHeartbeat      byte = 8
+	CmdHeartbeatRsp   byte = 9
+	CmdReconnect      byte = 10
+	CmdReconnectRsp   byte = 11
+)
 
-	CmdHeartbeat    = 7
-	CmdHeartbeatRsp = 8
-
-	CmdReconnect    = 9
-	CmdReconnectRsp = 10
-
+// --- Extended Cmd (uint16) ---
+const (
 	// 房间管理
-	CmdGetRooms      = 11
-	CmdGetRoomsRsp   = 12
-	CmdCreateRoom    = 13
-	CmdCreateRoomRsp = 14
-	CmdJoinRoom      = 15
-	CmdJoinRoomRsp   = 16
-	CmdLeaveRoom     = 17
-	CmdLeaveRoomRsp  = 18
+	ExtCmdGetRooms      uint16 = 1
+	ExtCmdGetRoomsRsp   uint16 = 2
+	ExtCmdCreateRoom    uint16 = 3
+	ExtCmdCreateRoomRsp uint16 = 4
+	ExtCmdJoinRoom      uint16 = 5
+	ExtCmdJoinRoomRsp   uint16 = 6
+	ExtCmdLeaveRoom     uint16 = 7
+	ExtCmdLeaveRoomRsp  uint16 = 8
+	ExtCmdMatchRoom     uint16 = 9  // 匹配房间
+	ExtCmdMatchRoomRsp  uint16 = 10 // 匹配结果
 
 	// 服务器推送
-	CmdPlayerJoined  = 19
-	CmdPlayerLeft    = 20
-	CmdPlayerOffline = 24 // 玩家断线（临时，可能重连）
-	CmdPlayerOnline  = 25 // 玩家恢复在线（重连成功）
-	CmdRoomSnapshot  = 26 // 服务器 → 客户端：下发房间快照（迟到者加入用）
+	ExtCmdPlayerJoined  uint16 = 20
+	ExtCmdPlayerLeft    uint16 = 21
+	ExtCmdPlayerOffline uint16 = 22 // 玩家断线（临时）
+	ExtCmdPlayerOnline  uint16 = 23 // 玩家恢复在线
+	ExtCmdRoomSnapshot  uint16 = 24 // 下发房间快照
 
 	// 快照
-	CmdUploadSnapshot    = 22 // 客户端 → 服务器：上传快照
-	CmdUploadSnapshotRsp = 23 // 服务器 → 客户端：上传确认
+	ExtCmdUploadSnapshot    uint16 = 30
+	ExtCmdUploadSnapshotRsp uint16 = 31
 
 	// 实体权威同步
-	CmdSendEntityState = 27 // 客户端 → 服务器：管理者发送实体状态
-	CmdPushEntityState = 28 // 服务器 → 客户端：广播实体状态（带 senderPid）
+	ExtCmdSendEntityState uint16 = 40 // 管理者发送实体状态
+	ExtCmdPushEntityState uint16 = 41 // 广播实体状态（带 senderPid）
 
-	// 匹配
-	CmdMatchRoom    = 29 // 客户端 → 服务器：请求匹配房间（有空位就加入，否则创建）
-	CmdMatchRoomRsp = 30 // 服务器 → 客户端：匹配结果（格式同 JoinRoomRsp）
+	// 权威转移（双向，用 Data[0] 区分 request/result）
+	ExtCmdAuthorityTransfer uint16 = 42
+	// Data[0]=0: C→S 请求 [0:1][entityId:4][release:1]
+	// Data[0]=1: S→C 结果 [1:1][entityId:4][newOwner:4]
+)
 
-	// 权威转移
-	CmdRequestAuthorityTransfer = 31 // 客户端 → 服务器：请求/释放实体权威
-	CmdAuthorityTransferResult  = 32 // 服务器 → 客户端：广播权威变更
+// === 旧常量别名（过渡期，上层适配后删除）===
+const (
+	CmdGetRooms                 = CmdSessionBind // placeholder, will be replaced by ExtCmd routing
+	CmdGetRoomsRsp              = CmdSessionBind
+	CmdCreateRoom               = CmdSessionBind
+	CmdCreateRoomRsp            = CmdSessionBind
+	CmdJoinRoom                 = CmdSessionBind
+	CmdJoinRoomRsp              = CmdSessionBind
+	CmdLeaveRoom                = CmdSessionBind
+	CmdLeaveRoomRsp             = CmdSessionBind
+	CmdMatchRoom                = CmdSessionBind
+	CmdMatchRoomRsp             = CmdSessionBind
+	CmdPlayerJoined             = CmdSessionBind
+	CmdPlayerLeft               = CmdSessionBind
+	CmdPlayerOffline            = CmdSessionBind
+	CmdPlayerOnline             = CmdSessionBind
+	CmdRoomSnapshot             = CmdSessionBind
+	CmdUploadSnapshot           = CmdSessionBind
+	CmdUploadSnapshotRsp        = CmdSessionBind
+	CmdSendEntityState          = CmdSessionBind
+	CmdPushEntityState          = CmdSessionBind
+	CmdRequestAuthorityTransfer = CmdSessionBind
+	CmdAuthorityTransferResult  = CmdSessionBind
 )
 
 // InitData 帧同步初始化数据
