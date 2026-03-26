@@ -10,17 +10,17 @@
 
 ## 现状诊断：为什么还不算产品？
 
-用生产服务器的 5 个维度评估：
+用生产服务器的 5 个维度评估（2026-03-26 更新）：
 
 | 维度 | 现状 | 生产要求 | 差距 |
 |------|------|---------|------|
-| **可观测性** | stdout 日志，半成品 Prometheus（6/10 指标没接上） | 结构化日志 + 完整指标 + 告警 | 🔴 大 |
-| **可靠性** | Room panic 后玩家孤立；重连有竞态；KCP 无限流 | 故障自愈、无竞态、全协议一致 | 🔴 大 |
-| **安全性** | 明文传输、硬编码 token、WS 无 origin 检查、KCP 无限流 | TLS/加密、环境变量管理、限流全覆盖 | 🟡 中 |
-| **运维友好** | Docker 有但端口遗漏、无 systemd 模板、无健康探针集成 | 一键部署、K8s ready、探针完备 | 🟡 中 |
-| **代码质量** | 热路径零分配好、并发模型合理，但有 unbounded map、僵尸指标 | 无资源泄漏、指标准确、测试覆盖 | 🟡 中 |
+| **可观测性** | Prometheus 10/10 指标全部接上；但仍是 stdout 日志，无结构化/级别控制 | 结构化日志 + 告警 + Grafana 模板 | 🟡 中 |
+| **可靠性** | Room panic 自愈 + 僵尸清理；重连竞态已修复（CAS）；TCP/KCP 统一限流 | 优雅关闭、连接健康检测、容量上限 | 🟢 小 |
+| **安全性** | 明文传输、硬编码 token、WS 无 origin 检查 | TLS/加密、环境变量管理、连接频率限制 | 🟡 中 |
+| **运维友好** | systemd 已部署腾讯云（未入库）；Docker 端口遗漏；GM Deploy 一键部署可用 | systemd 模板入库、Docker 修复、sd_notify | 🟡 中 |
+| **代码质量** | 热路径零分配 + Router 无锁；map 泄漏已修复；JoinRoom 错误码区分 | 测试覆盖率提升 | 🟢 小 |
 
-**结论**：框架层（codec、framing、帧同步逻辑）质量高；服务器层（运维、可观测、容错）是半成品。
+**结论**：止血（S1-S6）和性能优化（S23-S26）已完成。可靠性和代码质量从 🔴 提升到 🟢。下一个瓶颈是**可观测性**（结构化日志）和**安全加固**（token 环境变量化）。
 
 ---
 
@@ -29,17 +29,21 @@
 | 模块 | 内容 |
 |------|------|
 | 帧同步核心 | Room tick loop、ring buffer 零分配、输入收集+广播 |
-| 双协议传输 | TCP（NoDelay + KeepAlive）+ KCP（低延迟调参） |
+| 双协议传输 | TCP（NoDelay + KeepAlive）+ KCP（低延迟调参 + 统一限流） |
 | 房间管理 | 创建/加入/离开/匹配/自动分配/空房清理/30s 延迟销毁 |
-| 重连支持 | 快速重连（ring buffer 回放）+ 快照重连（二级降级） |
+| 重连支持 | 快速重连（ring buffer 回放）+ 快照重连（二级降级）+ CAS 防竞态 |
 | 迟到者加入 | 快照 + StartFrameSync + catchup frames |
 | Admin API | 10 个 HTTP 端点 + WebSocket 实时推送（7 topics） |
-| 网络模拟 | S→C 延迟/抖动/丢包，HTTP + WS 可控 |
-| 流量统计 | Game/GM 分离、1min/5sec 窗口、per-player rate |
+| 网络模拟 | S→C 延迟/抖动/丢包，HTTP + WS 可控，积压保护（10000 上限降级） |
+| 流量统计 | Game/GM 分离、1min/5sec 窗口、per-player rate（断线自动清理） |
 | 消息日志 | 100 条 ring buffer + payload 解码 + WS 实时推送 |
 | Codec | 三层 CmdType + sync.Pool + 跨语言兼容测试 |
-| 基础部署 | Dockerfile + docker-compose + 预编译 Linux 二进制 |
+| 基础部署 | Dockerfile + docker-compose + 预编译 Linux 二进制 + 腾讯云 systemd |
 | 实体权威同步 | Cmd 27/28 广播、权威释放（断线时） |
+| 轻量状态同步 | StateMessage 转发 + DataMessage KV 存储/增量广播/全量同步 |
+| Prometheus | 10/10 指标全部接入（connections/rooms/frames/bytes/errors/rate_limited） |
+| 容错加固 | Room panic 自愈（广播 Stop + 清理映射）、JoinRoom 错误码区分（5 种） |
+| 性能优化 | Router Freeze 无锁分发、/perf STW 缓存、atomic 冗余清理 |
 
 ---
 
@@ -131,17 +135,19 @@
 ## 下一步建议
 
 ```
-Phase 1 — 止血 ✅（2026-03-26 完成）:
-  S1 指标修复 → S2 KCP 限流 → S3 panic 恢复 → S4 重连竞态 → S5 错误码 → S6 map 泄漏
+✅ 已完成:
+  Phase A — 止血 (S1-S6):  指标修复、KCP 限流、panic 恢复、重连竞态、错误码、map 泄漏
+  Phase B — 性能 (S23-S26): Router 无锁、atomic 清理、/perf 缓存、netsim 积压保护
 
-Phase 2 — 可观测（下一步）:
-  S7 结构化日志 → S9 指标补全 → S10 Grafana 模板
-  没有可观测性 = 线上裸奔
+下一步:
+  Phase C — 可观测 (S7-S10):
+    S7 结构化日志 → S9 指标补全 → S10 Grafana 模板
+    没有可观测性 = 线上裸奔
 
-Phase 3 — 安全 + 运维:
-  S15 token 环境变量 → S16 bind 失败断连 → S19 systemd 入库 → S20 Docker 修复
+  Phase D — 安全 + 运维 (S15-S22):
+    S15 token 环境变量 → S16 bind 失败断连 → S19 systemd 入库 → S20 Docker 修复
 
 验收标准:
-  Phase 1-3 完成后，服务器可以称为 "Beta 级" —
+  Phase C-D 完成后，服务器可以称为 "Beta 级" —
   能跑、能看（日志+指标）、能防（限流+鉴权）、能运维（一键部署+健康检查）
 ```

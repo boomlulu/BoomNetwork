@@ -92,8 +92,8 @@
 | # | 任务 | 说明 | 状态 |
 |---|------|------|------|
 | N13 | ~~Demo02 预测回滚~~ → **Entity Authority Sync** | **已完成** — PredictionManager 已从核心层删除（cli/ + unity UPM 包），替换为实体权威同步。L1-L4 全部实现，Demo02/03 可用 | ✅ |
-| N14 | **F13 重连 ConnPlayerMap 原子化** | 多次快速重连可能映射不一致 | 待做 |
-| N15 | **F14 Room panic 恢复一致性** | recover 后 running=false 但玩家还在 | 待做 |
+| N14 | **F13 重连 ConnPlayerMap 原子化** | 重连时 CAS 检查旧连接 + 关闭旧连接，onClientDisconnect 防覆盖（→ server-roadmap S4） | ✅ |
+| N15 | **F14 Room panic 恢复一致性** | panic 后广播 StopFrameSync + 清空 players + OnPanic 回调清理全局映射（→ server-roadmap S3） | ✅ |
 | N16 | **F16 autoroom 整合到 config.yaml** | 目前是命令行 flag，不在配置中 | 待做 |
 | N17 | **单元测试覆盖率提升** | Room stepFrame/broadcast 热路径 | 待做 |
 
