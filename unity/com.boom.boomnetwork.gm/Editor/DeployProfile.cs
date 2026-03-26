@@ -34,7 +34,7 @@ namespace BoomNetwork.GM.Editor
         // 健康检查 + Admin 鉴权
         public string HealthUrl = "http://127.0.0.1:9091";
         public string AdminToken = "";
-        public int HealthTimeoutSec = 15;
+        public int HealthTimeoutSec = 30;
 
         // ===================== OS/Arch 选项 =====================
 
