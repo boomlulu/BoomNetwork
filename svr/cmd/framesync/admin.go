@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/boom/boomnetwork/codec"
 	"github.com/boom/boomnetwork/framesync"
 	"github.com/boom/boomnetwork/transport"
 )
@@ -256,7 +257,7 @@ func handleKick(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 通知同房其他玩家
-	broadcastToRoom(room, playerId, framesync.CmdPlayerLeft, framesync.EncodePlayerId(playerId))
+	broadcastToRoom(room, playerId, codec.NewExtMessage(framesync.ExtCmdPlayerLeft, framesync.EncodePlayerId(playerId)))
 
 	log.Printf("[Admin] Kicked player %d from room %d\n", playerId, room.ID)
 

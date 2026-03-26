@@ -102,13 +102,15 @@ const msgRingSize = 100
 
 // MsgEntry 单条网络消息记录
 type MsgEntry struct {
-	Ts     int64  `json:"ts"`               // unix ms
-	Dir    string `json:"dir"`              // "rx" / "tx"
-	Cmd    byte   `json:"cmd"`              // 协议命令号
-	Name   string `json:"name"`             // 命令名（人可读）
-	Pid    int32  `json:"pid"`              // 玩家 ID (0=未知)
-	Size   int    `json:"size"`             // 数据字节数
-	Detail string `json:"detail,omitempty"` // G7: 关键消息解码摘要
+	Ts      int64  `json:"ts"`               // unix ms
+	Dir     string `json:"dir"`              // "rx" / "tx"
+	Cmd     byte   `json:"cmd"`              // Core Cmd (CmdType=0)
+	ExtCmd  uint16 `json:"ext_cmd,omitempty"` // Extended Cmd (CmdType=1)
+	GameCmd uint32 `json:"game_cmd,omitempty"` // Game Cmd (CmdType=2)
+	Name    string `json:"name"`             // 命令名（人可读）
+	Pid     int32  `json:"pid"`              // 玩家 ID (0=未知)
+	Size    int    `json:"size"`             // 数据字节数
+	Detail  string `json:"detail,omitempty"` // G7: 关键消息解码摘要
 }
 
 type msgRing struct {
@@ -168,30 +170,44 @@ var (
 )
 
 // LogMsg 记录一条网络消息到环形缓冲 + G8 速率统计
-func LogMsg(dir string, cmd byte, pid int32, dataSize int) {
+// cmdType: codec.CmdTypeCore / CmdTypeExtended / CmdTypeGame
+func LogMsg(dir string, cmdType byte, cmd byte, extCmd uint16, gameCmd uint32, pid int32, dataSize int) {
 	MsgLog.Push(MsgEntry{
-		Ts:   time.Now().UnixMilli(),
-		Dir:  dir,
-		Cmd:  cmd,
-		Name: CmdName(cmd),
-		Pid:  pid,
-		Size: dataSize,
+		Ts:      time.Now().UnixMilli(),
+		Dir:     dir,
+		Cmd:     cmd,
+		ExtCmd:  extCmd,
+		GameCmd: gameCmd,
+		Name:    MsgName(cmdType, cmd, extCmd, gameCmd),
+		Pid:     pid,
+		Size:    dataSize,
 	})
 	PlayerRates.Record(pid)
 }
 
 // LogMsgWithDetail G7: 关键消息带解码摘要
-func LogMsgWithDetail(dir string, cmd byte, pid int32, dataSize int, detail string) {
+func LogMsgWithDetail(dir string, cmdType byte, cmd byte, extCmd uint16, gameCmd uint32, pid int32, dataSize int, detail string) {
 	MsgLog.Push(MsgEntry{
-		Ts:     time.Now().UnixMilli(),
-		Dir:    dir,
-		Cmd:    cmd,
-		Name:   CmdName(cmd),
-		Pid:    pid,
-		Size:   dataSize,
-		Detail: detail,
+		Ts:      time.Now().UnixMilli(),
+		Dir:     dir,
+		Cmd:     cmd,
+		ExtCmd:  extCmd,
+		GameCmd: gameCmd,
+		Name:    MsgName(cmdType, cmd, extCmd, gameCmd),
+		Pid:     pid,
+		Size:    dataSize,
+		Detail:  detail,
 	})
 	PlayerRates.Record(pid)
+}
+
+// logMsg convenience helper for a *codec.Message
+func logMsgFromMsg(dir string, msg *codec.Message, pid int32, detail string) {
+	if detail != "" {
+		LogMsgWithDetail(dir, msg.CmdType, msg.Cmd, msg.ExtCmd, msg.GameCmd, pid, len(msg.Data), detail)
+	} else {
+		LogMsg(dir, msg.CmdType, msg.Cmd, msg.ExtCmd, msg.GameCmd, pid, len(msg.Data))
+	}
 }
 
 // ===================== Handler 包装器 =====================
@@ -201,40 +217,38 @@ func txStats(h session.Handler) session.Handler {
 	return func(conn *transport.Conn, msg *codec.Message) *codec.Message {
 		// RX 侧关键消息解码
 		pid := connPid(conn)
-		switch msg.Cmd {
-		case framesync.CmdReconnect:
+		if msg.CmdType == codec.CmdTypeCore && msg.Cmd == framesync.CmdReconnect {
 			detail := fmt.Sprintf("lastFrame=%d", decodeMsgUint32(msg.Data, 4))
-			LogMsgWithDetail("rx", msg.Cmd, pid, len(msg.Data), detail)
-		case framesync.CmdJoinRoom:
+			LogMsgWithDetail("rx", msg.CmdType, msg.Cmd, msg.ExtCmd, msg.GameCmd, pid, len(msg.Data), detail)
+		} else if msg.CmdType == codec.CmdTypeExtended && msg.ExtCmd == framesync.ExtCmdJoinRoom {
 			detail := fmt.Sprintf("roomId=%d", decodeMsgInt32(msg.Data, 0))
-			LogMsgWithDetail("rx", msg.Cmd, pid, len(msg.Data), detail)
+			LogMsgWithDetail("rx", msg.CmdType, msg.Cmd, msg.ExtCmd, msg.GameCmd, pid, len(msg.Data), detail)
 		}
 
 		rsp := h(conn, msg)
 		if rsp != nil {
 			GameStats.RecordTx(int64(len(rsp.Data)))
 			// TX 侧关键消息解码
-			switch rsp.Cmd {
-			case framesync.CmdStartFrameSync:
+			if rsp.CmdType == codec.CmdTypeCore && rsp.Cmd == framesync.CmdStartFrameSync {
 				if len(rsp.Data) >= 8 {
 					rate := decodeMsgInt32(rsp.Data, 0)
 					interval := decodeMsgInt32(rsp.Data, 4)
-					LogMsgWithDetail("tx", rsp.Cmd, pid, len(rsp.Data), fmt.Sprintf("rate=%d interval=%dms", rate, interval))
+					LogMsgWithDetail("tx", rsp.CmdType, rsp.Cmd, rsp.ExtCmd, rsp.GameCmd, pid, len(rsp.Data), fmt.Sprintf("rate=%d interval=%dms", rate, interval))
 				} else {
-					LogMsg("tx", rsp.Cmd, pid, len(rsp.Data))
+					logMsgFromMsg("tx", rsp, pid, "")
 				}
-			case framesync.CmdReconnectRsp:
+			} else if rsp.CmdType == codec.CmdTypeCore && rsp.Cmd == framesync.CmdReconnectRsp {
 				if len(rsp.Data) >= 5 {
 					status := rsp.Data[0]
 					sn := []string{"fail", "ok", "buffer_stale"}
 					s := "unknown"
 					if int(status) < len(sn) { s = sn[status] }
-					LogMsgWithDetail("tx", rsp.Cmd, pid, len(rsp.Data), fmt.Sprintf("status=%s", s))
+					LogMsgWithDetail("tx", rsp.CmdType, rsp.Cmd, rsp.ExtCmd, rsp.GameCmd, pid, len(rsp.Data), fmt.Sprintf("status=%s", s))
 				} else {
-					LogMsg("tx", rsp.Cmd, pid, len(rsp.Data))
+					logMsgFromMsg("tx", rsp, pid, "")
 				}
-			default:
-				LogMsg("tx", rsp.Cmd, pid, len(rsp.Data))
+			} else {
+				logMsgFromMsg("tx", rsp, pid, "")
 			}
 		}
 		return rsp
@@ -259,7 +273,7 @@ type statsConn struct {
 
 func (sc *statsConn) Send(msg *codec.Message) error {
 	GameStats.RecordTx(int64(len(msg.Data)))
-	LogMsg("tx", msg.Cmd, sc.pid, len(msg.Data))
+	logMsgFromMsg("tx", msg, sc.pid, "")
 	return sc.inner.Send(msg)
 }
 
@@ -373,40 +387,63 @@ type PlayerRateInfo struct {
 
 // ===================== Cmd 名称映射 =====================
 
-var cmdNames = map[byte]string{
+var coreCmdNames = map[byte]string{
 	1:  "SessionBind",
 	2:  "SessionBindRsp",
 	3:  "RequestStart",
 	4:  "StartFrameSync",
-	5:  "FrameInput",
-	6:  "PushFrames",
-	7:  "Heartbeat",
-	8:  "HeartbeatRsp",
-	9:  "Reconnect",
-	10: "ReconnectRsp",
-	11: "GetRooms",
-	12: "GetRoomsRsp",
-	13: "CreateRoom",
-	14: "CreateRoomRsp",
-	15: "JoinRoom",
-	16: "JoinRoomRsp",
-	17: "LeaveRoom",
-	18: "LeaveRoomRsp",
-	19: "PlayerJoined",
-	20: "PlayerLeft",
-	21: "StopFrameSync",
-	22: "UploadSnapshot",
-	23: "UploadSnapshotRsp",
-	24: "PlayerOffline",
-	25: "PlayerOnline",
-	26: "RoomSnapshot",
-	27: "SendEntityState",
-	28: "PushEntityState",
+	5:  "StopFrameSync",
+	6:  "FrameInput",
+	7:  "PushFrames",
+	8:  "Heartbeat",
+	9:  "HeartbeatRsp",
+	10: "Reconnect",
+	11: "ReconnectRsp",
 }
 
-func CmdName(cmd byte) string {
-	if name, ok := cmdNames[cmd]; ok {
-		return name
+var extCmdNames = map[uint16]string{
+	1:  "GetRooms",
+	2:  "GetRoomsRsp",
+	3:  "CreateRoom",
+	4:  "CreateRoomRsp",
+	5:  "JoinRoom",
+	6:  "JoinRoomRsp",
+	7:  "LeaveRoom",
+	8:  "LeaveRoomRsp",
+	9:  "MatchRoom",
+	10: "MatchRoomRsp",
+	20: "PlayerJoined",
+	21: "PlayerLeft",
+	22: "PlayerOffline",
+	23: "PlayerOnline",
+	24: "RoomSnapshot",
+	30: "UploadSnapshot",
+	31: "UploadSnapshotRsp",
+	40: "SendEntityState",
+	41: "PushEntityState",
+	42: "AuthorityTransfer",
+}
+
+// MsgName 返回消息的可读名称（支持三层 CmdType）
+func MsgName(cmdType byte, cmd byte, extCmd uint16, gameCmd uint32) string {
+	switch cmdType {
+	case codec.CmdTypeCore:
+		if name, ok := coreCmdNames[cmd]; ok {
+			return name
+		}
+		return fmt.Sprintf("Core(%d)", cmd)
+	case codec.CmdTypeExtended:
+		if name, ok := extCmdNames[extCmd]; ok {
+			return name
+		}
+		return fmt.Sprintf("Ext(%d)", extCmd)
+	case codec.CmdTypeGame:
+		return fmt.Sprintf("Game(%d)", gameCmd)
 	}
 	return "Unknown"
+}
+
+// CmdName 兼容旧调用（仅 Core）
+func CmdName(cmd byte) string {
+	return MsgName(codec.CmdTypeCore, cmd, 0, 0)
 }

@@ -82,7 +82,7 @@ func (sc *simConn) Send(msg *codec.Message) error {
 		// 必须拷贝 Data（原 buffer 可能被 Room tick 复用）
 		dataCopy := make([]byte, len(msg.Data))
 		copy(dataCopy, msg.Data)
-		msgCopy := &codec.Message{Cmd: msg.Cmd, Data: dataCopy}
+		msgCopy := &codec.Message{CmdType: msg.CmdType, Cmd: msg.Cmd, ExtCmd: msg.ExtCmd, GameCmd: msg.GameCmd, Data: dataCopy}
 
 		time.AfterFunc(time.Duration(delay)*time.Millisecond, func() {
 			sc.inner.Send(msgCopy)

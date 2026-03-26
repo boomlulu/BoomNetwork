@@ -368,7 +368,7 @@ func (r *Room) Start() {
 		SnapshotInterval:    r.config.SnapshotIntervalFrames,
 		QuickReconnectMaxMs: r.config.QuickReconnectMaxMs,
 	}
-	r.broadcast(CmdStartFrameSync, EncodeInitData(initData))
+	r.broadcast(codec.NewCoreMessage(CmdStartFrameSync, EncodeInitData(initData)))
 
 	go r.tickLoop()
 }
@@ -384,7 +384,7 @@ func (r *Room) Stop() {
 	close(r.stopCh)
 	r.mu.Unlock()
 
-	r.broadcast(CmdStopFrameSync, nil)
+	r.broadcast(codec.NewCoreMessage(CmdStopFrameSync, nil))
 }
 
 // OnInput 收到玩家输入
@@ -423,7 +423,7 @@ func (r *Room) tickLoop() {
 		case <-cleanupTicker.C:
 			removed := r.CleanupDisconnected()
 			for _, id := range removed {
-				r.broadcast(CmdPlayerLeft, EncodePlayerId(id))
+				r.broadcast(codec.NewExtMessage(ExtCmdPlayerLeft, EncodePlayerId(id)))
 				log.Printf("[Room %d] Player %d removed (disconnect timeout)\n", r.ID, id)
 			}
 		}
@@ -492,7 +492,7 @@ func (r *Room) stepFrame() {
 	r.mu.Unlock()
 
 	// 广播在锁外执行，不阻塞其他操作
-	msg := &codec.Message{Cmd: CmdPushFrames, Data: r.frameBuf[:size]}
+	msg := codec.NewCoreMessage(CmdPushFrames, r.frameBuf[:size])
 	for _, p := range r.broadcastSlice {
 		p.Conn.Send(msg)
 	}
@@ -515,7 +515,7 @@ func (r *Room) CleanupDisconnected() []int32 {
 }
 
 // broadcast 广播（用于非热路径：Start/Stop）
-func (r *Room) broadcast(cmd byte, data []byte) {
+func (r *Room) broadcast(msg *codec.Message) {
 	r.mu.Lock()
 	players := make([]*Player, 0, len(r.players))
 	for _, p := range r.players {
@@ -525,7 +525,6 @@ func (r *Room) broadcast(cmd byte, data []byte) {
 	}
 	r.mu.Unlock()
 
-	msg := &codec.Message{Cmd: cmd, Data: data}
 	for _, p := range players {
 		p.Conn.Send(msg)
 	}

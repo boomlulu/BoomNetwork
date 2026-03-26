@@ -96,35 +96,36 @@ func main() {
 	})
 
 	router := session.NewRouter()
-	// 帧同步
-	router.On(framesync.CmdSessionBind, txStats(handleSessionBind))
-	router.On(framesync.CmdRequestStart, txStats(handleRequestStart))
-	router.On(framesync.CmdStopFrameSync, txStats(handleRequestStop))
-	router.On(framesync.CmdFrameInput, txStats(handleFrameInput))
-	router.On(framesync.CmdHeartbeat, txStats(handleHeartbeat))
-	router.On(framesync.CmdReconnect, txStats(handleReconnect))
-	// 房间管理
-	router.On(framesync.CmdGetRooms, txStats(handleGetRooms))
-	router.On(framesync.CmdCreateRoom, txStats(handleCreateRoom))
-	router.On(framesync.CmdJoinRoom, txStats(handleJoinRoom))
-	router.On(framesync.CmdLeaveRoom, txStats(handleLeaveRoom))
-	router.On(framesync.CmdMatchRoom, txStats(handleMatchRoom))
-	// 快照
-	router.On(framesync.CmdUploadSnapshot, txStats(handleUploadSnapshot))
-	// 实体权威同步
-	router.On(framesync.CmdSendEntityState, txStats(handleSendEntityState))
-	router.On(framesync.CmdRequestAuthorityTransfer, txStats(handleRequestAuthorityTransfer))
+	// Core Cmd (0-15) — 高频
+	router.OnCore(framesync.CmdSessionBind, txStats(handleSessionBind))
+	router.OnCore(framesync.CmdRequestStart, txStats(handleRequestStart))
+	router.OnCore(framesync.CmdStopFrameSync, txStats(handleRequestStop))
+	router.OnCore(framesync.CmdFrameInput, txStats(handleFrameInput))
+	router.OnCore(framesync.CmdHeartbeat, txStats(handleHeartbeat))
+	router.OnCore(framesync.CmdReconnect, txStats(handleReconnect))
+	// Extended Cmd (uint16) — 房间/快照/实体
+	router.OnExt(framesync.ExtCmdGetRooms, txStats(handleGetRooms))
+	router.OnExt(framesync.ExtCmdCreateRoom, txStats(handleCreateRoom))
+	router.OnExt(framesync.ExtCmdJoinRoom, txStats(handleJoinRoom))
+	router.OnExt(framesync.ExtCmdLeaveRoom, txStats(handleLeaveRoom))
+	router.OnExt(framesync.ExtCmdMatchRoom, txStats(handleMatchRoom))
+	router.OnExt(framesync.ExtCmdUploadSnapshot, txStats(handleUploadSnapshot))
+	router.OnExt(framesync.ExtCmdSendEntityState, txStats(handleSendEntityState))
+	router.OnExt(framesync.ExtCmdAuthorityTransfer, txStats(handleRequestAuthorityTransfer))
+	// Game Cmd (uint32) — 服务器透传
+	router.OnGame(txStats(handleGameRelay))
 
 	// 在 router 外层包一层 RX 计数 + 消息日志 + netsim 响应延迟
 	baseDispatch := router.Dispatch
 	rxHandler := func(conn *transport.Conn, msg *codec.Message) {
 		GameStats.RecordRx(int64(len(msg.Data)))
 		// 关键 RX 消息的日志在 txStats 中带 detail 记录，这里跳过避免双记
-		switch msg.Cmd {
-		case framesync.CmdReconnect, framesync.CmdJoinRoom:
+		if msg.CmdType == codec.CmdTypeCore && msg.Cmd == framesync.CmdReconnect {
 			// txStats 已处理
-		default:
-			LogMsg("rx", msg.Cmd, connPid(conn), len(msg.Data))
+		} else if msg.CmdType == codec.CmdTypeExtended && msg.ExtCmd == framesync.ExtCmdJoinRoom {
+			// txStats 已处理
+		} else {
+			LogMsg("rx", msg.CmdType, msg.Cmd, msg.ExtCmd, msg.GameCmd, connPid(conn), len(msg.Data))
 		}
 
 		rsp := baseDispatch(conn, msg)
@@ -229,13 +230,13 @@ func onClientDisconnect(conn *transport.Conn) {
 	log.Printf("[Server] Player %d disconnected from room %d (kept for reconnect)\n", playerId, room.ID)
 
 	// 广播 PlayerOffline：通知其他客户端该玩家临时掉线（非永久离开）
-	broadcastToRoom(room, playerId, framesync.CmdPlayerOffline, framesync.EncodePlayerId(playerId))
+	broadcastToRoom(room, playerId, codec.NewExtMessage(framesync.ExtCmdPlayerOffline, framesync.EncodePlayerId(playerId)))
 
 	// 释放断线玩家持有的所有实体权威
 	releasedEntities := room.ReleaseAllAuthority(playerId)
 	for _, eid := range releasedEntities {
 		data := framesync.EncodeAuthorityTransferResult(eid, 0)
-		broadcastToRoom(room, -1, framesync.CmdAuthorityTransferResult, data)
+		broadcastToRoom(room, -1, codec.NewExtMessage(framesync.ExtCmdAuthorityTransfer, data))
 		log.Printf("[Server] Entity %d authority released (player %d disconnected)\n", eid, playerId)
 	}
 
@@ -272,7 +273,7 @@ func handleSessionBind(conn *transport.Conn, msg *codec.Message) *codec.Message 
 		if clientToken != *authToken {
 			log.Printf("[Server] Auth failed for conn %d (bad token)\n", conn.ID)
 			framesync.Metrics.AuthFailures.Inc()
-			return &codec.Message{Cmd: framesync.CmdSessionBindRsp, Data: []byte{0, 0, 0, 0}}
+			return codec.NewCoreMessage(framesync.CmdSessionBindRsp, []byte{0, 0, 0, 0})
 		}
 	}
 	framesync.Metrics.ConnectionsTotal.Inc()
@@ -297,7 +298,7 @@ func handleSessionBind(conn *transport.Conn, msg *codec.Message) *codec.Message 
 	rsp := make([]byte, 4)
 	binary.LittleEndian.PutUint32(rsp, uint32(playerId))
 
-	return &codec.Message{Cmd: framesync.CmdSessionBindRsp, Data: rsp}
+	return codec.NewCoreMessage(framesync.CmdSessionBindRsp, rsp)
 }
 
 func handleFrameInput(conn *transport.Conn, msg *codec.Message) *codec.Message {
@@ -318,13 +319,13 @@ func handleFrameInput(conn *transport.Conn, msg *codec.Message) *codec.Message {
 }
 
 func handleHeartbeat(conn *transport.Conn, msg *codec.Message) *codec.Message {
-	return &codec.Message{Cmd: framesync.CmdHeartbeatRsp}
+	return codec.NewCoreMessage(framesync.CmdHeartbeatRsp, nil)
 }
 
 func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	if len(msg.Data) < 4 {
 		rsp := framesync.EncodeReconnectRsp(framesync.ReconnectFail, 0, 0, 0, nil)
-		return &codec.Message{Cmd: framesync.CmdReconnectRsp, Data: rsp}
+		return codec.NewCoreMessage(framesync.CmdReconnectRsp, rsp)
 	}
 
 	playerId := int32(binary.LittleEndian.Uint32(msg.Data[0:4]))
@@ -337,7 +338,7 @@ func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	if !ok {
 		log.Printf("[Server] Reconnect failed: player %d not found in any room\n", playerId)
 		rsp := framesync.EncodeReconnectRsp(framesync.ReconnectFail, 0, 0, 0, nil)
-		return &codec.Message{Cmd: framesync.CmdReconnectRsp, Data: rsp}
+		return codec.NewCoreMessage(framesync.CmdReconnectRsp, rsp)
 	}
 	room := roomVal.(*framesync.Room)
 
@@ -346,7 +347,7 @@ func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
 		log.Printf("[Server] Reconnect failed: player %d room %d already cleaned up\n", playerId, room.ID)
 		playerRoomMap.Delete(playerId)
 		rsp := framesync.EncodeReconnectRsp(framesync.ReconnectFail, 0, 0, 0, nil)
-		return &codec.Message{Cmd: framesync.CmdReconnectRsp, Data: rsp}
+		return codec.NewCoreMessage(framesync.CmdReconnectRsp, rsp)
 	}
 
 	currentFrame := room.CurrentFrameNumber()
@@ -360,7 +361,7 @@ func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
 			log.Printf("[Server] Reconnect buffer stale: player %d lastFrame=%d < oldest=%d\n",
 				playerId, lastFrame, oldestFrame)
 			rsp := framesync.EncodeReconnectRsp(framesync.ReconnectFailBufferStale, room.ID, currentFrame, 0, nil)
-			return &codec.Message{Cmd: framesync.CmdReconnectRsp, Data: rsp}
+			return codec.NewCoreMessage(framesync.CmdReconnectRsp, rsp)
 		}
 	}
 
@@ -388,14 +389,14 @@ func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	rsp := framesync.EncodeReconnectRsp(framesync.ReconnectSuccess, room.ID, currentFrame, snapshotFrame, snapshotData)
 
 	// 通知同房其他玩家：恢复在线（非新加入）
-	broadcastToRoom(room, playerId, framesync.CmdPlayerOnline, framesync.EncodePlayerId(playerId))
+	broadcastToRoom(room, playerId, codec.NewExtMessage(framesync.ExtCmdPlayerOnline, framesync.EncodePlayerId(playerId)))
 
 	// 异步补帧
 	if replayFrom > 0 && replayFrom < currentFrame {
 		go func() {
 			frames := room.GetFramesSince(replayFrom)
 			for _, cf := range frames {
-				sendMsg(conn, &codec.Message{Cmd: framesync.CmdPushFrames, Data: cf.EncodedData})
+				sendMsg(conn, codec.NewCoreMessage(framesync.CmdPushFrames, cf.EncodedData))
 			}
 			log.Printf("[Server] Player %d replayed %d frames (%d→%d)\n", playerId, len(frames), replayFrom+1, currentFrame)
 		}()
@@ -403,14 +404,14 @@ func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
 
 	log.Printf("[Server] Player %d reconnected (room %d, serverFrame=%d, snapshot=%d)\n",
 		playerId, room.ID, currentFrame, snapshotFrame)
-	return &codec.Message{Cmd: framesync.CmdReconnectRsp, Data: rsp}
+	return codec.NewCoreMessage(framesync.CmdReconnectRsp, rsp)
 }
 
 // ===================== 房间管理 Handler =====================
 
 func handleGetRooms(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	infos := roomMgr.GetAllRoomInfos()
-	return &codec.Message{Cmd: framesync.CmdGetRoomsRsp, Data: framesync.EncodeRoomList(infos)}
+	return codec.NewExtMessage(framesync.ExtCmdGetRoomsRsp, framesync.EncodeRoomList(infos))
 }
 
 func handleCreateRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
@@ -430,24 +431,24 @@ func handleCreateRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	binary.LittleEndian.PutUint32(rsp, uint32(room.ID))
 
 	log.Printf("[Server] Room %d created (max=%d)\n", room.ID, maxPlayers)
-	return &codec.Message{Cmd: framesync.CmdCreateRoomRsp, Data: rsp}
+	return codec.NewExtMessage(framesync.ExtCmdCreateRoomRsp, rsp)
 }
 
 func handleJoinRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	if len(msg.Data) < 4 {
-		return &codec.Message{Cmd: framesync.CmdJoinRoomRsp, Data: make([]byte, 8)}
+		return codec.NewExtMessage(framesync.ExtCmdJoinRoomRsp, make([]byte, 8))
 	}
 
 	roomId := int32(binary.LittleEndian.Uint32(msg.Data[0:4]))
 	room := roomMgr.GetRoom(roomId)
 	if room == nil {
 		log.Printf("[Server] JoinRoom failed: room %d not found\n", roomId)
-		return &codec.Message{Cmd: framesync.CmdJoinRoomRsp, Data: make([]byte, 8)}
+		return codec.NewExtMessage(framesync.ExtCmdJoinRoomRsp, make([]byte, 8))
 	}
 
 	if room.PlayerCount() >= room.MaxPlayers() {
 		log.Printf("[Server] JoinRoom failed: room %d full\n", roomId)
-		return &codec.Message{Cmd: framesync.CmdJoinRoomRsp, Data: make([]byte, 8)}
+		return codec.NewExtMessage(framesync.ExtCmdJoinRoomRsp, make([]byte, 8))
 	}
 
 	// 先取已有玩家列表（新人加入前）
@@ -457,7 +458,7 @@ func handleJoinRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	val, ok := connPlayerMap.Load(conn.ID)
 	if !ok {
 		log.Printf("[Server] JoinRoom failed: conn %d not bound (SessionBind missing)\n", conn.ID)
-		return &codec.Message{Cmd: framesync.CmdJoinRoomRsp, Data: make([]byte, 8)}
+		return codec.NewExtMessage(framesync.ExtCmdJoinRoomRsp, make([]byte, 8))
 	}
 	playerId := val.(int32)
 	bindPlayerToRoom(playerId, conn, room)
@@ -466,7 +467,7 @@ func handleJoinRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 		playerId, room.ID, room.PlayerCount(), room.MaxPlayers(), existingPlayers)
 
 	// 通知同房其他玩家
-	broadcastToRoom(room, playerId, framesync.CmdPlayerJoined, framesync.EncodePlayerId(playerId))
+	broadcastToRoom(room, playerId, codec.NewExtMessage(framesync.ExtCmdPlayerJoined, framesync.EncodePlayerId(playerId)))
 
 	// 如果房间已在运行，给迟到者：快照 → StartFrameSync → 补帧
 	if room.IsRunning() {
@@ -480,7 +481,7 @@ func handleJoinRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 			var replayFrom uint32
 			if snapshotData != nil && len(snapshotData) > 0 {
 				snapshotMsg := framesync.EncodeSnapshot(snapshotFrame, snapshotData)
-				sendMsg(conn, &codec.Message{Cmd: framesync.CmdRoomSnapshot, Data: snapshotMsg})
+				sendMsg(conn, codec.NewExtMessage(framesync.ExtCmdRoomSnapshot, snapshotMsg))
 				replayFrom = snapshotFrame
 				log.Printf("[Server] Sent room snapshot to late-join player %d (frame %d, %d bytes)\n",
 					playerId, snapshotFrame, len(snapshotData))
@@ -502,16 +503,13 @@ func handleJoinRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 				SnapshotInterval:    int32(cfg.SnapshotIntervalFrames),
 				QuickReconnectMaxMs: int32(cfg.QuickReconnectMaxMs),
 			}
-			sendMsg(conn, &codec.Message{
-				Cmd:  framesync.CmdStartFrameSync,
-				Data: framesync.EncodeInitData(&initData),
-			})
+			sendMsg(conn, codec.NewCoreMessage(framesync.CmdStartFrameSync, framesync.EncodeInitData(&initData)))
 
 			// 3. 补帧
 			if replayFrom > 0 && replayFrom < currentFrame {
 				frames := room.GetFramesSince(replayFrom)
 				for _, cf := range frames {
-					sendMsg(conn, &codec.Message{Cmd: framesync.CmdPushFrames, Data: cf.EncodedData})
+					sendMsg(conn, codec.NewCoreMessage(framesync.CmdPushFrames, cf.EncodedData))
 				}
 				log.Printf("[Server] Late-join player %d: replayed %d frames (%d→%d)\n",
 					playerId, len(frames), replayFrom+1, currentFrame)
@@ -522,19 +520,19 @@ func handleJoinRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 		}()
 	}
 
-	return &codec.Message{Cmd: framesync.CmdJoinRoomRsp, Data: framesync.EncodeJoinRoomRsp(playerId, room.ID, existingPlayers)}
+	return codec.NewExtMessage(framesync.ExtCmdJoinRoomRsp, framesync.EncodeJoinRoomRsp(playerId, room.ID, existingPlayers))
 }
 
 func handleLeaveRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	val, ok := connPlayerMap.Load(conn.ID)
 	if !ok {
-		return &codec.Message{Cmd: framesync.CmdLeaveRoomRsp}
+		return codec.NewExtMessage(framesync.ExtCmdLeaveRoomRsp, nil)
 	}
 	playerId := val.(int32)
 
 	roomVal, ok := playerRoomMap.LoadAndDelete(playerId)
 	if !ok {
-		return &codec.Message{Cmd: framesync.CmdLeaveRoomRsp}
+		return codec.NewExtMessage(framesync.ExtCmdLeaveRoomRsp, nil)
 	}
 	room := roomVal.(*framesync.Room)
 	room.RemovePlayer(playerId)
@@ -544,7 +542,7 @@ func handleLeaveRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 
 	log.Printf("[Server] Player %d left room %d\n", playerId, room.ID)
 
-	broadcastToRoom(room, playerId, framesync.CmdPlayerLeft, framesync.EncodePlayerId(playerId))
+	broadcastToRoom(room, playerId, codec.NewExtMessage(framesync.ExtCmdPlayerLeft, framesync.EncodePlayerId(playerId)))
 
 	// 空房间立即清理
 	if room.TotalPlayerCount() == 0 {
@@ -553,7 +551,7 @@ func handleLeaveRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 		log.Printf("[Server] Room %d removed (empty after leave)\n", room.ID)
 	}
 
-	return &codec.Message{Cmd: framesync.CmdLeaveRoomRsp}
+	return codec.NewExtMessage(framesync.ExtCmdLeaveRoomRsp, nil)
 }
 
 func handleMatchRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
@@ -571,7 +569,7 @@ func handleMatchRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	val, ok := connPlayerMap.Load(conn.ID)
 	if !ok {
 		log.Printf("[Server] MatchRoom failed: conn %d not bound\n", conn.ID)
-		return &codec.Message{Cmd: framesync.CmdMatchRoomRsp, Data: make([]byte, 8)}
+		return codec.NewExtMessage(framesync.ExtCmdMatchRoomRsp, make([]byte, 8))
 	}
 	playerId := val.(int32)
 
@@ -582,7 +580,7 @@ func handleMatchRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	log.Printf("[Server] Player %d matched to room %d (online=%d/%d)\n",
 		playerId, room.ID, room.PlayerCount(), room.MaxPlayers())
 
-	broadcastToRoom(room, playerId, framesync.CmdPlayerJoined, framesync.EncodePlayerId(playerId))
+	broadcastToRoom(room, playerId, codec.NewExtMessage(framesync.ExtCmdPlayerJoined, framesync.EncodePlayerId(playerId)))
 
 	// 迟到加入（房间已在运行）
 	if room.IsRunning() {
@@ -595,7 +593,7 @@ func handleMatchRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 			var replayFrom uint32
 			if snapshotData != nil && len(snapshotData) > 0 {
 				snapshotMsg := framesync.EncodeSnapshot(snapshotFrame, snapshotData)
-				sendMsg(conn, &codec.Message{Cmd: framesync.CmdRoomSnapshot, Data: snapshotMsg})
+				sendMsg(conn, codec.NewExtMessage(framesync.ExtCmdRoomSnapshot, snapshotMsg))
 				replayFrom = snapshotFrame
 			} else {
 				oldestFrame := room.OldestBufferedFrame()
@@ -611,21 +609,18 @@ func handleMatchRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 				SnapshotInterval:    int32(cfg.SnapshotIntervalFrames),
 				QuickReconnectMaxMs: int32(cfg.QuickReconnectMaxMs),
 			}
-			sendMsg(conn, &codec.Message{
-				Cmd:  framesync.CmdStartFrameSync,
-				Data: framesync.EncodeInitData(&initData),
-			})
+			sendMsg(conn, codec.NewCoreMessage(framesync.CmdStartFrameSync, framesync.EncodeInitData(&initData)))
 
 			if replayFrom > 0 && replayFrom < currentFrame {
 				frames := room.GetFramesSince(replayFrom)
 				for _, cf := range frames {
-					sendMsg(conn, &codec.Message{Cmd: framesync.CmdPushFrames, Data: cf.EncodedData})
+					sendMsg(conn, codec.NewCoreMessage(framesync.CmdPushFrames, cf.EncodedData))
 				}
 			}
 		}()
 	}
 
-	return &codec.Message{Cmd: framesync.CmdMatchRoomRsp, Data: framesync.EncodeJoinRoomRsp(playerId, room.ID, existingPlayers)}
+	return codec.NewExtMessage(framesync.ExtCmdMatchRoomRsp, framesync.EncodeJoinRoomRsp(playerId, room.ID, existingPlayers))
 }
 
 // ===================== 工具函数 =====================
@@ -697,12 +692,11 @@ func handleRequestStop(conn *transport.Conn, msg *codec.Message) *codec.Message 
 // sendMsg 发送消息并记录游戏 TX 流量 + 消息日志
 func sendMsg(conn *transport.Conn, msg *codec.Message) {
 	GameStats.RecordTx(int64(len(msg.Data)))
-	LogMsg("tx", msg.Cmd, connPid(conn), len(msg.Data))
+	logMsgFromMsg("tx", msg, connPid(conn), "")
 	conn.Send(msg)
 }
 
-func broadcastToRoom(room *framesync.Room, excludePlayerId int32, cmd byte, data []byte) {
-	msg := &codec.Message{Cmd: cmd, Data: data}
+func broadcastToRoom(room *framesync.Room, excludePlayerId int32, msg *codec.Message) {
 	room.ForEachOnlinePlayer(func(id int32, conn framesync.PlayerConn) {
 		if id != excludePlayerId {
 			conn.Send(msg) // TX 由 statsConn 自动计入
@@ -715,26 +709,26 @@ func broadcastToRoom(room *framesync.Room, excludePlayerId int32, cmd byte, data
 func handleUploadSnapshot(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	val, ok := connPlayerMap.Load(conn.ID)
 	if !ok {
-		return &codec.Message{Cmd: framesync.CmdUploadSnapshotRsp, Data: []byte{0}}
+		return codec.NewExtMessage(framesync.ExtCmdUploadSnapshotRsp, []byte{0})
 	}
 	playerId := val.(int32)
 
 	roomVal, ok := playerRoomMap.Load(playerId)
 	if !ok {
-		return &codec.Message{Cmd: framesync.CmdUploadSnapshotRsp, Data: []byte{0}}
+		return codec.NewExtMessage(framesync.ExtCmdUploadSnapshotRsp, []byte{0})
 	}
 	room := roomVal.(*framesync.Room)
 
 	frameNumber, snapshotData := framesync.DecodeUploadSnapshot(msg.Data)
 	if snapshotData == nil {
-		return &codec.Message{Cmd: framesync.CmdUploadSnapshotRsp, Data: []byte{0}}
+		return codec.NewExtMessage(framesync.ExtCmdUploadSnapshotRsp, []byte{0})
 	}
 
 	accepted := room.UpdateSnapshot(frameNumber, snapshotData)
 	if accepted {
-		return &codec.Message{Cmd: framesync.CmdUploadSnapshotRsp, Data: []byte{1}}
+		return codec.NewExtMessage(framesync.ExtCmdUploadSnapshotRsp, []byte{1})
 	}
-	return &codec.Message{Cmd: framesync.CmdUploadSnapshotRsp, Data: []byte{0}}
+	return codec.NewExtMessage(framesync.ExtCmdUploadSnapshotRsp, []byte{0})
 }
 
 // handleSendEntityState 实体权威同步：透传给同房其他玩家（prepend senderPid）
@@ -775,7 +769,7 @@ func handleRequestAuthorityTransfer(conn *transport.Conn, msg *codec.Message) *c
 
 	if changed {
 		data := framesync.EncodeAuthorityTransferResult(entityId, newOwner)
-		broadcastToRoom(room, -1, framesync.CmdAuthorityTransferResult, data)
+		broadcastToRoom(room, -1, codec.NewExtMessage(framesync.ExtCmdAuthorityTransfer, data))
 		log.Printf("[Server] Entity %d authority → player %d\n", entityId, newOwner)
 	}
 	return nil
@@ -799,11 +793,35 @@ func handleSendEntityState(conn *transport.Conn, msg *codec.Message) *codec.Mess
 	binary.LittleEndian.PutUint32(push[0:4], uint32(playerId))
 	copy(push[4:], msg.Data)
 
-	pushMsg := &codec.Message{Cmd: framesync.CmdPushEntityState, Data: push}
+	pushMsg := codec.NewExtMessage(framesync.ExtCmdPushEntityState, push)
 	room.ForEachOnlinePlayer(func(id int32, c framesync.PlayerConn) {
 		if id != playerId {
 			c.Send(pushMsg)
 		}
 	})
+	return nil
+}
+
+func handleGameRelay(conn *transport.Conn, msg *codec.Message) *codec.Message {
+	val, ok := connPlayerMap.Load(conn.ID)
+	if !ok {
+		return nil
+	}
+	playerId := val.(int32)
+
+	roomVal, ok := playerRoomMap.Load(playerId)
+	if !ok {
+		return nil
+	}
+	room := roomVal.(*framesync.Room)
+
+	// 转发游戏消息：在 Data 前插入 senderPid(4B)
+	relayData := make([]byte, 4+len(msg.Data))
+	binary.LittleEndian.PutUint32(relayData[0:4], uint32(playerId))
+	if len(msg.Data) > 0 {
+		copy(relayData[4:], msg.Data)
+	}
+	relay := codec.NewGameMessage(msg.GameCmd, relayData)
+	broadcastToRoom(room, playerId, relay)
 	return nil
 }

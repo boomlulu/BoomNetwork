@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/boom/boomnetwork/codec"
 	"github.com/boom/boomnetwork/framesync"
 	"github.com/boom/boomnetwork/transport"
 	"github.com/gorilla/websocket"
@@ -400,7 +401,7 @@ func (c *GMConn) rpcKick(env *GMEnvelope) {
 	if connVal, ok := playerConnMap.LoadAndDelete(p.Pid); ok {
 		connVal.(*transport.Conn).Close()
 	}
-	broadcastToRoom(room, p.Pid, framesync.CmdPlayerLeft, framesync.EncodePlayerId(p.Pid))
+	broadcastToRoom(room, p.Pid, codec.NewExtMessage(framesync.ExtCmdPlayerLeft, framesync.EncodePlayerId(p.Pid)))
 
 	log.Printf("[GM-WS] Kicked player %d from room %d\n", p.Pid, room.ID)
 	c.sendRsp(env.ID, "kick", KickResult{Ok: true, Kicked: p.Pid, Room: room.ID})
