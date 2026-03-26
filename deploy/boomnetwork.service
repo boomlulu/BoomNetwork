@@ -1,0 +1,15 @@
+[Unit]
+Description=BoomNetwork Framesync Server
+After=network.target
+
+[Service]
+Type=notify
+ExecStart=/opt/boomnetwork/framesync -config /etc/boomnetwork/config.yaml
+Restart=on-failure
+RestartSec=5s
+StandardOutput=append:/var/log/boomnetwork/server.log
+StandardError=append:/var/log/boomnetwork/server.log
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

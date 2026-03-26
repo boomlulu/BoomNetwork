@@ -137,8 +137,8 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	uptime := time.Since(serverStartTime).Truncate(time.Second).String()
 
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"status":"ok","rooms":%d,"players":%d,"uptime":%q}`,
-		rooms, players, uptime)
+	fmt.Fprintf(w, `{"status":"ok","rooms":%d,"players":%d,"uptime":%q,"buildHash":%q,"buildTime":%q,"goVersion":%q}`,
+		rooms, players, uptime, BuildHash, BuildTime, runtime.Version())
 }
 
 // ===================== GET /stats =====================

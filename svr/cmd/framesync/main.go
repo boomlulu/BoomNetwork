@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"flag"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -218,6 +219,9 @@ func main() {
 		}
 	}()
 
+	// S22: notify systemd that the server is ready
+	sdNotifyReady()
+
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	for s := range sig {
@@ -275,6 +279,23 @@ func reloadConfig() {
 	codec.MaxMessageSize = newCfg.MaxMessageSize
 
 	slog.Info("config reloaded", "path", *configFile)
+}
+
+// sdNotifyReady sends READY=1 to systemd when running under Type=notify.
+// It is a no-op when NOTIFY_SOCKET is not set (dev / Docker / bare process).
+func sdNotifyReady() {
+	addr := os.Getenv("NOTIFY_SOCKET")
+	if addr == "" {
+		return
+	}
+	conn, err := net.Dial("unixgram", addr)
+	if err != nil {
+		slog.Warn("sd_notify dial failed", "error", err)
+		return
+	}
+	defer conn.Close()
+	conn.Write([]byte("READY=1"))
+	slog.Info("sd_notify: READY=1 sent")
 }
 
 func nextPlayerId() int32 {
