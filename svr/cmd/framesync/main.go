@@ -211,10 +211,34 @@ func main() {
 		break // SIGINT or SIGTERM → shutdown
 	}
 
-	slog.Info("framesync server shutting down")
-	cancel() // 通知 admin server + WS hub 优雅关闭
+	slog.Info("framesync server shutting down...")
+
+	// 1. Broadcast ServerShutdown to all connected clients
+	playerConnMap.Range(func(key, val any) bool {
+		if conn, ok := val.(*transport.Conn); ok {
+			conn.Send(codec.NewCoreMessage(framesync.CmdServerShutdown, nil))
+		}
+		return true
+	})
+
+	// 2. Cancel admin server + WS hub
+	cancel()
+
+	// 3. Stop all rooms (broadcasts StopFrameSync)
 	roomMgr.StopAll()
+
+	// 4. Close server (closes listener + all connections)
 	server.Close()
+
+	// 5. Wait for connection goroutines to drain (30s timeout)
+	done := make(chan struct{})
+	go func() { server.Wait(); close(done) }()
+	select {
+	case <-done:
+		slog.Info("shutdown complete")
+	case <-time.After(30 * time.Second):
+		slog.Warn("shutdown timed out after 30s, forcing exit")
+	}
 }
 
 func reloadConfig() {
@@ -826,6 +850,7 @@ func handleUploadSnapshot(conn *transport.Conn, msg *codec.Message) *codec.Messa
 
 	accepted := room.UpdateSnapshot(frameNumber, snapshotData)
 	if accepted {
+		framesync.Metrics.SnapshotSizeBytes.Set(float64(len(snapshotData)))
 		return codec.NewExtMessage(framesync.ExtCmdUploadSnapshotRsp, []byte{1})
 	}
 	return codec.NewExtMessage(framesync.ExtCmdUploadSnapshotRsp, []byte{0})

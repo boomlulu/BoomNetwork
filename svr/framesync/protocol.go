@@ -23,8 +23,9 @@ const (
 	CmdPushFrames     byte = 7
 	CmdHeartbeat      byte = 8
 	CmdHeartbeatRsp   byte = 9
-	CmdReconnect      byte = 10
-	CmdReconnectRsp   byte = 11
+	CmdReconnect        byte = 10
+	CmdReconnectRsp     byte = 11
+	CmdServerShutdown   byte = 12 // 服务器 → 客户端：服务器即将关闭
 )
 
 // --- Extended Cmd (uint16) ---

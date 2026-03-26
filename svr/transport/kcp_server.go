@@ -22,6 +22,7 @@ type KcpServer struct {
 	conns         map[int]*Conn
 	onDisconnect  func(*Conn)
 	onRateLimited func()
+	wg            sync.WaitGroup
 }
 
 // SetOnDisconnect 设置断开连接回调
@@ -86,6 +87,11 @@ func (s *KcpServer) ConnCount() int {
 	return len(s.conns)
 }
 
+// Wait 等待所有连接 goroutine 退出（配合 Close 使用实现优雅关闭）
+func (s *KcpServer) Wait() {
+	s.wg.Wait()
+}
+
 func (s *KcpServer) acceptLoop() {
 	for {
 		raw, err := s.listener.AcceptKCP()
@@ -112,12 +118,14 @@ func (s *KcpServer) acceptLoop() {
 		s.mu.Unlock()
 
 		slog.Info("client connected", "component", "kcp", "connId", c.ID, "addr", raw.RemoteAddr())
+		s.wg.Add(1)
 		go s.handleConn(c)
 	}
 }
 
 func (s *KcpServer) handleConn(c *Conn) {
 	defer func() {
+		s.wg.Done()
 		s.mu.Lock()
 		delete(s.conns, c.ID)
 		s.mu.Unlock()
@@ -130,6 +138,9 @@ func (s *KcpServer) handleConn(c *Conn) {
 
 	reader := codec.NewFrameReader(c.conn)
 
+	// Connection health: ReadDeadline (60s default) kills silent connections.
+	// KCP is UDP-based so there's no OS-level KeepAlive, but the read deadline
+	// serves the same purpose. Clients must send periodic heartbeats.
 	for {
 		if s.config.ReadTimeout > 0 {
 			c.conn.SetReadDeadline(time.Now().Add(s.config.ReadTimeout))
@@ -160,6 +171,7 @@ func (s *KcpServer) handleConn(c *Conn) {
 type Server interface {
 	Listen(addr string) error
 	Close()
+	Wait()
 	ConnCount() int
 	SetOnDisconnect(fn func(*Conn))
 	SetOnRateLimited(fn func())

@@ -67,6 +67,7 @@ type TcpServer struct {
 	conns        map[int]*Conn
 	onDisconnect func(*Conn)
 	onRateLimited func() // 触发限流时回调（用于指标统计）
+	wg           sync.WaitGroup
 }
 
 // SetOnRateLimited 设置限流回调
@@ -131,6 +132,11 @@ func (s *TcpServer) ConnCount() int {
 	return len(s.conns)
 }
 
+// Wait 等待所有连接 goroutine 退出（配合 Close 使用实现优雅关闭）
+func (s *TcpServer) Wait() {
+	s.wg.Wait()
+}
+
 func (s *TcpServer) acceptLoop() {
 	for {
 		raw, err := s.listener.Accept()
@@ -157,12 +163,14 @@ func (s *TcpServer) acceptLoop() {
 		s.mu.Unlock()
 
 		slog.Info("client connected", "component", "tcp", "connId", c.ID, "addr", raw.RemoteAddr())
+		s.wg.Add(1)
 		go s.handleConn(c)
 	}
 }
 
 func (s *TcpServer) handleConn(c *Conn) {
 	defer func() {
+		s.wg.Done()
 		s.mu.Lock()
 		delete(s.conns, c.ID)
 		s.mu.Unlock()
@@ -178,6 +186,10 @@ func (s *TcpServer) handleConn(c *Conn) {
 		reader.SetMaxMessageSize(s.security.MaxMessageSize)
 	}
 
+	// Connection health: ReadDeadline (60s default) kills silent connections.
+	// Combined with TCP KeepAlive (30s), this detects dead peers without
+	// a separate heartbeat goroutine. The client sends periodic heartbeats
+	// to reset the deadline.
 	for {
 		// 设置读超时
 		if s.config.ReadTimeout > 0 {
