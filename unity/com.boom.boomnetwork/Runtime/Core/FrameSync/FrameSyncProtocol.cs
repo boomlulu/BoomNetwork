@@ -264,6 +264,22 @@ namespace BoomNetwork.Core.FrameSync
             return buf;
         }
 
+        // === MatchRoom ===
+        // Wire: [MaxPlayers:2][MatchKeyLen:2][MatchKey:N]
+
+        public static byte[] EncodeMatchRoom(int maxPlayers, string? matchKey = null)
+        {
+            var keyBytes = string.IsNullOrEmpty(matchKey)
+                ? Array.Empty<byte>()
+                : System.Text.Encoding.UTF8.GetBytes(matchKey);
+            var buf = new byte[2 + 2 + keyBytes.Length];
+            BinaryPrimitives.WriteUInt16LittleEndian(buf, (ushort)maxPlayers);
+            BinaryPrimitives.WriteUInt16LittleEndian(buf.AsSpan(2), (ushort)keyBytes.Length);
+            if (keyBytes.Length > 0)
+                keyBytes.CopyTo(buf.AsSpan(4));
+            return buf;
+        }
+
         // === CreateRoomRsp ===
         // Wire: [RoomId:4]
 

@@ -262,11 +262,12 @@ namespace BoomNetwork.Client.FrameSync
         /// <summary>
         /// 匹配房间：有空位就加入，否则创建新房间（一步完成）
         /// </summary>
-        public void MatchRoom(int maxPlayers)
+        /// <param name="matchKey">匹配 key，相同 key 才能匹配到一起（避免不同 demo 串房）</param>
+        public void MatchRoom(int maxPlayers, string? matchKey = null)
         {
             if (CurrentState != State.Connected) return;
 
-            _roomClient?.MatchRoom(maxPlayers, (pid, rid, existingPlayers) =>
+            _roomClient?.MatchRoom(maxPlayers, matchKey, (pid, rid, existingPlayers) =>
             {
                 PlayerId = pid;
                 RoomId = rid;

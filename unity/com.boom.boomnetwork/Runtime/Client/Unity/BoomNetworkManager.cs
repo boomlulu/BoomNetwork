@@ -28,6 +28,8 @@ namespace BoomNetwork.Unity
         [Header("Room")]
         [SerializeField] private int maxPlayers = 4;
         [SerializeField] private bool autoStart = true;
+        [Tooltip("匹配 key，相同 key 才能匹配到一起（避免不同 demo 串房）")]
+        [SerializeField] private string matchKey = "";
 
         [Header("Debug")]
         [SerializeField] private bool logEnabled = true;
@@ -116,7 +118,7 @@ namespace BoomNetwork.Unity
             if (!_quickStartWired)
             {
                 _quickStartWired = true;
-                Client.OnConnected += () => Client.MatchRoom(maxPlayers);
+                Client.OnConnected += () => Client.MatchRoom(maxPlayers, string.IsNullOrEmpty(matchKey) ? null : matchKey);
                 Client.OnReady += () => { if (autoStart) Client.RequestStart(); };
             }
 

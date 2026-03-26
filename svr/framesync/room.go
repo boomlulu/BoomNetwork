@@ -59,9 +59,10 @@ func DefaultRoomConfig() RoomConfig {
 
 // Room 帧同步房间
 type Room struct {
-	ID     int32
-	mu     sync.Mutex
-	config RoomConfig
+	ID       int32
+	MatchKey string // 匹配 key，相同 key 才能匹配到一起
+	mu       sync.Mutex
+	config   RoomConfig
 
 	players map[int32]*Player
 

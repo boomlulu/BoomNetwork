@@ -103,10 +103,11 @@ namespace BoomNetwork.Client.Room
         /// <summary>
         /// 匹配房间（有空位加入，否则创建新房间）
         /// </summary>
+        /// <param name="matchKey">匹配 key，相同 key 才能匹配到一起（避免不同 demo 串房）</param>
         /// <param name="onJoined">回调: (playerId, roomId, existingPlayerIds)</param>
-        public void MatchRoom(int maxPlayers, Action<int, int, int[]>? onJoined = null)
+        public void MatchRoom(int maxPlayers, string? matchKey = null, Action<int, int, int[]>? onJoined = null)
         {
-            var data = RoomCodec.EncodeCreateRoom(maxPlayers); // 同格式: [maxPlayers:2]
+            var data = RoomCodec.EncodeMatchRoom(maxPlayers, matchKey);
             _session.SendExtAsync(FrameSyncExtCmd.MatchRoom, data, 5000,
                 onResponse: msg =>
                 {

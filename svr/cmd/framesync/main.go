@@ -566,6 +566,15 @@ func handleMatchRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 		maxPlayers = 100
 	}
 
+	// 解析 matchKey: [maxPlayers:2][matchKeyLen:2][matchKey:N]
+	var matchKey string
+	if len(msg.Data) >= 4 {
+		keyLen := int(binary.LittleEndian.Uint16(msg.Data[2:4]))
+		if keyLen > 0 && len(msg.Data) >= 4+keyLen {
+			matchKey = string(msg.Data[4 : 4+keyLen])
+		}
+	}
+
 	val, ok := connPlayerMap.Load(conn.ID)
 	if !ok {
 		log.Printf("[Server] MatchRoom failed: conn %d not bound\n", conn.ID)
@@ -573,12 +582,12 @@ func handleMatchRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	}
 	playerId := val.(int32)
 
-	room := roomMgr.MatchRoom(maxPlayers)
+	room := roomMgr.MatchRoom(maxPlayers, matchKey)
 	existingPlayers := room.GetPlayerIds()
 	bindPlayerToRoom(playerId, conn, room)
 
-	log.Printf("[Server] Player %d matched to room %d (online=%d/%d)\n",
-		playerId, room.ID, room.PlayerCount(), room.MaxPlayers())
+	log.Printf("[Server] Player %d matched to room %d (online=%d/%d, key=%q)\n",
+		playerId, room.ID, room.PlayerCount(), room.MaxPlayers(), matchKey)
 
 	broadcastToRoom(room, playerId, codec.NewExtMessage(framesync.ExtCmdPlayerJoined, framesync.EncodePlayerId(playerId)))
 

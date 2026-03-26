@@ -138,13 +138,13 @@ func (rm *RoomManager) StopAll() {
 	log.Printf("[RoomManager] All %d rooms stopped\n", len(rooms))
 }
 
-// MatchRoom 匹配房间：找一个未满且 maxPlayers 匹配的房间，找不到就创建（原子操作）
-func (rm *RoomManager) MatchRoom(maxPlayers int) *Room {
+// MatchRoom 匹配房间：找一个未满且 maxPlayers + matchKey 都匹配的房间，找不到就创建（原子操作）
+func (rm *RoomManager) MatchRoom(maxPlayers int, matchKey string) *Room {
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
 
 	for _, r := range rm.rooms {
-		if r.MaxPlayers() == maxPlayers && r.TotalPlayerCount() < maxPlayers {
+		if r.MatchKey == matchKey && r.MaxPlayers() == maxPlayers && r.TotalPlayerCount() < maxPlayers {
 			return r
 		}
 	}
@@ -155,8 +155,9 @@ func (rm *RoomManager) MatchRoom(maxPlayers int) *Room {
 	id := atomic.AddInt32(&rm.nextID, 1)
 	room := NewRoomWithConfig(cfg)
 	room.ID = id
+	room.MatchKey = matchKey
 	rm.rooms[id] = room
-	log.Printf("[RoomManager] Room %d created by match (max=%d)\n", id, maxPlayers)
+	log.Printf("[RoomManager] Room %d created by match (max=%d, key=%q)\n", id, maxPlayers, matchKey)
 	return room
 }
 
