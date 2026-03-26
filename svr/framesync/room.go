@@ -90,6 +90,9 @@ type Room struct {
 	// 快照新鲜度监控: 连续 3 个快照间隔未收到快照 → 暂停帧同步
 	snapshotStaleFrames uint32 // 自上次快照以来经过的帧数
 	snapshotPaused      bool   // 是否因快照过期而暂停
+
+	// 实体权威表: entityId → ownerPlayerId (0 = unclaimed)
+	entityAuthority map[int32]int32
 }
 
 // NewRoom 创建帧同步房间
@@ -104,13 +107,14 @@ func NewRoom(frameRate int32) *Room {
 // NewRoomWithConfig 用配置创建房间
 func NewRoomWithConfig(config RoomConfig) *Room {
 	return &Room{
-		players:        make(map[int32]*Player),
-		config:         config,
-		frameRate:      config.FrameRate,
-		frameInterval:  time.Duration(1000/config.FrameRate) * time.Millisecond,
-		frameRing:      make([]CachedFrame, config.FrameBufferSize),
-		frameBuf:       make([]byte, 4096),
-		broadcastSlice: make([]*Player, 0, 16),
+		players:         make(map[int32]*Player),
+		config:          config,
+		frameRate:       config.FrameRate,
+		frameInterval:   time.Duration(1000/config.FrameRate) * time.Millisecond,
+		frameRing:       make([]CachedFrame, config.FrameBufferSize),
+		frameBuf:        make([]byte, 4096),
+		broadcastSlice:  make([]*Player, 0, 16),
+		entityAuthority: make(map[int32]int32),
 	}
 }
 
@@ -525,4 +529,44 @@ func (r *Room) broadcast(cmd byte, data []byte) {
 	for _, p := range players {
 		p.Conn.Send(msg)
 	}
+}
+
+// === 实体权威转移 ===
+
+// TryGrantAuthority 尝试将 entityId 的权威授予 requesterId。
+// unclaimed 或已属于 requester → 成功。他人持有 → 拒绝。
+func (r *Room) TryGrantAuthority(entityId int32, requesterId int32) (granted bool, currentOwner int32) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	current := r.entityAuthority[entityId]
+	if current == 0 || current == requesterId {
+		r.entityAuthority[entityId] = requesterId
+		return true, requesterId
+	}
+	return false, current
+}
+
+// ReleaseAuthority 释放玩家对某实体的权威。只有持有者可释放。
+func (r *Room) ReleaseAuthority(entityId int32, requesterId int32) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.entityAuthority[entityId] == requesterId {
+		r.entityAuthority[entityId] = 0
+		return true
+	}
+	return false
+}
+
+// ReleaseAllAuthority 释放某玩家持有的所有实体权威（断线清理用）。
+func (r *Room) ReleaseAllAuthority(playerId int32) []int32 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var released []int32
+	for eid, owner := range r.entityAuthority {
+		if owner == playerId {
+			r.entityAuthority[eid] = 0
+			released = append(released, eid)
+		}
+	}
+	return released
 }

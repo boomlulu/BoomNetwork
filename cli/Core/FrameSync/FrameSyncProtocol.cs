@@ -54,6 +54,10 @@ namespace BoomNetwork.Core.FrameSync
         // 匹配
         public const byte MatchRoom         = 29;  // 客户端 → 服务器：匹配房间（有空位加入，否则创建）
         public const byte MatchRoomRsp      = 30;  // 服务器 → 客户端：匹配结果（格式同 JoinRoomRsp）
+
+        // 权威转移
+        public const byte RequestAuthorityTransfer = 31;  // 客户端 → 服务器：请求/释放实体权威
+        public const byte AuthorityTransferResult  = 32;  // 服务器 → 客户端：广播权威变更
     }
 
     /// <summary>
@@ -429,6 +433,51 @@ namespace BoomNetwork.Core.FrameSync
                 onEntity(senderPid, entityId, buf, offset, stateLen);
                 offset += stateLen;
             }
+        }
+    }
+
+    /// <summary>
+    /// 权威转移编解码
+    ///
+    /// C→S Cmd 31: [entityId:4][release:1]
+    ///   release=0 → 请求获取权威, release=1 → 主动释放权威
+    ///
+    /// S→C Cmd 32: [entityId:4][newOwnerPlayerId:4]
+    ///   newOwnerPlayerId=0 → unclaimed
+    /// </summary>
+    public static class AuthorityTransferCodec
+    {
+        public const int RequestSize = 5;
+        public const int ResultSize  = 8;
+
+        public static byte[] EncodeRequest(int entityId, bool release)
+        {
+            var buf = new byte[RequestSize];
+            BinaryPrimitives.WriteInt32LittleEndian(buf, entityId);
+            buf[4] = release ? (byte)1 : (byte)0;
+            return buf;
+        }
+
+        public static (int entityId, bool release) DecodeRequest(ReadOnlySpan<byte> buf)
+        {
+            int entityId = BinaryPrimitives.ReadInt32LittleEndian(buf);
+            bool release = buf[4] != 0;
+            return (entityId, release);
+        }
+
+        public static byte[] EncodeResult(int entityId, int newOwnerPlayerId)
+        {
+            var buf = new byte[ResultSize];
+            BinaryPrimitives.WriteInt32LittleEndian(buf, entityId);
+            BinaryPrimitives.WriteInt32LittleEndian(buf.AsSpan(4), newOwnerPlayerId);
+            return buf;
+        }
+
+        public static (int entityId, int newOwnerPlayerId) DecodeResult(ReadOnlySpan<byte> buf)
+        {
+            int entityId = BinaryPrimitives.ReadInt32LittleEndian(buf);
+            int newOwnerPlayerId = BinaryPrimitives.ReadInt32LittleEndian(buf.Slice(4));
+            return (entityId, newOwnerPlayerId);
         }
     }
 }

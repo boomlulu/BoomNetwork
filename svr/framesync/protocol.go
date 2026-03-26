@@ -48,6 +48,10 @@ const (
 	// 匹配
 	CmdMatchRoom    = 29 // 客户端 → 服务器：请求匹配房间（有空位就加入，否则创建）
 	CmdMatchRoomRsp = 30 // 服务器 → 客户端：匹配结果（格式同 JoinRoomRsp）
+
+	// 权威转移
+	CmdRequestAuthorityTransfer = 31 // 客户端 → 服务器：请求/释放实体权威
+	CmdAuthorityTransferResult  = 32 // 服务器 → 客户端：广播权威变更
 )
 
 // InitData 帧同步初始化数据
@@ -264,5 +268,27 @@ func EncodeReconnectRsp(result byte, roomId int32, serverFrame uint32, snapshotF
 	if len(snapshotData) > 0 {
 		copy(buf[13:], snapshotData)
 	}
+	return buf
+}
+
+// === 权威转移编解码 ===
+
+// DecodeAuthorityTransferRequest 解码权威转移请求
+// Wire: [entityId:4][release:1]
+func DecodeAuthorityTransferRequest(data []byte) (entityId int32, release bool, ok bool) {
+	if len(data) < 5 {
+		return 0, false, false
+	}
+	entityId = int32(binary.LittleEndian.Uint32(data[0:4]))
+	release = data[4] != 0
+	return entityId, release, true
+}
+
+// EncodeAuthorityTransferResult 编码权威转移结果广播
+// Wire: [entityId:4][newOwnerPlayerId:4]
+func EncodeAuthorityTransferResult(entityId int32, newOwnerPlayerId int32) []byte {
+	buf := make([]byte, 8)
+	binary.LittleEndian.PutUint32(buf[0:], uint32(entityId))
+	binary.LittleEndian.PutUint32(buf[4:], uint32(newOwnerPlayerId))
 	return buf
 }

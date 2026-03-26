@@ -36,6 +36,11 @@
       "displayName": "Entity Sync",
       "description": "Level 3 — 实体权威同步，IEntitySync/自权威零延迟/远端平滑",
       "path": "Samples~/EntitySync"
+    },
+    {
+      "displayName": "Authority Transfer",
+      "description": "Level 6 — 运行时权威转移（抢球演示）",
+      "path": "Samples~/AuthorityTransfer"
     }
   ],
   "repository": {

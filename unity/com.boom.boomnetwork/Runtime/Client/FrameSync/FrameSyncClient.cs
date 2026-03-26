@@ -71,6 +71,8 @@ namespace BoomNetwork.Client.FrameSync
         // --- 实体权威同步 ---
         /// <summary>远端实体状态到达 (senderPid, entityId, data, offset, length)</summary>
         public event Action<int, int, byte[], int, int>? OnEntityState;
+        /// <summary>权威变更通知 (entityId, newOwnerPlayerId)。0 = unclaimed。</summary>
+        public event Action<int, int>? OnAuthorityChanged;
         private readonly System.Collections.Generic.List<IEntitySync> _authorityEntities = new();
         private byte[]? _entityStateBuf;
 
@@ -91,6 +93,24 @@ namespace BoomNetwork.Client.FrameSync
         public void UnregisterAuthorityEntity(int entityId)
         {
             _authorityEntities.RemoveAll(e => e.EntityId == entityId);
+        }
+
+        /// <summary>请求获取 entityId 的权威（C→S Cmd 31, release=0）</summary>
+        public void RequestAuthorityTransfer(int entityId)
+        {
+            if (_session == null) return;
+            _session.Send(FrameSyncCmd.RequestAuthorityTransfer,
+                AuthorityTransferCodec.EncodeRequest(entityId, false));
+            Log($"RequestAuthorityTransfer entity={entityId}");
+        }
+
+        /// <summary>主动释放 entityId 的权威（C→S Cmd 31, release=1）</summary>
+        public void ReleaseAuthority(int entityId)
+        {
+            if (_session == null) return;
+            _session.Send(FrameSyncCmd.RequestAuthorityTransfer,
+                AuthorityTransferCodec.EncodeRequest(entityId, true));
+            Log($"ReleaseAuthority entity={entityId}");
         }
 
         // --- 内部网络栈（创建一次，不重建）---
@@ -454,6 +474,10 @@ namespace BoomNetwork.Client.FrameSync
                     HandlePushEntityState(msg);
                     break;
 
+                case FrameSyncCmd.AuthorityTransferResult:
+                    HandleAuthorityTransferResult(msg);
+                    break;
+
                 case FrameSyncCmd.PushFrames:
                     HandlePushFrames(msg);
                     break;
@@ -535,6 +559,14 @@ namespace BoomNetwork.Client.FrameSync
             {
                 OnEntityState?.Invoke(senderPid, entityId, data, offset, length);
             });
+        }
+
+        private void HandleAuthorityTransferResult(Message msg)
+        {
+            if (msg.DataLength < AuthorityTransferCodec.ResultSize) return;
+            var (entityId, newOwnerPlayerId) = AuthorityTransferCodec.DecodeResult(msg.DataSpan);
+            Log($"AuthorityTransferResult entity={entityId} newOwner={newOwnerPlayerId}");
+            OnAuthorityChanged?.Invoke(entityId, newOwnerPlayerId);
         }
 
         private void Log(string msg) => OnLog?.Invoke($"[FrameSyncClient] {msg}");

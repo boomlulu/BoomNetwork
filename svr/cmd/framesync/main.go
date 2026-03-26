@@ -113,6 +113,7 @@ func main() {
 	router.On(framesync.CmdUploadSnapshot, txStats(handleUploadSnapshot))
 	// 实体权威同步
 	router.On(framesync.CmdSendEntityState, txStats(handleSendEntityState))
+	router.On(framesync.CmdRequestAuthorityTransfer, txStats(handleRequestAuthorityTransfer))
 
 	// 在 router 外层包一层 RX 计数 + 消息日志 + netsim 响应延迟
 	baseDispatch := router.Dispatch
@@ -229,6 +230,14 @@ func onClientDisconnect(conn *transport.Conn) {
 
 	// 广播 PlayerOffline：通知其他客户端该玩家临时掉线（非永久离开）
 	broadcastToRoom(room, playerId, framesync.CmdPlayerOffline, framesync.EncodePlayerId(playerId))
+
+	// 释放断线玩家持有的所有实体权威
+	releasedEntities := room.ReleaseAllAuthority(playerId)
+	for _, eid := range releasedEntities {
+		data := framesync.EncodeAuthorityTransferResult(eid, 0)
+		broadcastToRoom(room, -1, framesync.CmdAuthorityTransferResult, data)
+		log.Printf("[Server] Entity %d authority released (player %d disconnected)\n", eid, playerId)
+	}
 
 	// 如果房间没有在线玩家了，延迟清理
 	if room.PlayerCount() == 0 {
@@ -729,6 +738,49 @@ func handleUploadSnapshot(conn *transport.Conn, msg *codec.Message) *codec.Messa
 }
 
 // handleSendEntityState 实体权威同步：透传给同房其他玩家（prepend senderPid）
+func handleRequestAuthorityTransfer(conn *transport.Conn, msg *codec.Message) *codec.Message {
+	val, ok := connPlayerMap.Load(conn.ID)
+	if !ok {
+		return nil
+	}
+	playerId := val.(int32)
+
+	roomVal, ok := playerRoomMap.Load(playerId)
+	if !ok {
+		return nil
+	}
+	room := roomVal.(*framesync.Room)
+
+	entityId, release, ok := framesync.DecodeAuthorityTransferRequest(msg.Data)
+	if !ok {
+		return nil
+	}
+
+	var newOwner int32
+	var changed bool
+
+	if release {
+		changed = room.ReleaseAuthority(entityId, playerId)
+		newOwner = 0
+	} else {
+		granted, current := room.TryGrantAuthority(entityId, playerId)
+		changed = granted
+		newOwner = current
+		if !granted {
+			log.Printf("[Server] Player %d denied authority for entity %d (held by %d)\n",
+				playerId, entityId, current)
+			return nil
+		}
+	}
+
+	if changed {
+		data := framesync.EncodeAuthorityTransferResult(entityId, newOwner)
+		broadcastToRoom(room, -1, framesync.CmdAuthorityTransferResult, data)
+		log.Printf("[Server] Entity %d authority → player %d\n", entityId, newOwner)
+	}
+	return nil
+}
+
 func handleSendEntityState(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	val, ok := connPlayerMap.Load(conn.ID)
 	if !ok {
