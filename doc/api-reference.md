@@ -240,36 +240,49 @@ static class ReconnectResult
 
 ## 协议命令表
 
-| Cmd | 名称 | 方向 | 说明 |
-|-----|------|------|------|
+协议采用三层分级：Core (包头 3B) / Extended (包头 5B) / Game (包头 7B)。
+FlagsCmd: `bit0=LenSize, bit1=HasSeq, bit2-3=CmdType(00/01/10), bit4-7=CoreCmd`
+
+### Core Cmd（0-15，CmdType=00，包头 3B）
+
+| CoreCmd | 名称 | 方向 | 说明 |
+|---------|------|------|------|
 | 1 | SessionBind | C→S | 客户端绑定 |
 | 2 | SessionBindRsp | S→C | 返回 playerId |
 | 3 | RequestStart | C→S | 请求开始帧同步（可携带初始快照） |
 | 4 | StartFrameSync | S→C | 帧同步开始（广播，携带 InitData） |
-| 5 | FrameInput | C→S | 玩家输入 |
-| 6 | PushFrames | S→C | 推送帧数据 |
-| 7 | Heartbeat | C→S | 心跳 |
-| 8 | HeartbeatRsp | S→C | 心跳响应 |
-| 9 | Reconnect | C→S | 重连请求 |
-| 10 | ReconnectRsp | S→C | 重连响应（含快照） |
-| 11 | GetRooms | C→S | 获取房间列表 |
-| 12 | GetRoomsRsp | S→C | 房间列表 |
-| 13 | CreateRoom | C→S | 创建房间 |
-| 14 | CreateRoomRsp | S→C | 返回 roomId |
-| 15 | JoinRoom | C→S | 加入房间 |
-| 16 | JoinRoomRsp | S→C | 返回 playerId + roomId + existingPlayers |
-| 17 | LeaveRoom | C→S | 离开房间 |
-| 18 | LeaveRoomRsp | S→C | 确认 |
-| 19 | PlayerJoined | S→C | 推送：玩家加入 |
-| 20 | PlayerLeft | S→C | 推送：玩家离开 |
-| 21 | StopFrameSync | S→C | 帧同步结束 |
-| 22 | UploadSnapshot | C→S | 上传快照 |
-| 24 | PlayerOffline | S→C | 推送：玩家临时掉线 |
-| 25 | PlayerOnline | S→C | 推送：玩家恢复在线 |
-| 26 | RoomSnapshot | S→C | 推送：房间快照（迟到者加入） |
-| 23 | UploadSnapshotRsp | S→C | 上传确认 |
-| 27 | SendEntityState | C→S | 管理者发送实体权威状态 |
-| 28 | PushEntityState | S→C | 广播实体权威状态（带 senderPid） |
+| 5 | StopFrameSync | S→C | 帧同步结束 |
+| 6 | FrameInput | C→S | 玩家输入 |
+| 7 | PushFrames | S→C | 推送帧数据 |
+| 8 | Heartbeat | C→S | 心跳 |
+| 9 | HeartbeatRsp | S→C | 心跳响应 |
+| 10 | Reconnect | C→S | 重连请求 |
+| 11 | ReconnectRsp | S→C | 重连响应（含快照） |
+
+### Extended Cmd（uint16，CmdType=01，包头 5B）
+
+| ExtCmd | 名称 | 方向 | 说明 |
+|--------|------|------|------|
+| 1 | GetRooms | C→S | 获取房间列表 |
+| 2 | GetRoomsRsp | S→C | 房间列表 |
+| 3 | CreateRoom | C→S | 创建房间 |
+| 4 | CreateRoomRsp | S→C | 返回 roomId |
+| 5 | JoinRoom | C→S | 加入房间 |
+| 6 | JoinRoomRsp | S→C | 返回 playerId + roomId + existingPlayers |
+| 7 | LeaveRoom | C→S | 离开房间 |
+| 8 | LeaveRoomRsp | S→C | 确认 |
+| 9 | MatchRoom | C→S | 匹配房间 |
+| 10 | MatchRoomRsp | S→C | 匹配结果 |
+| 20 | PlayerJoined | S→C | 推送：玩家加入 |
+| 21 | PlayerLeft | S→C | 推送：玩家离开 |
+| 22 | PlayerOffline | S→C | 推送：玩家临时掉线 |
+| 23 | PlayerOnline | S→C | 推送：玩家恢复在线 |
+| 24 | RoomSnapshot | S→C | 推送：房间快照（迟到者加入） |
+| 30 | UploadSnapshot | C→S | 上传快照 |
+| 31 | UploadSnapshotRsp | S→C | 上传确认 |
+| 40 | SendEntityState | C→S | 管理者发送实体权威状态 |
+| 41 | PushEntityState | S→C | 广播实体权威状态（带 senderPid） |
+| 42 | AuthorityTransfer | 双向 | 权威转移（Data[0]: 0=request, 1=result） |
 
 ---
 

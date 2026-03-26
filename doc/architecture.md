@@ -102,23 +102,28 @@ TCP socket / KCP session
 ## 线格式
 
 ```
-动态包头:
+动态包头 (三层分级):
 [FlagsCmd: 1 byte]
-  bit 0:   LenSize  (0 = BodyLen 2B, 最大 64KB)
-                     (1 = BodyLen 4B, 最大 4GB)
-  bit 1:   HasSeq   (0 = 无 Seq 字段)
-                     (1 = 有 Seq 4B)
-  bit 2-7: Cmd      (0-63)
+  bit 0:     LenSize  (0 = BodyLen 2B, 最大 64KB)
+                       (1 = BodyLen 4B, 最大 4GB)
+  bit 1:     HasSeq   (0 = 无 Seq 字段)
+                       (1 = 有 Seq 4B)
+  bit 2-3:   CmdType  (00 = Core, 01 = Extended, 10 = Game)
+  bit 4-7:   CoreCmd  (CmdType=00 时的命令值 0-15)
+
+[扩展命令字段] (仅 CmdType != 00 时存在)
+  CmdType=01: ExtCmd uint16 (Extended 命令，如房间/快照/实体同步)
+  CmdType=10: GameCmd uint32 (游戏自定义命令，服务器透传)
 
 [BodyLen: 2 or 4 bytes, little-endian]
 [Seq: 0 or 4 bytes, little-endian]  (仅 HasSeq=1)
 [Data: BodyLen - sizeof(Seq) bytes]
 
 包头大小:
-  推帧 (最高频):  FlagsCmd(1) + BodyLen(2)           = 3 bytes
-  请求/响应:      FlagsCmd(1) + BodyLen(2) + Seq(4)   = 7 bytes
-  大包 (>64KB):   FlagsCmd(1) + BodyLen(4)           = 5 bytes
-  大包+Seq:       FlagsCmd(1) + BodyLen(4) + Seq(4)   = 9 bytes
+  Core (最高频，如推帧/心跳):   FlagsCmd(1) + BodyLen(2)                   = 3 bytes
+  Extended (如房间/实体同步):    FlagsCmd(1) + ExtCmd(2) + BodyLen(2)       = 5 bytes
+  Game (自定义):                FlagsCmd(1) + GameCmd(4) + BodyLen(2)       = 7 bytes
+  带 Seq (请求/响应, +4B):       以上各类型 + Seq(4)
 ```
 
 ---

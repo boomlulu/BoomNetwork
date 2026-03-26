@@ -37,16 +37,18 @@
 从旧包头 (17 bytes 固定) 优化为新动态包头 (3-9 bytes)。
 
 ```
-新格式: [FlagsCmd:1B][BodyLen:2B/4B][Seq:0B/4B]
-FlagsCmd: bit0=LenSize, bit1=HasSeq, bit2-7=Cmd(0-63)
+新格式: [FlagsCmd:1B][ExtCmd?:0/2/4B][BodyLen:2B/4B][Seq:0B/4B]
+FlagsCmd: bit0=LenSize, bit1=HasSeq, bit2-3=CmdType(00=Core/01=Ext/10=Game), bit4-7=CoreCmd
 ```
+
+三层分级包头大小：Core 3B / Extended (含 ExtCmd uint16) 5B / Game (含 GameCmd uint32) 7B，带 Seq 各 +4B。
 
 | 消息类型 | 旧包头 | 新包头 | 节省 |
 |---------|--------|--------|------|
-| 推帧 (最高频) | 17B | 3B | 82% |
-| 心跳/保活 | 17B | 3B | 82% |
-| 请求/响应 | 17B | 7B | 59% |
-| 大包 (>64KB) | 17B | 9B | 47% |
+| 推帧/心跳 (Core, 最高频) | 17B | 3B | 82% |
+| 房间/实体同步 (Extended) | 17B | 5B | 71% |
+| 请求/响应 (Core+Seq) | 17B | 7B | 59% |
+| 大包 (>64KB, +4B BodyLen) | 17B | 9B | 47% |
 
 ### 压测对比 (3000 人)
 

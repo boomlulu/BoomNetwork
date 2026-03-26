@@ -62,9 +62,11 @@ C# 客户端                                Go 服务器
 Message 和字节之间的无状态转换。动态包头，FlagsCmd 第一个字节决定后续布局。
 
 ```
-[FlagsCmd: 1B][BodyLen: 2B/4B][Seq: 0B/4B][Data: NB]
-FlagsCmd: bit0=LenSize, bit1=HasSeq, bit2-7=Cmd(0-63)
+[FlagsCmd: 1B][ExtCmd?: 0/2/4B][BodyLen: 2B/4B][Seq: 0B/4B][Data: NB]
+FlagsCmd: bit0=LenSize, bit1=HasSeq, bit2-3=CmdType(00=Core/01=Ext/10=Game), bit4-7=CoreCmd
 ```
+
+详细协议分层说明见 [protocol-cmd-tiers.md](protocol-cmd-tiers.md)。
 
 - C#: `MessageCodec.Encode()` / `Decode()` — 支持 ArrayPool 零分配
 - Go: `codec.EncodeTo()` / `Decode()` — 支持 sync.Pool 和零拷贝
@@ -197,18 +199,28 @@ person.OnEntityState += (senderPid, entityId, data, offset, len) => {
 
 ## 协议 Cmd 定义
 
-| Cmd | 值 | 方向 | 说明 |
-|-----|---|------|------|
-| SessionBind | 10 | C→S | 绑定会话 |
-| SessionBindRsp | 11 | S→C | 绑定响应 (playerId) |
-| StartFrameSync | 20 | S→C | 帧同步开始 (帧率/间隔/时间戳) |
-| StopFrameSync | 21 | S→C | 帧同步结束 |
-| FrameInput | 30 | C→S | 玩家输入 |
-| PushFrames | 31 | S→C | 推送帧数据 |
-| Heartbeat | 40 | C→S | 心跳 |
-| HeartbeatRsp | 41 | S→C | 心跳响应 |
-| Reconnect | 50 | C→S | 重连请求 (playerId) |
-| ReconnectRsp | 51 | S→C | 重连响应 (当前帧号) |
+完整命令表见 [api-reference.md — 协议命令表](api-reference.md#协议命令表)。常用核心命令速查：
+
+**Core Cmd（包头 3B，最高频）**
+
+| CoreCmd | 名称 | 方向 | 说明 |
+|---------|------|------|------|
+| 1 | SessionBind | C→S | 绑定会话 |
+| 2 | SessionBindRsp | S→C | 绑定响应 (playerId) |
+| 4 | StartFrameSync | S→C | 帧同步开始 (帧率/间隔/时间戳) |
+| 6 | FrameInput | C→S | 玩家输入 |
+| 7 | PushFrames | S→C | 推送帧数据 |
+| 8 | Heartbeat | C→S | 心跳 |
+| 10 | Reconnect | C→S | 重连请求 (playerId) |
+
+**Extended Cmd（包头 5B，房间/快照/实体同步）**
+
+| ExtCmd | 名称 | 方向 | 说明 |
+|--------|------|------|------|
+| 3 | CreateRoom | C→S | 创建房间 |
+| 5 | JoinRoom | C→S | 加入房间 |
+| 40 | SendEntityState | C→S | 发送实体权威状态 |
+| 41 | PushEntityState | S→C | 广播实体权威状态 |
 
 ---
 

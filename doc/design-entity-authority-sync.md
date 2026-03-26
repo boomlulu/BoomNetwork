@@ -2,7 +2,7 @@
 
 > **状态**：Phase 1 已实施（2026-03-25）
 >
-> - L1 框架核心：Cmd 27/28 + IEntitySync + EntityStateCodec（BoomNetwork `e45555e`）
+> - L1 框架核心：ExtCmd 40/41 + IEntitySync + EntityStateCodec（BoomNetwork `e45555e`）
 > - L2 纠偏中间件：IDeadReckoning + IInertiaModel + ICorrectionStrategy（BoomNetworkUnity）
 > - L3 NetworkTransformSync：2D 具体实现（BoomNetworkUnity）
 > - L4 Demo02：EntitySyncDemoManager（BoomNetworkUnity）
@@ -84,8 +84,8 @@ t=50ms:  帧 N+1: vel 从 (1,0,0) 变为 (0,1,0)
 场景：PlayerA 拾取地上的物品（Entity3）
 
 帧 N:   Entity3.authority = Server（或 null）
-帧 N:   PlayerA → Server: RequestAuthorityTransfer(entity=3)
-帧 N+1: Server 裁决 → 广播: AuthorityGranted(entity=3, owner=A)
+帧 N:   PlayerA → Server: AuthorityTransfer(ExtCmd 42, subCmd=request, entity=3)
+帧 N+1: Server 裁决 → 广播: AuthorityTransfer(ExtCmd 42, subCmd=result, entity=3, owner=A)
 帧 N+2: PlayerA 开始发送 Entity3 的权威状态
 
 冲突处理：同帧多人请求 → 服务器按到达顺序，先到先得，后到丢弃
@@ -379,11 +379,12 @@ Phase 1（1 人 1 实体）典型大小：`2 + 8 + 1 + 4 + 2 + 24 = 41 bytes/fra
 
 ### 5.2 新增协议命令
 
-| Cmd | 名称 | 方向 | 说明 |
-|-----|------|------|------|
-| 27 | RequestAuthorityTransfer | C→S | 请求获取实体权威 |
-| 28 | AuthorityGranted | S→C | 服务器裁决：权威已授予 |
-| 29 | AuthorityRevoked | S→C | 服务器裁决：权威已收回 |
+| ExtCmd | 名称 | 方向 | 说明 |
+|--------|------|------|------|
+| 40 | SendEntityState | C→S | 管理者发送实体权威状态 |
+| 41 | PushEntityState | S→C | 广播实体权威状态（带 senderPid） |
+| 42 | AuthorityTransfer (subCmd=request) | C→S | 请求获取实体权威 |
+| 42 | AuthorityTransfer (subCmd=result) | S→C | 服务器裁决：权威授予/收回结果 |
 
 ---
 
@@ -406,7 +407,7 @@ Phase 1（1 人 1 实体）典型大小：`2 + 8 + 1 + 4 + 2 + 24 = 41 bytes/fra
 ### Phase 2：权威转移 + 多实体
 
 ```
-Cmd 27/28/29 协议
+ExtCmd 40/41/42 协议（SendEntityState / PushEntityState / AuthorityTransfer）
 服务器先到先得裁决
 EntitySyncManager.TransferAuthority()
 Demo: 可拾取物品

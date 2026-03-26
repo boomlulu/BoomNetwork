@@ -2,7 +2,7 @@
 
 Unity 多人帧同步网络框架 — C# 客户端 + Go 服务器。
 
-支持传统帧同步和预测回滚两种模式，内置房间管理、快照重连、断线恢复。
+内置房间管理、快照重连、断线恢复、实体权威同步。
 
 ## 特性
 
@@ -11,7 +11,7 @@ Unity 多人帧同步网络框架 — C# 客户端 + Go 服务器。
 - **房间管理** — 创建/加入/离开/列表查询，支持中途加入（已有玩家列表同步）
 - **两级断线重连** — 快速重连（补帧恢复）→ 快照重连（加载快照+补帧），自动降级
 - **快照系统** — 客户端定时上传快照，服务器存储最新，重连/迟到者恢复用
-- **预测回滚**（实验） — 本地预测 + 服务器校验 + 不一致时回滚重放
+- **实体权威同步** — 管理者发权威状态，远端 Dead Reckoning + 惯性追踪，无需确定性
 - **零分配热路径** — 帧编码/广播复用缓冲区，无 GC 压力
 - **YAML 配置** — 服务器全部参数可配置，关键参数下发客户端
 
@@ -20,7 +20,7 @@ Unity 多人帧同步网络框架 — C# 客户端 + Go 服务器。
 ```
 BoomNetwork/
 ├── cli/                          # C# 客户端库
-│   ├── Core/                     #   协议、编解码、预测回滚
+│   ├── Core/                     #   协议、编解码、实体同步
 │   ├── Client/                   #   连接、会话、帧同步、房间、重连策略
 │   ├── Tests/                    #   单元测试 (NUnit)
 │   └── FrameSyncExample/         #   控制台集成测试
@@ -68,19 +68,13 @@ go run ./cmd/framesync/ -gen-config    # 生成 config.yaml
 ### 3. 最小代码示例
 
 ```csharp
-using BoomNetwork.Client.Transport;
-using BoomNetwork.Client.Session;
-using BoomNetwork.Client.Connection;
 using BoomNetwork.Client.FrameSync;
 
-// 创建网络栈
-var transport = new TcpClientTransport();
-var session = new NetworkSession(transport);
-var connMgr = new ConnectionManager(session);
-var client = new FrameSyncClient(session, connMgr);
+// 一行创建，内部自动构建完整网络栈
+var client = new FrameSyncClient(heartbeatIntervalMs: 3000, heartbeatTimeoutMs: 10000);
 
 // 监听事件
-client.OnBound += playerId => Debug.Log($"Bound as P{playerId}");
+client.OnConnected += () => Debug.Log($"Connected as P{client.PlayerId}");
 client.OnFrame += frame => {
     // 处理帧数据：frame.FrameNumber, frame.Inputs
 };
@@ -161,7 +155,7 @@ Unity Demo 在独立仓库 [BoomNetworkUnity](https://github.com/luwenyiCC/BoomN
 |------|------|
 | Demo01-Basic | 单编辑器双 Person，基础帧同步 |
 | Demo01.1-MultiClient | ParrelSync 多编辑器，快照重连测试 |
-| Demo02-Prediction | 预测回滚模式（实验中） |
+| Demo02-EntitySync | 实体权威同步（单编辑器双人） |
 
 ## 开发
 
@@ -183,7 +177,7 @@ cd svr && go run ./cmd/framesync/ -gen-config
 - [Unity 集成指南](doc/unity-integration.md) — 从零接入，30 行代码跑通
 - [API Reference](doc/api-reference.md) — Person / FrameSyncClient / RoomClient 全接口 + 协议命令表
 - [服务器部署指南](doc/deployment.md) — Docker / 二进制 / systemd
-- [框架路线图](TODO/framework-roadmap.md) — 四象限规划
+- [框架路线图](doc/roadmap.md) — 四象限规划
 
 ## License
 
