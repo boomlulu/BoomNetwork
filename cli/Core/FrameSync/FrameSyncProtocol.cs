@@ -387,8 +387,8 @@ namespace BoomNetwork.Core.FrameSync
     /// <summary>
     /// 实体状态编解码
     ///
-    /// C→S (Cmd 27): [entityCount:1B] + N × [entityId:4B][stateLen:2B][stateData]
-    /// S→C (Cmd 28): [senderPid:4B] + [entityCount:1B] + N × [entityId:4B][stateLen:2B][stateData]
+    /// C→S (ExtCmd 40): [entityCount:1B] + N × [entityId:4B][stateLen:2B][stateData]
+    /// S→C (ExtCmd 41): [senderPid:4B] + [entityCount:1B] + N × [entityId:4B][stateLen:2B][stateData]
     /// </summary>
     public static class EntityStateCodec
     {
@@ -412,7 +412,7 @@ namespace BoomNetwork.Core.FrameSync
 
         /// <summary>解码推送的实体状态（客户端接收用）</summary>
         /// <summary>
-        /// 解码 PushEntityState (Cmd 28)
+        /// 解码 PushEntityState (ExtCmd 41)
         /// onEntity(senderPid, entityId, data, offset, length)
         /// </summary>
         public static void Decode(ReadOnlySpan<byte> data, Action<int, int, byte[], int, int> onEntity)
@@ -442,10 +442,10 @@ namespace BoomNetwork.Core.FrameSync
     /// <summary>
     /// 权威转移编解码
     ///
-    /// C→S Cmd 31: [entityId:4][release:1]
+    /// C→S ExtCmd 42 (subCmd=0 request): [entityId:4][release:1]
     ///   release=0 → 请求获取权威, release=1 → 主动释放权威
     ///
-    /// S→C Cmd 32: [entityId:4][newOwnerPlayerId:4]
+    /// S→C ExtCmd 42 (subCmd=1 result): [entityId:4][newOwnerPlayerId:4]
     ///   newOwnerPlayerId=0 → unclaimed
     /// </summary>
     public static class AuthorityTransferCodec
