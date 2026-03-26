@@ -73,6 +73,10 @@ namespace BoomNetwork.Client.FrameSync
         public event Action<int, int, byte[], int, int>? OnEntityState;
         /// <summary>权威变更通知 (entityId, newOwnerPlayerId)。0 = unclaimed。</summary>
         public event Action<int, int>? OnAuthorityChanged;
+
+        // --- 游戏自定义消息 ---
+        /// <summary>收到游戏自定义消息 (gameCmd, senderPid, data, offset)</summary>
+        public event Action<uint, int, byte[], int>? OnGameMessage;
         private readonly System.Collections.Generic.List<IEntitySync> _authorityEntities = new();
         private byte[]? _entityStateBuf;
 
@@ -95,22 +99,29 @@ namespace BoomNetwork.Client.FrameSync
             _authorityEntities.RemoveAll(e => e.EntityId == entityId);
         }
 
-        /// <summary>请求获取 entityId 的权威（C→S Cmd 31, release=0）</summary>
+        /// <summary>请求获取 entityId 的权威（Extended Cmd AuthorityTransfer, release=0）</summary>
         public void RequestAuthorityTransfer(int entityId)
         {
             if (_session == null) return;
-            _session.Send(FrameSyncCmd.RequestAuthorityTransfer,
+            _session.SendExt(FrameSyncExtCmd.AuthorityTransfer,
                 AuthorityTransferCodec.EncodeRequest(entityId, false));
             Log($"RequestAuthorityTransfer entity={entityId}");
         }
 
-        /// <summary>主动释放 entityId 的权威（C→S Cmd 31, release=1）</summary>
+        /// <summary>主动释放 entityId 的权威（Extended Cmd AuthorityTransfer, release=1）</summary>
         public void ReleaseAuthority(int entityId)
         {
             if (_session == null) return;
-            _session.Send(FrameSyncCmd.RequestAuthorityTransfer,
+            _session.SendExt(FrameSyncExtCmd.AuthorityTransfer,
                 AuthorityTransferCodec.EncodeRequest(entityId, true));
             Log($"ReleaseAuthority entity={entityId}");
+        }
+
+        /// <summary>发送游戏自定义消息（Game Cmd，服务器透传给同房间其他玩家）</summary>
+        public void SendGameMessage(uint gameCmd, byte[] data)
+        {
+            if (_session == null) return;
+            _session.SendGame(gameCmd, data);
         }
 
         // --- 内部网络栈（创建一次，不重建）---
@@ -323,7 +334,7 @@ namespace BoomNetwork.Client.FrameSync
             int written = EntityStateCodec.Encode(
                 _entityStateBuf, 0,
                 _authorityEntities, _authorityEntities.Count);
-            _session.Send(FrameSyncCmd.SendEntityState, _entityStateBuf, written);
+            _session.SendExt(FrameSyncExtCmd.SendEntityState, _entityStateBuf, written);
         }
 
         // ===================== Network Stack =====================
@@ -437,54 +448,80 @@ namespace BoomNetwork.Client.FrameSync
 
         private void HandleMessage(Message msg)
         {
-            switch (msg.Cmd)
+            if (msg.MsgType == CmdType.Core)
             {
-                case FrameSyncCmd.StartFrameSync:
-                    if (CurrentState < State.Connected)
-                        _pendingStartMsg = msg;
-                    else
-                        HandleStartFrameSync(msg);
-                    break;
+                switch (msg.Cmd)
+                {
+                    case FrameSyncCmd.StartFrameSync:
+                        if (CurrentState < State.Connected)
+                            _pendingStartMsg = msg;
+                        else
+                            HandleStartFrameSync(msg);
+                        break;
 
-                case FrameSyncCmd.PlayerJoined:
-                    if (msg.DataLength >= 4)
-                        OnPlayerJoined?.Invoke(BinaryPrimitives.ReadInt32LittleEndian(msg.DataSpan));
-                    break;
+                    case FrameSyncCmd.PushFrames:
+                        HandlePushFrames(msg);
+                        break;
 
-                case FrameSyncCmd.PlayerLeft:
-                    if (msg.DataLength >= 4)
-                        OnPlayerLeft?.Invoke(BinaryPrimitives.ReadInt32LittleEndian(msg.DataSpan));
-                    break;
+                    case FrameSyncCmd.StopFrameSync:
+                        HandleStopFrameSync();
+                        break;
+                }
+            }
+            else if (msg.MsgType == CmdType.Extended)
+            {
+                switch (msg.ExtCmd)
+                {
+                    case FrameSyncExtCmd.PlayerJoined:
+                        if (msg.DataLength >= 4)
+                            OnPlayerJoined?.Invoke(BinaryPrimitives.ReadInt32LittleEndian(msg.DataSpan));
+                        break;
 
-                case FrameSyncCmd.PlayerOffline:
-                    if (msg.DataLength >= 4)
-                        OnPlayerOffline?.Invoke(BinaryPrimitives.ReadInt32LittleEndian(msg.DataSpan));
-                    break;
+                    case FrameSyncExtCmd.PlayerLeft:
+                        if (msg.DataLength >= 4)
+                            OnPlayerLeft?.Invoke(BinaryPrimitives.ReadInt32LittleEndian(msg.DataSpan));
+                        break;
 
-                case FrameSyncCmd.PlayerOnline:
-                    if (msg.DataLength >= 4)
-                        OnPlayerOnline?.Invoke(BinaryPrimitives.ReadInt32LittleEndian(msg.DataSpan));
-                    break;
+                    case FrameSyncExtCmd.PlayerOffline:
+                        if (msg.DataLength >= 4)
+                            OnPlayerOffline?.Invoke(BinaryPrimitives.ReadInt32LittleEndian(msg.DataSpan));
+                        break;
 
-                case FrameSyncCmd.RoomSnapshot:
-                    HandleRoomSnapshot(msg);
-                    break;
+                    case FrameSyncExtCmd.PlayerOnline:
+                        if (msg.DataLength >= 4)
+                            OnPlayerOnline?.Invoke(BinaryPrimitives.ReadInt32LittleEndian(msg.DataSpan));
+                        break;
 
-                case FrameSyncCmd.PushEntityState:
-                    HandlePushEntityState(msg);
-                    break;
+                    case FrameSyncExtCmd.RoomSnapshot:
+                        HandleRoomSnapshot(msg);
+                        break;
 
-                case FrameSyncCmd.AuthorityTransferResult:
-                    HandleAuthorityTransferResult(msg);
-                    break;
+                    case FrameSyncExtCmd.PushEntityState:
+                        HandlePushEntityState(msg);
+                        break;
 
-                case FrameSyncCmd.PushFrames:
-                    HandlePushFrames(msg);
-                    break;
+                    case FrameSyncExtCmd.AuthorityTransfer:
+                        HandleAuthorityTransferResult(msg);
+                        break;
+                }
+            }
+            else if (msg.MsgType == CmdType.Game)
+            {
+                HandleGameMessage(msg);
+            }
+        }
 
-                case FrameSyncCmd.StopFrameSync:
-                    HandleStopFrameSync();
-                    break;
+        private void HandleGameMessage(Message msg)
+        {
+            // senderPid is encoded as first 4 bytes of Data by the server when broadcasting
+            if (msg.DataLength >= 4)
+            {
+                int senderPid = BinaryPrimitives.ReadInt32LittleEndian(msg.DataSpan);
+                OnGameMessage?.Invoke(msg.GameCmd, senderPid, msg.Data, 4);
+            }
+            else
+            {
+                OnGameMessage?.Invoke(msg.GameCmd, 0, msg.Data, 0);
             }
         }
 
@@ -542,7 +579,7 @@ namespace BoomNetwork.Client.FrameSync
 
             _lastSnapshotFrame = boundary;
             var encoded = SnapshotCodec.EncodeUploadSnapshot(LastFrameNumber, data);
-            _session?.Send(FrameSyncCmd.UploadSnapshot, encoded);
+            _session?.SendExt(FrameSyncExtCmd.UploadSnapshot, encoded);
         }
 
         private void HandleStopFrameSync()

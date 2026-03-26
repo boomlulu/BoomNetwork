@@ -43,7 +43,7 @@ namespace BoomNetwork.Client.Room
         /// </summary>
         public void GetRooms(Action<RoomInfo[]> onResult)
         {
-            _session.SendAsync(FrameSyncCmd.GetRooms, null, 5000,
+            _session.SendExtAsync(FrameSyncExtCmd.GetRooms, null, 5000,
                 onResponse: msg =>
                 {
                     var rooms = RoomCodec.DecodeRoomList(msg.DataSpan);
@@ -62,7 +62,7 @@ namespace BoomNetwork.Client.Room
         public void CreateRoom(int maxPlayers, Action<int>? onCreated = null)
         {
             var data = RoomCodec.EncodeCreateRoom(maxPlayers);
-            _session.SendAsync(FrameSyncCmd.CreateRoom, data, 5000,
+            _session.SendExtAsync(FrameSyncExtCmd.CreateRoom, data, 5000,
                 onResponse: msg =>
                 {
                     int roomId = RoomCodec.DecodeCreateRoomRsp(msg.DataSpan);
@@ -81,7 +81,7 @@ namespace BoomNetwork.Client.Room
         public void JoinRoom(int roomId, Action<int, int, int[]>? onJoined = null)
         {
             var data = RoomCodec.EncodeJoinRoom(roomId);
-            _session.SendAsync(FrameSyncCmd.JoinRoom, data, 5000,
+            _session.SendExtAsync(FrameSyncExtCmd.JoinRoom, data, 5000,
                 onResponse: msg =>
                 {
                     var (playerId, rspRoomId, existingPlayers) = RoomCodec.DecodeJoinRoomRsp(msg.DataSpan);
@@ -107,7 +107,7 @@ namespace BoomNetwork.Client.Room
         public void MatchRoom(int maxPlayers, Action<int, int, int[]>? onJoined = null)
         {
             var data = RoomCodec.EncodeCreateRoom(maxPlayers); // 同格式: [maxPlayers:2]
-            _session.SendAsync(FrameSyncCmd.MatchRoom, data, 5000,
+            _session.SendExtAsync(FrameSyncExtCmd.MatchRoom, data, 5000,
                 onResponse: msg =>
                 {
                     var (playerId, rspRoomId, existingPlayers) = RoomCodec.DecodeJoinRoomRsp(msg.DataSpan);
@@ -131,7 +131,7 @@ namespace BoomNetwork.Client.Room
         /// </summary>
         public void LeaveRoom(Action? onLeft = null)
         {
-            _session.SendAsync(FrameSyncCmd.LeaveRoom, null, 5000,
+            _session.SendExtAsync(FrameSyncExtCmd.LeaveRoom, null, 5000,
                 onResponse: _ =>
                 {
                     CurrentRoomId = 0;
@@ -146,14 +146,16 @@ namespace BoomNetwork.Client.Room
 
         private void HandleMessage(Message msg)
         {
-            switch (msg.Cmd)
+            if (msg.MsgType != CmdType.Extended) return;
+
+            switch (msg.ExtCmd)
             {
-                case FrameSyncCmd.PlayerJoined:
+                case FrameSyncExtCmd.PlayerJoined:
                     if (msg.DataLength >= 4)
                         OnPlayerJoined?.Invoke(RoomCodec.DecodePlayerId(msg.DataSpan));
                     break;
 
-                case FrameSyncCmd.PlayerLeft:
+                case FrameSyncExtCmd.PlayerLeft:
                     if (msg.DataLength >= 4)
                         OnPlayerLeft?.Invoke(RoomCodec.DecodePlayerId(msg.DataSpan));
                     break;

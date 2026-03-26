@@ -116,14 +116,51 @@ namespace BoomNetwork.Client.Session
         }
 
         /// <summary>
-        /// 发送消息（无 Seq）
+        /// 发送 Core 消息（无 Seq）
         /// </summary>
         public void Send(byte cmd, byte[]? data = null, int dataLength = -1)
         {
             int len = dataLength >= 0 ? dataLength : (data?.Length ?? 0);
             var msg = new Message
             {
+                MsgType = CmdType.Core,
                 Cmd = cmd,
+                HasSeq = false,
+                Seq = 0,
+                Data = data ?? Array.Empty<byte>(),
+                DataLength = len,
+            };
+            SendRaw(msg);
+        }
+
+        /// <summary>
+        /// 发送 Extended 消息（无 Seq）
+        /// </summary>
+        public void SendExt(ushort extCmd, byte[]? data = null, int dataLength = -1)
+        {
+            int len = dataLength >= 0 ? dataLength : (data?.Length ?? 0);
+            var msg = new Message
+            {
+                MsgType = CmdType.Extended,
+                ExtCmd = extCmd,
+                HasSeq = false,
+                Seq = 0,
+                Data = data ?? Array.Empty<byte>(),
+                DataLength = len,
+            };
+            SendRaw(msg);
+        }
+
+        /// <summary>
+        /// 发送 Game 消息（无 Seq）
+        /// </summary>
+        public void SendGame(uint gameCmd, byte[]? data = null, int dataLength = -1)
+        {
+            int len = dataLength >= 0 ? dataLength : (data?.Length ?? 0);
+            var msg = new Message
+            {
+                MsgType = CmdType.Game,
+                GameCmd = gameCmd,
                 HasSeq = false,
                 Seq = 0,
                 Data = data ?? Array.Empty<byte>(),
@@ -161,7 +198,7 @@ namespace BoomNetwork.Client.Session
         }
 
         /// <summary>
-        /// 发送请求并等待响应
+        /// 发送 Core 请求并等待响应
         /// </summary>
         public int SendAsync(byte cmd, byte[]? data, float timeoutMs,
             Action<Message>? onResponse, Action<NetworkError>? onTimeout = null)
@@ -169,7 +206,37 @@ namespace BoomNetwork.Client.Session
             int seq = _nextSeq++;
             var msg = new Message
             {
+                MsgType = CmdType.Core,
                 Cmd = cmd,
+                HasSeq = true,
+                Seq = seq,
+                Data = data ?? Array.Empty<byte>(),
+                DataLength = data?.Length ?? 0,
+            };
+
+            _pendingRequests[seq] = new PendingRequest
+            {
+                TimeoutMs = timeoutMs,
+                ElapsedMs = 0,
+                OnResponse = onResponse,
+                OnTimeout = onTimeout,
+            };
+
+            SendRaw(msg);
+            return seq;
+        }
+
+        /// <summary>
+        /// 发送 Extended 请求并等待响应
+        /// </summary>
+        public int SendExtAsync(ushort extCmd, byte[]? data, float timeoutMs,
+            Action<Message>? onResponse, Action<NetworkError>? onTimeout = null)
+        {
+            int seq = _nextSeq++;
+            var msg = new Message
+            {
+                MsgType = CmdType.Extended,
+                ExtCmd = extCmd,
                 HasSeq = true,
                 Seq = seq,
                 Data = data ?? Array.Empty<byte>(),

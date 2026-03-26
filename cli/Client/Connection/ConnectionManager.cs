@@ -298,7 +298,7 @@ namespace BoomNetwork.Client.Connection
 
         private void HandleSessionMessage(Message msg)
         {
-            if (msg.Cmd == FrameSyncCmd.HeartbeatRsp)
+            if (msg.MsgType == CmdType.Core && msg.Cmd == FrameSyncCmd.HeartbeatRsp)
             {
                 _heartbeatRspTimer = 0;
                 if (_heartbeatWaitingRsp)
