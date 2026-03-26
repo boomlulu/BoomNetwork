@@ -161,16 +161,15 @@ public class AuthorityTransfer : MonoBehaviour
             // 我持球 → 释放
             _network.Client.ReleaseAuthority(BallEntityId);
         }
-        else if (_ballOwner == 0)
+        else
         {
-            // 球 unclaimed → 检查距离后请求
+            // 球 unclaimed 或别人持有 → 检查距离后请求（支持抢夺）
             if (_players.TryGetValue(_network.PlayerId, out var me))
             {
                 if (Vector2.Distance(me.LogicalPosition, _ball.LogicalPosition) < GrabRadius)
                     _network.Client.RequestAuthorityTransfer(BallEntityId);
             }
         }
-        // 别人持有 → 无操作
     }
 
     // --- 实体状态路由 ---

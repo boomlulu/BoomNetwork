@@ -534,16 +534,12 @@ func (r *Room) broadcast(cmd byte, data []byte) {
 // === 实体权威转移 ===
 
 // TryGrantAuthority 尝试将 entityId 的权威授予 requesterId。
-// unclaimed 或已属于 requester → 成功。他人持有 → 拒绝。
+// 始终授予（支持抢夺），服务器按请求到达顺序仲裁。
 func (r *Room) TryGrantAuthority(entityId int32, requesterId int32) (granted bool, currentOwner int32) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	current := r.entityAuthority[entityId]
-	if current == 0 || current == requesterId {
-		r.entityAuthority[entityId] = requesterId
-		return true, requesterId
-	}
-	return false, current
+	r.entityAuthority[entityId] = requesterId
+	return true, requesterId
 }
 
 // ReleaseAuthority 释放玩家对某实体的权威。只有持有者可释放。
