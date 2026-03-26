@@ -24,6 +24,7 @@ public class RoomLobby : MonoBehaviour
     private readonly Dictionary<int, Transform> _players = new();
     private readonly byte[] _inputBuf = new byte[8];
     private readonly List<int> _roomPlayers = new();
+    private RoomInfo[] _allRooms = Array.Empty<RoomInfo>();
     private RoomInfo[] _rooms = Array.Empty<RoomInfo>();
     private uint _lastFrame;
     private float _sendTimer;
@@ -65,7 +66,16 @@ public class RoomLobby : MonoBehaviour
 
     void RefreshRooms()
     {
-        _network.Client.GetRooms(rooms => _rooms = rooms ?? Array.Empty<RoomInfo>());
+        var key = _network.MatchKey;
+        _network.Client.GetRooms(rooms =>
+        {
+            _allRooms = rooms ?? Array.Empty<RoomInfo>();
+            // 按 matchKey 过滤：只显示相同 key 的房间
+            if (string.IsNullOrEmpty(key))
+                _rooms = _allRooms;
+            else
+                _rooms = Array.FindAll(_allRooms, r => r.MatchKey == key);
+        });
     }
 
     void Update()
@@ -184,7 +194,8 @@ public class RoomLobby : MonoBehaviour
             foreach (var r in _rooms)
             {
                 GUILayout.BeginHorizontal();
-                GUILayout.Label($"  #{r.RoomId} ({r.PlayerCount}/{r.MaxPlayers}) {(r.Running ? "Playing" : "Waiting")}", label);
+                var keyTag = string.IsNullOrEmpty(r.MatchKey) ? "" : $" [{r.MatchKey}]";
+                GUILayout.Label($"  #{r.RoomId} ({r.PlayerCount}/{r.MaxPlayers}) {(r.Running ? "Playing" : "Waiting")}{keyTag}", label);
                 if (GUILayout.Button("Join", GUILayout.Width(50)))
                     _network.Client.JoinRoom(r.RoomId);
                 GUILayout.EndHorizontal();
@@ -194,7 +205,11 @@ public class RoomLobby : MonoBehaviour
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("Refresh", btn)) RefreshRooms();
             if (GUILayout.Button("Create Room", btn)) _network.Client.CreateRoom(maxPlayers, _ => RefreshRooms());
-            if (GUILayout.Button("Quick Match", btn)) _network.Client.MatchRoom(maxPlayers);
+            if (GUILayout.Button("Quick Match", btn))
+            {
+                var key = string.IsNullOrEmpty(_network.MatchKey) ? null : _network.MatchKey;
+                _network.Client.MatchRoom(maxPlayers, key);
+            }
             GUILayout.EndHorizontal();
         }
         else if (state == FrameSyncClient.State.InRoom)

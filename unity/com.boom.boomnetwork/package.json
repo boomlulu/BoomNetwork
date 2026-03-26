@@ -41,6 +41,16 @@
       "displayName": "Authority Transfer",
       "description": "Level 6 — 运行时权威转移（抢球演示）",
       "path": "Samples~/AuthorityTransfer"
+    },
+    {
+      "displayName": "Chat Room",
+      "description": "聊天房 — SendStateMessage 实时消息广播，无需帧同步",
+      "path": "Samples~/ChatRoom"
+    },
+    {
+      "displayName": "State Sync Move",
+      "description": "状态同步移动 — 纯 SendStateMessage 广播位置，无需帧同步",
+      "path": "Samples~/StateSyncMove"
     }
   ],
   "repository": {
