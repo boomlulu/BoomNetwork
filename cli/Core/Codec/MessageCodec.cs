@@ -85,8 +85,10 @@ namespace BoomNetwork.Core.Codec
 
         public static int EncodedSize(in Message msg) => msg.TotalSize;
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static Message Decode(ReadOnlySpan<byte> buffer) => Decode(buffer, usePool: false);
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static Message Decode(ReadOnlySpan<byte> buffer, bool usePool)
         {
             if (buffer.Length < Message.MinHeaderSize)
@@ -127,22 +129,22 @@ namespace BoomNetwork.Core.Codec
                 remainLen -= 4;
             }
 
-            // Cmd / ExtCmd / GameCmd
-            switch (cmdType)
+            // Cmd / ExtCmd / GameCmd — if/else 偏向 Core (最高频，单条 cbz 指令)
+            if (cmdType == CmdType.Core)
             {
-                case CmdType.Core:
-                    msg.Cmd = (byte)(flagsCmd >> 4);
-                    break;
-                case CmdType.Extended:
-                    msg.ExtCmd = BinaryPrimitives.ReadUInt16LittleEndian(buffer.Slice(offset));
-                    offset += 2;
-                    remainLen -= 2;
-                    break;
-                case CmdType.Game:
-                    msg.GameCmd = BinaryPrimitives.ReadUInt32LittleEndian(buffer.Slice(offset));
-                    offset += 4;
-                    remainLen -= 4;
-                    break;
+                msg.Cmd = (byte)(flagsCmd >> 4);
+            }
+            else if (cmdType == CmdType.Extended)
+            {
+                msg.ExtCmd = BinaryPrimitives.ReadUInt16LittleEndian(buffer.Slice(offset));
+                offset += 2;
+                remainLen -= 2;
+            }
+            else
+            {
+                msg.GameCmd = BinaryPrimitives.ReadUInt32LittleEndian(buffer.Slice(offset));
+                offset += 4;
+                remainLen -= 4;
             }
 
             // Data

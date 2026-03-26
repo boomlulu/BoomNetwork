@@ -67,7 +67,12 @@ func cmdExtraSize(cmdType byte) int {
 
 // HeaderSize 包头大小
 func (m *Message) HeaderSize() int {
-	extra := cmdExtraSize(m.CmdType)
+	extra := 0
+	if m.CmdType == CmdTypeExtended {
+		extra = 2
+	} else if m.CmdType == CmdTypeGame {
+		extra = 4
+	}
 	totalPayload := len(m.Data) + extra
 	size := 1 // FlagsCmd
 	if totalPayload > LargeBodyThreshold {
@@ -118,16 +123,50 @@ func PutBuf(buf []byte) {
 // EncodeTo 编码到指定 buffer
 func EncodeTo(msg *Message, buf []byte) int {
 	dataLen := len(msg.Data)
-	extra := cmdExtraSize(msg.CmdType)
+
+	// Core 快速路径 — 无 extra, 无 CmdType switch, 直线执行
+	if msg.CmdType == CmdTypeCore {
+		largeLen := dataLen > LargeBodyThreshold
+		flagsCmd := (msg.Cmd & 0x0F) << 4 // CmdType=00 所以 bits 2-3 = 0
+		if largeLen {
+			flagsCmd |= FlagLenSize4
+		}
+		if msg.HasSeq {
+			flagsCmd |= FlagHasSeq
+		}
+		buf[0] = flagsCmd
+		offset := 1
+		bodyLen := dataLen
+		if msg.HasSeq {
+			bodyLen += 4
+		}
+		if largeLen {
+			binary.LittleEndian.PutUint32(buf[offset:], uint32(bodyLen))
+			offset += 4
+		} else {
+			binary.LittleEndian.PutUint16(buf[offset:], uint16(bodyLen))
+			offset += 2
+		}
+		if msg.HasSeq {
+			binary.LittleEndian.PutUint32(buf[offset:], uint32(msg.Seq))
+			offset += 4
+		}
+		if dataLen > 0 {
+			copy(buf[offset:], msg.Data)
+			offset += dataLen
+		}
+		return offset
+	}
+
+	// Extended / Game 路径
+	extra := 2
+	if msg.CmdType == CmdTypeGame {
+		extra = 4
+	}
 	totalPayload := dataLen + extra
 	largeLen := totalPayload > LargeBodyThreshold
 
-	// FlagsCmd
-	var flagsCmd byte
-	flagsCmd = (msg.CmdType & 0x03) << 2
-	if msg.CmdType == CmdTypeCore {
-		flagsCmd |= (msg.Cmd & 0x0F) << 4
-	}
+	flagsCmd := (msg.CmdType & 0x03) << 2
 	if largeLen {
 		flagsCmd |= FlagLenSize4
 	}
@@ -137,7 +176,6 @@ func EncodeTo(msg *Message, buf []byte) int {
 	buf[0] = flagsCmd
 	offset := 1
 
-	// BodyLen (covers: Seq + ExtCmd/GameCmd + Data)
 	bodyLen := totalPayload
 	if msg.HasSeq {
 		bodyLen += 4
@@ -150,23 +188,19 @@ func EncodeTo(msg *Message, buf []byte) int {
 		offset += 2
 	}
 
-	// Seq
 	if msg.HasSeq {
 		binary.LittleEndian.PutUint32(buf[offset:], uint32(msg.Seq))
 		offset += 4
 	}
 
-	// ExtCmd / GameCmd
-	switch msg.CmdType {
-	case CmdTypeExtended:
+	if msg.CmdType == CmdTypeExtended {
 		binary.LittleEndian.PutUint16(buf[offset:], msg.ExtCmd)
 		offset += 2
-	case CmdTypeGame:
+	} else {
 		binary.LittleEndian.PutUint32(buf[offset:], msg.GameCmd)
 		offset += 4
 	}
 
-	// Data
 	if dataLen > 0 {
 		copy(buf[offset:], msg.Data)
 		offset += dataLen

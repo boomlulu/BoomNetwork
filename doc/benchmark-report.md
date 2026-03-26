@@ -12,42 +12,49 @@
 | 操作 | 耗时 | 内存分配 |
 |------|------|---------|
 | Encode 小消息 (41B payload) | 3.8 ns | 0 B |
-| Encode 大消息 (1KB payload) | 20.2 ns | 0 B |
-| Decode 小消息 | 7.2 ns | 72 B |
-| Decode 大消息 (1KB) | 47.1 ns | 1048 B |
-| Decode 小消息 (ArrayPool) | 13.5 ns | 0 B |
+| Encode 大消息 (1KB payload) | 20.3 ns | 0 B |
+| Decode 小消息 | 6.9 ns | 72 B |
+| Decode 大消息 (1KB) | 47.2 ns | 1048 B |
+| Decode 小消息 (ArrayPool) | 12.1 ns | 0 B |
 | Framing 100 条粘包拆包 | 4.0 μs | 0 B |
 
 ### Go (go test -bench)
 
 | 操作 | 耗时 | 内存分配 |
 |------|------|---------|
-| Encode 小消息 (sync.Pool) | 24.6 ns | 24 B / 1 alloc |
-| Encode 大消息 (sync.Pool) | 32.8 ns | 24 B / 1 alloc |
-| EncodeTo 零分配版 | 3.9 ns | 0 B / 0 alloc |
-| Decode 小消息 (零拷贝) | 15.6 ns | 48 B / 1 alloc |
-| Decode 大消息 (零拷贝) | 15.2 ns | 48 B / 1 alloc |
-| FrameReader 10000 条 | 378 μs | 489 KB |
-| FrameWriter 10000 条 | 89 μs | 9.3 KB / 3 alloc |
+| Encode 小消息 (sync.Pool) | 23.1 ns | 24 B / 1 alloc |
+| Encode 大消息 (sync.Pool) | 32.5 ns | 24 B / 1 alloc |
+| EncodeTo 零分配版 | 3.6 ns | 0 B / 0 alloc |
+| Decode 小消息 (零拷贝) | 16.0 ns | 48 B / 1 alloc |
+| Decode 大消息 (零拷贝) | 15.3 ns | 48 B / 1 alloc |
+| FrameReader 10000 条 | 381 μs | 489 KB |
+| FrameWriter 10000 条 | 91 μs | 9.3 KB / 3 alloc |
 
 ### Codec 历史对比
 
-| 操作 | v0.1 (03-19) | v0.2 未优化 | v0.2 优化后 | 变化 (v0.1→最终) |
-|------|-------------|-----------|-----------|-----------------|
-| **C# Encode 小消息** | 3.6 ns | 15.1 ns ⚠️ | **3.8 ns** | +6% ✅ 已修复 |
-| C# Encode 大消息 | 20 ns | 21.3 ns | 20.2 ns | +1% ✅ |
-| C# Decode 小消息 | 6.4 ns | 7.3 ns | 7.2 ns | +13% |
-| C# Decode 大消息 | 44 ns | 48.4 ns | 47.1 ns | +7% |
-| C# Decode Pooled | 12.6 ns | 13.7 ns | 13.5 ns | +7% |
+| 操作 | v0.1 (03-19) | v0.2 未优化 | v0.2 最终 | v0.1→最终 |
+|------|-------------|-----------|----------|-----------|
+| **C# Encode 小消息** | 3.6 ns | 15.1 ns ⚠️ | **3.8 ns** | +6% ✅ |
+| C# Encode 大消息 | 20 ns | 21.3 ns | 20.3 ns | +1% ✅ |
+| **C# Decode 小消息** | 6.4 ns | 7.3 ns | **6.9 ns** | +8% ✅ (was +13%) |
+| C# Decode 大消息 | 44 ns | 48.4 ns | 47.2 ns | +7% |
+| **C# Decode Pooled** | 12.6 ns | 13.7 ns | **12.1 ns** | **-4% ✅ 改善** |
 | C# Framing 100 条 | 3.9 μs | 4.0 μs | 4.0 μs | +2% 稳定 |
-| Go Encode (Pool) | 24 ns | 25.1 ns | 24.6 ns | +3% |
-| Go EncodeTo | 3.4 ns | 3.9 ns | 3.9 ns | +15% |
-| **Go Decode 大消息** | 18 ns | 15.1 ns | 15.2 ns | **-16% ✅ 改善** |
-| Go FrameReader | 372 μs | 377 μs | 378 μs | +2% 稳定 |
-| Go FrameWriter | 81 μs | 87 μs | 89 μs | +10% |
+| **Go Encode (Pool)** | 24 ns | 25.1 ns | **23.1 ns** | **-4% ✅ 改善** |
+| **Go EncodeTo** | 3.4 ns | 3.9 ns | **3.6 ns** | +5% ✅ (was +15%) |
+| **Go Decode 大消息** | 18 ns | 15.1 ns | 15.3 ns | **-15% ✅ 改善** |
+| Go FrameReader | 372 μs | 377 μs | 381 μs | +2% 稳定 |
+| Go FrameWriter | 81 μs | 87 μs | 91 μs | +12% |
 
-**C# Encode 小消息 v0.2 回退分析与修复:**
-三层 Cmd 分级重构引入 `CmdExtraSize` switch 属性，Encode 一次调用中求值 3 次（`TotalSize` → `HeaderSize` → inline），且 switch 表达式阻止了 JIT 内联。修复：`CmdExtraSize` 改为 `[AggressiveInlining]` 方法，Encode 内部只算一次 extra 直接计算 totalSize，跳过属性链。15.1ns → 3.8ns，恢复到 v0.1 水平。
+**优化措施（两轮）:**
+
+1. **C# Encode (15.1ns → 3.8ns):** `CmdExtraSize` 属性 → `[AggressiveInlining] GetCmdExtraSize()` 方法，Encode 内只算一次 extra 直接计算 totalSize，跳过属性链调用。
+
+2. **C# Decode (7.3ns → 6.9ns, Pooled 13.7ns → 12.1ns):** 加 `[AggressiveInlining]`，CmdType switch → if/else 链（Core 优先），ARM64 JIT 生成单条 `cbz` 替代 switch jump table。
+
+3. **Go EncodeTo (3.9ns → 3.6ns):** Core 消息独立快速路径，不调 `cmdExtraSize()`，不走尾部 switch。Extended/Game 拆为单独分支。
+
+**Go FrameWriter +12% 说明:** bufio.Writer.Write + copy 占主体，codec 开销只是一小部分。+12% 中约 +5% 来自 codec，其余是 bufio 和 GC 噪声。不影响生产（FrameWriter 不在帧同步热路径）。
 
 ---
 
@@ -207,18 +214,17 @@ cd cli && dotnet run --project KcpTest
 ## 附录：历史性能快照
 
 <details>
-<summary>v0.2 优化前 (2026-03-27 02:14) — Encode 回退快照</summary>
+<summary>v0.2 优化前 (2026-03-27 02:14) — 三层 Cmd 回退快照</summary>
 
-> 三层 Cmd 分级重构后、AggressiveInlining 优化前的中间状态
+> 三层 Cmd 分级重构后、两轮优化前的中间状态
 
-**C# Codec (关键差异):**
-
-| 操作 | 耗时 | 说明 |
-|------|------|------|
-| Encode 小消息 | 15.1 ns | CmdExtraSize switch 求值 3 次，阻止 JIT 内联 |
-| Encode 大消息 | 21.3 ns | |
-
-**修复措施:** `CmdExtraSize` 属性 → `[AggressiveInlining] GetCmdExtraSize()` 方法，Encode 内只算一次 extra 直接计算 totalSize。
+| 操作 | 未优化 | 优化后 | 修复 |
+|------|--------|--------|------|
+| C# Encode 小消息 | 15.1 ns | 3.8 ns | AggressiveInlining + 消除 triple eval |
+| C# Decode 小消息 | 7.3 ns | 6.9 ns | AggressiveInlining + switch→if/else |
+| C# Decode Pooled | 13.7 ns | 12.1 ns | 同上 |
+| Go EncodeTo | 3.9 ns | 3.6 ns | Core 独立快速路径 |
+| Go Encode (Pool) | 25.1 ns | 23.1 ns | 同上 |
 
 </details>
 
