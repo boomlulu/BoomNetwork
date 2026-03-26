@@ -210,10 +210,27 @@ func (h *GMHub) pushNetsim() {
 
 // ===================== WebSocket Upgrade =====================
 
+// wsAllowedOrigins S17: Origin 白名单，由 main.go 在启动时注入。
+// 空列表 = 允许所有 origin（向后兼容）。
+var wsAllowedOrigins []string
+
 var wsUpgrader = websocket.Upgrader{
 	ReadBufferSize:  4096,
 	WriteBufferSize: 4096,
-	CheckOrigin:     func(r *http.Request) bool { return true }, // GM 工具，允许任意 origin
+	CheckOrigin: func(r *http.Request) bool {
+		// S17: Origin 白名单检查
+		if len(wsAllowedOrigins) == 0 {
+			return true // 向后兼容：未配置白名单时允许所有
+		}
+		origin := r.Header.Get("Origin")
+		for _, allowed := range wsAllowedOrigins {
+			if origin == allowed {
+				return true
+			}
+		}
+		slog.Warn("gm-ws origin rejected", "origin", origin)
+		return false
+	},
 }
 
 func (h *GMHub) HandleUpgrade(token string) http.HandlerFunc {

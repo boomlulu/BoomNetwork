@@ -58,6 +58,11 @@ type ServerConfig struct {
 	MaxMessageSize    int `yaml:"maxMessageSize"`
 	MaxMessagesPerSec int `yaml:"maxMessagesPerSec"`
 
+	// WebSocket Admin Origin 白名单（S17）
+	// 空列表 = 允许所有 origin（向后兼容）
+	// 非空 = 只允许列表中的 origin
+	AllowedOrigins []string `yaml:"allowedOrigins"`
+
 	// 日志级别（热重载）: DEBUG / INFO / WARN / ERROR
 	LogLevel string `yaml:"logLevel"`
 }

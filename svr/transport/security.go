@@ -1,6 +1,8 @@
 package transport
 
 import (
+	"log/slog"
+	"net"
 	"sync"
 	"time"
 )
@@ -54,4 +56,55 @@ func (rl *RateLimiter) Allow() bool {
 
 	rl.count++
 	return rl.count <= rl.limit
+}
+
+// ===================== S18: Per-IP 连接速率限制 =====================
+
+// ipRate 记录单个 IP 在当前 1 秒窗口内的新连接数
+type ipRate struct {
+	mu        sync.Mutex
+	count     int
+	lastReset time.Time
+}
+
+// allow 返回 false 表示该 IP 在本秒内已超出限制
+func (r *ipRate) allow(maxPerSec int) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := time.Now()
+	if now.Sub(r.lastReset) >= time.Second {
+		r.count = 0
+		r.lastReset = now
+	}
+	r.count++
+	return r.count <= maxPerSec
+}
+
+// IPRateLimiter 管理全部 IP 的连接速率
+type IPRateLimiter struct {
+	m          sync.Map // IP string → *ipRate
+	maxPerSec  int
+}
+
+// NewIPRateLimiter 创建 IP 速率限制器，maxPerSec=0 表示不限制
+func NewIPRateLimiter(maxPerSec int) *IPRateLimiter {
+	return &IPRateLimiter{maxPerSec: maxPerSec}
+}
+
+// Allow 检查该远端地址（host:port 格式）是否允许建立新连接
+func (l *IPRateLimiter) Allow(remoteAddr net.Addr) bool {
+	if l.maxPerSec <= 0 {
+		return true
+	}
+	ip, _, err := net.SplitHostPort(remoteAddr.String())
+	if err != nil {
+		ip = remoteAddr.String()
+	}
+	v, _ := l.m.LoadOrStore(ip, &ipRate{lastReset: time.Now()})
+	rate := v.(*ipRate)
+	if !rate.allow(l.maxPerSec) {
+		slog.Warn("per-IP connection rate limit exceeded", "ip", ip, "maxPerSec", l.maxPerSec)
+		return false
+	}
+	return true
 }

@@ -87,6 +87,21 @@ func main() {
 		cfg.AdminToken     = *adminToken
 	}
 
+	// S15: 环境变量覆盖 token（优先级最高，适合容器/systemd 生产部署）
+	if v := os.Getenv("BOOM_ADMIN_TOKEN"); v != "" {
+		cfg.AdminToken = v
+		*adminToken = v
+		slog.Info("admin token overridden by env var", "var", "BOOM_ADMIN_TOKEN")
+	}
+	if v := os.Getenv("BOOM_AUTH_TOKEN"); v != "" {
+		cfg.AuthToken = v
+		*authToken = v
+		slog.Info("auth token overridden by env var", "var", "BOOM_AUTH_TOKEN")
+	}
+
+	// S17: 注入 WebSocket Origin 白名单
+	wsAllowedOrigins = cfg.AllowedOrigins
+
 	// 用配置初始化 RoomManager
 	roomMgr = framesync.NewRoomManager(framesync.RoomConfig{
 		FrameRate:              int32(cfg.FrameRate),
@@ -343,8 +358,13 @@ func handleSessionBind(conn *transport.Conn, msg *codec.Message) *codec.Message 
 			clientToken = string(msg.Data)
 		}
 		if clientToken != *authToken {
-			slog.Error("auth failed (bad token)", "connId", conn.ID)
+			slog.Warn("auth failed, disconnecting", "connId", conn.ID, "addr", conn.RemoteAddr())
 			framesync.Metrics.AuthFailures.Inc()
+			// S16: 发送错误响应后延迟关闭连接（100ms 让响应先 flush）
+			go func() {
+				time.Sleep(100 * time.Millisecond)
+				conn.Close()
+			}()
 			return codec.NewCoreMessage(framesync.CmdSessionBindRsp, []byte{0, 0, 0, 0})
 		}
 	}

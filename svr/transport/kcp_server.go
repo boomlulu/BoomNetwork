@@ -24,6 +24,7 @@ type KcpServer struct {
 	onDisconnect  func(*Conn)
 	onRateLimited func()
 	wg            sync.WaitGroup
+	ipLimiter     *IPRateLimiter // S18: per-IP 连接速率限制
 }
 
 // SetMaxConns 设置最大连接数（0 = 不限制）
@@ -56,10 +57,11 @@ func NewKcpServer(handler Handler, configs ...ServerConfig) *KcpServer {
 		cfg = configs[0]
 	}
 	return &KcpServer{
-		handler:  handler,
-		config:   cfg,
-		security: DefaultSecurityConfig(),
-		conns:    make(map[int]*Conn),
+		handler:   handler,
+		config:    cfg,
+		security:  DefaultSecurityConfig(),
+		conns:     make(map[int]*Conn),
+		ipLimiter: NewIPRateLimiter(10), // S18: 默认每 IP 每秒最多 10 个新连接
 	}
 }
 
@@ -105,6 +107,12 @@ func (s *KcpServer) acceptLoop() {
 		raw, err := s.listener.AcceptKCP()
 		if err != nil {
 			return
+		}
+
+		// S18: per-IP 连接速率检查（在创建 Conn 之前）
+		if !s.ipLimiter.Allow(raw.RemoteAddr()) {
+			raw.Close()
+			continue
 		}
 
 		// KCP 参数调优

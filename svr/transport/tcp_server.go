@@ -69,6 +69,7 @@ type TcpServer struct {
 	onDisconnect  func(*Conn)
 	onRateLimited func() // 触发限流时回调（用于指标统计）
 	wg            sync.WaitGroup
+	ipLimiter     *IPRateLimiter // S18: per-IP 连接速率限制
 }
 
 // SetMaxConns 设置最大连接数（0 = 不限制）
@@ -101,10 +102,11 @@ func NewTcpServer(handler Handler, configs ...ServerConfig) *TcpServer {
 		cfg = configs[0]
 	}
 	return &TcpServer{
-		handler:  handler,
-		config:   cfg,
-		security: DefaultSecurityConfig(),
-		conns:    make(map[int]*Conn),
+		handler:   handler,
+		config:    cfg,
+		security:  DefaultSecurityConfig(),
+		conns:     make(map[int]*Conn),
+		ipLimiter: NewIPRateLimiter(10), // S18: 默认每 IP 每秒最多 10 个新连接
 	}
 }
 
@@ -150,6 +152,12 @@ func (s *TcpServer) acceptLoop() {
 		raw, err := s.listener.Accept()
 		if err != nil {
 			return
+		}
+
+		// S18: per-IP 连接速率检查（在创建 Conn 之前）
+		if !s.ipLimiter.Allow(raw.RemoteAddr()) {
+			raw.Close()
+			continue
 		}
 
 		// TCP NoDelay + KeepAlive
