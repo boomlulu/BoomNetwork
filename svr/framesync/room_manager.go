@@ -3,7 +3,6 @@ package framesync
 import (
 	"log"
 	"sync"
-	"sync/atomic"
 )
 
 // RoomManager 房间管理器
@@ -28,7 +27,8 @@ func NewRoomManager(config ...RoomConfig) *RoomManager {
 
 // CreateRoom 创建新房间（不加锁，调用方负责）
 func (rm *RoomManager) createRoomLocked() *Room {
-	id := atomic.AddInt32(&rm.nextID, 1)
+	rm.nextID++
+	id := rm.nextID
 	room := NewRoomWithConfig(rm.config)
 	room.ID = id
 	rm.rooms[id] = room
@@ -96,7 +96,8 @@ func (rm *RoomManager) CreateRoomWithMaxPlayers(maxPlayers int) *Room {
 	cfg.MaxPlayers = maxPlayers
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
-	id := atomic.AddInt32(&rm.nextID, 1)
+	rm.nextID++
+	id := rm.nextID
 	room := NewRoomWithConfig(cfg)
 	room.ID = id
 	rm.rooms[id] = room
@@ -157,7 +158,8 @@ func (rm *RoomManager) MatchRoom(maxPlayers int, matchKey string) *Room {
 	// 没有匹配的房间，创建新的
 	cfg := rm.config
 	cfg.MaxPlayers = maxPlayers
-	id := atomic.AddInt32(&rm.nextID, 1)
+	rm.nextID++
+	id := rm.nextID
 	room := NewRoomWithConfig(cfg)
 	room.ID = id
 	room.MatchKey = matchKey

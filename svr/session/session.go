@@ -18,11 +18,18 @@ type Handler func(conn *transport.Conn, msg *codec.Message) *codec.Message
 //	Extended: 按 msg.ExtCmd (uint16) 路由
 //	Game:     统一走 gameHandler（服务器透传）
 type Router struct {
-	mu          sync.RWMutex
+	mu          sync.Mutex // 仅注册阶段使用
 	core        map[byte]Handler
 	ext         map[uint16]Handler
 	gameHandler Handler
 	fallback    Handler
+
+	// frozen 快照 — Freeze() 后 Dispatch 直接查这些字段，无锁
+	frozen      bool
+	fCore       map[byte]Handler
+	fExt        map[uint16]Handler
+	fGame       Handler
+	fFallback   Handler
 }
 
 // NewRouter 创建路由器
@@ -66,28 +73,60 @@ func (r *Router) OnFallback(handler Handler) {
 	r.mu.Unlock()
 }
 
+// Freeze 冻结路由表：拷贝到无锁快照，之后 Dispatch 不再加锁。
+// 必须在所有 On*/OnExt/OnGame/OnFallback 注册完成后、服务器开始处理消息前调用。
+func (r *Router) Freeze() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.fCore = make(map[byte]Handler, len(r.core))
+	for k, v := range r.core {
+		r.fCore[k] = v
+	}
+	r.fExt = make(map[uint16]Handler, len(r.ext))
+	for k, v := range r.ext {
+		r.fExt[k] = v
+	}
+	r.fGame = r.gameHandler
+	r.fFallback = r.fallback
+	r.frozen = true
+}
+
 // Dispatch 分发消息，返回响应（可能为 nil）
 func (r *Router) Dispatch(conn *transport.Conn, msg *codec.Message) *codec.Message {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+	if r.frozen {
+		return r.dispatchFrozen(conn, msg)
+	}
+	// 未冻结时兼容旧路径（不应在生产中出现）
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.dispatchLocked(conn, msg, r.core, r.ext, r.gameHandler, r.fallback)
+}
+
+func (r *Router) dispatchFrozen(conn *transport.Conn, msg *codec.Message) *codec.Message {
+	return r.dispatchLocked(conn, msg, r.fCore, r.fExt, r.fGame, r.fFallback)
+}
+
+func (r *Router) dispatchLocked(conn *transport.Conn, msg *codec.Message,
+	core map[byte]Handler, ext map[uint16]Handler, game Handler, fallback Handler) *codec.Message {
 
 	switch msg.CmdType {
 	case codec.CmdTypeCore:
-		if h, ok := r.core[msg.Cmd]; ok {
+		if h, ok := core[msg.Cmd]; ok {
 			return h(conn, msg)
 		}
 	case codec.CmdTypeExtended:
-		if h, ok := r.ext[msg.ExtCmd]; ok {
+		if h, ok := ext[msg.ExtCmd]; ok {
 			return h(conn, msg)
 		}
 	case codec.CmdTypeGame:
-		if r.gameHandler != nil {
-			return r.gameHandler(conn, msg)
+		if game != nil {
+			return game(conn, msg)
 		}
 	}
 
-	if r.fallback != nil {
-		return r.fallback(conn, msg)
+	if fallback != nil {
+		return fallback(conn, msg)
 	}
 
 	fmt.Printf("[Router] No handler for CmdType=%d Cmd=%d ExtCmd=%d GameCmd=%d\n",

@@ -102,14 +102,16 @@
 
 ---
 
-## 三、紧急不重要 — 快速提升
+## 三、紧急不重要 — 快速提升 ✅
 
-| # | 任务 | 说明 |
-|---|------|------|
-| S23 | **Router RWMutex 优化** | 路由表启动后不变，`Dispatch` 上的 `RLock` 是无谓开销。启动完成后切换为无锁直接查表 |
-| S24 | **atomic 冗余清理** | `RoomManager.nextID` 在 `rm.mu` 保护下仍用 `atomic`，去掉一层 |
-| S25 | **`/perf` 端点 STW 警告** | `runtime.ReadMemStats()` 触发 STW，高负载下影响帧同步。加采样间隔（如 5s 缓存），不每次请求都调 |
-| S26 | **netsim timer 积压保护** | 高延迟 + 高流量时 `time.AfterFunc` 大量堆积。加 pending 计数，超阈值时降级为直接发送 |
+> **已完成**（2026-03-26）
+
+| # | 任务 | 方案 | 状态 |
+|---|------|------|------|
+| S23 | **Router RWMutex 优化** | `Freeze()` 将路由表拷贝到无锁快照，Dispatch 直接查表不加锁 | ✅ |
+| S24 | **atomic 冗余清理** | `RoomManager.nextID` 去掉 `atomic.AddInt32`，改为 `rm.mu` 保护下的普通递增 | ✅ |
+| S25 | **`/perf` 端点 STW 缓存** | `ReadMemStats` 结果缓存 5 秒，避免频繁请求触发 STW 影响帧同步 | ✅ |
+| S26 | **netsim timer 积压保护** | `simPending` 原子计数，超过 10000 上限时降级为直接发送 | ✅ |
 
 ---
 

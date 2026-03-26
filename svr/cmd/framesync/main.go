@@ -119,6 +119,9 @@ func main() {
 	// Game Cmd (uint32) — 服务器透传
 	router.OnGame(txStats(handleGameRelay))
 
+	// 路由注册完毕，冻结路由表 — Dispatch 不再加锁
+	router.Freeze()
+
 	// 在 router 外层包一层 RX 计数 + 消息日志 + netsim 响应延迟
 	baseDispatch := router.Dispatch
 	rxHandler := func(conn *transport.Conn, msg *codec.Message) {

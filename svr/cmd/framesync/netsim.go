@@ -37,9 +37,13 @@ var GlobalNetSim = &NetSimConfig{}
 var (
 	simDropped  int64 // 丢弃的消息数
 	simDelayed  int64 // 延迟的消息数
+	simPending  int64 // 当前排队中的延迟消息数
 	simMu       sync.Mutex
 	simRand     = rand.New(rand.NewSource(time.Now().UnixNano()))
 )
+
+// simPendingMax 超过此阈值时降级为直接发送，防止 timer 积压 OOM
+const simPendingMax = 10000
 
 func simRandIntn(n int) int {
 	simMu.Lock()
@@ -78,13 +82,20 @@ func (sc *simConn) Send(msg *codec.Message) error {
 	}
 
 	if delay > 0 {
+		// 积压保护：pending timer 过多时降级为直接发送
+		if atomic.LoadInt64(&simPending) >= simPendingMax {
+			return sc.inner.Send(msg)
+		}
+
 		atomic.AddInt64(&simDelayed, 1)
+		atomic.AddInt64(&simPending, 1)
 		// 必须拷贝 Data（原 buffer 可能被 Room tick 复用）
 		dataCopy := make([]byte, len(msg.Data))
 		copy(dataCopy, msg.Data)
 		msgCopy := &codec.Message{CmdType: msg.CmdType, Cmd: msg.Cmd, ExtCmd: msg.ExtCmd, GameCmd: msg.GameCmd, Data: dataCopy}
 
 		time.AfterFunc(time.Duration(delay)*time.Millisecond, func() {
+			atomic.AddInt64(&simPending, -1)
 			sc.inner.Send(msgCopy)
 		})
 		return nil

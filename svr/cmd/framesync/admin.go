@@ -446,26 +446,46 @@ func handlePlayerDetail(w http.ResponseWriter, r *http.Request) {
 
 // ===================== GET /perf (G6) =====================
 
+// 缓存 ReadMemStats 结果，避免每次请求都触发 STW
+var (
+	perfCachedJSON []byte
+	perfCacheTime  int64 // unix seconds
+)
+
+const perfCacheTTL = 5 // 秒
+
 func handlePerf(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
+	now := time.Now().Unix()
+	if atomic.LoadInt64(&perfCacheTime)+perfCacheTTL > now && perfCachedJSON != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(perfCachedJSON)
+		return
+	}
+
 	var memStats runtime.MemStats
 	runtime.ReadMemStats(&memStats)
 
-	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w,
+	json := fmt.Appendf(nil,
 		`{"goroutines":%d,"heap_mb":%.2f,"sys_mb":%.2f,"gc_count":%d,"gc_pause_us":%d,"rooms":%d,"players":%d}`,
 		runtime.NumGoroutine(),
 		float64(memStats.HeapAlloc)/(1024*1024),
 		float64(memStats.Sys)/(1024*1024),
 		memStats.NumGC,
-		memStats.PauseNs[(memStats.NumGC+255)%256]/1000, // 最近一次 GC 暂停（微秒）
+		memStats.PauseNs[(memStats.NumGC+255)%256]/1000,
 		roomMgr.RoomCount(),
 		countOnlinePlayers(),
 	)
+
+	perfCachedJSON = json
+	atomic.StoreInt64(&perfCacheTime, now)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(json)
 }
 
 // ===================== GET /rates (G8) =====================
