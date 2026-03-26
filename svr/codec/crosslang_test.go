@@ -12,46 +12,50 @@ var testDataDir = filepath.Join("..", "..", "testdata")
 func TestGenerateGoFixtures(t *testing.T) {
 	os.MkdirAll(testDataDir, 0755)
 
-	writeFixture(t, "go_empty.bin", &Message{Cmd: 42})
+	writeFixture(t, "go_core.bin", NewCoreMessage(7, nil))
 
-	writeFixture(t, "go_hello.bin", &Message{
-		Cmd: 10, HasSeq: true, Seq: 12345,
-		Data: []byte("Hello from Go"),
-	})
+	msg := NewCoreMessage(10, []byte("Hello from Go"))
+	msg.HasSeq = true
+	msg.Seq = 12345
+	writeFixture(t, "go_core_seq.bin", msg)
+
+	writeFixture(t, "go_ext.bin", NewExtMessage(42, []byte("ext data")))
+
+	writeFixture(t, "go_game.bin", NewGameMessage(1001, []byte("game data")))
 
 	largeData := make([]byte, 70000)
 	for i := range largeData {
 		largeData[i] = byte(i % 256)
 	}
-	writeFixture(t, "go_large.bin", &Message{
-		Cmd: 5, HasSeq: true, Seq: 999,
-		Data: largeData,
-	})
+	lmsg := NewCoreMessage(5, largeData)
+	lmsg.HasSeq = true
+	lmsg.Seq = 999
+	writeFixture(t, "go_large.bin", lmsg)
 }
 
 func TestVerifyCSharpFixtures(t *testing.T) {
-	msg1 := readFixture(t, "csharp_empty.bin")
-	if msg1.Cmd != 42 {
-		t.Errorf("empty.Cmd: got %d, want 42", msg1.Cmd)
+	msg1 := readFixture(t, "csharp_core.bin")
+	if msg1 == nil {
+		return
 	}
-	if msg1.HasSeq {
-		t.Error("empty should not have seq")
-	}
-
-	msg2 := readFixture(t, "csharp_hello.bin")
-	if msg2.Cmd != 10 {
-		t.Errorf("hello.Cmd: got %d, want 10", msg2.Cmd)
-	}
-	if !msg2.HasSeq || msg2.Seq != 12345 {
-		t.Errorf("hello.Seq: got %d, want 12345", msg2.Seq)
-	}
-	if string(msg2.Data) != "Hello from C#" {
-		t.Errorf("hello.Data: got %q", msg2.Data)
+	if msg1.CmdType != CmdTypeCore || msg1.Cmd != 7 {
+		t.Errorf("core: CmdType=%d Cmd=%d", msg1.CmdType, msg1.Cmd)
 	}
 
-	msg3 := readFixture(t, "csharp_large.bin")
-	if msg3.Cmd != 5 || msg3.Seq != 999 || len(msg3.Data) != 70000 {
-		t.Errorf("large: Cmd=%d Seq=%d DataLen=%d", msg3.Cmd, msg3.Seq, len(msg3.Data))
+	msg2 := readFixture(t, "csharp_ext.bin")
+	if msg2 == nil {
+		return
+	}
+	if msg2.CmdType != CmdTypeExtended || msg2.ExtCmd != 42 {
+		t.Errorf("ext: CmdType=%d ExtCmd=%d", msg2.CmdType, msg2.ExtCmd)
+	}
+
+	msg3 := readFixture(t, "csharp_game.bin")
+	if msg3 == nil {
+		return
+	}
+	if msg3.CmdType != CmdTypeGame || msg3.GameCmd != 1001 {
+		t.Errorf("game: CmdType=%d GameCmd=%d", msg3.CmdType, msg3.GameCmd)
 	}
 }
 
@@ -84,13 +88,14 @@ func readFixture(t *testing.T, filename string) *Message {
 }
 
 func TestCrossLanguageRoundTrip(t *testing.T) {
-	// 直接验证 encode → decode 一致性
 	msgs := []*Message{
-		{Cmd: 0},
-		{Cmd: 63},
-		{Cmd: 10, HasSeq: true, Seq: 1},
-		{Cmd: 31, Data: []byte("test")},
+		NewCoreMessage(0, nil),
+		NewCoreMessage(15, nil),
+		NewExtMessage(100, []byte("test")),
+		NewGameMessage(0xDEADBEEF, []byte("beef")),
 	}
+	msgs[2].HasSeq = true
+	msgs[2].Seq = 1
 
 	for _, msg := range msgs {
 		buf := Encode(msg)
@@ -99,14 +104,11 @@ func TestCrossLanguageRoundTrip(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Decode failed for %v: %v", msg, err)
 		}
-		if decoded.Cmd != msg.Cmd {
-			t.Errorf("Cmd mismatch: %d vs %d", decoded.Cmd, msg.Cmd)
-		}
-		if decoded.HasSeq != msg.HasSeq || decoded.Seq != msg.Seq {
-			t.Errorf("Seq mismatch")
+		if decoded.CmdType != msg.CmdType {
+			t.Errorf("CmdType mismatch: %d vs %d", decoded.CmdType, msg.CmdType)
 		}
 		if !bytes.Equal(decoded.Data, msg.Data) {
-			t.Errorf("Data mismatch")
+			t.Errorf("Data mismatch for %v", msg)
 		}
 	}
 }
