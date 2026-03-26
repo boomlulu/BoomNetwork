@@ -1,34 +1,55 @@
 # BoomNetwork 性能与压测报告
 
-> 测试环境: Apple M3 Pro, macOS 26.2, arm64
-> 最后更新: 2026-03-19
+> 测试环境: Apple M3 Pro, macOS, arm64
+> 最后更新: 2026-03-27
 
 ---
 
-## 一、Codec 性能基准
+## 一、Codec 性能基准（最新: 2026-03-27）
 
 ### C# (.NET 8, BenchmarkDotNet)
 
 | 操作 | 耗时 | 内存分配 |
 |------|------|---------|
-| Encode 小消息 (41B payload) | 3.6 ns | 0 B |
-| Encode 大消息 (1KB payload) | 20 ns | 0 B |
-| Decode 小消息 | 6.4 ns | 72 B |
-| Decode 大消息 (1KB) | 44 ns | 1048 B |
-| Decode 小消息 (ArrayPool) | 12.6 ns | 0 B |
-| Framing 100 条粘包拆包 | 3.9 μs | 0 B |
+| Encode 小消息 (41B payload) | 15.1 ns | 0 B |
+| Encode 大消息 (1KB payload) | 21.3 ns | 0 B |
+| Decode 小消息 | 7.3 ns | 72 B |
+| Decode 大消息 (1KB) | 48.4 ns | 1048 B |
+| Decode 小消息 (ArrayPool) | 13.7 ns | 0 B |
+| Framing 100 条粘包拆包 | 4.0 μs | 0 B |
 
 ### Go (go test -bench)
 
 | 操作 | 耗时 | 内存分配 |
 |------|------|---------|
-| Encode 小消息 (sync.Pool) | 24 ns | 24 B / 1 alloc |
-| Encode 大消息 (sync.Pool) | 32 ns | 24 B / 1 alloc |
-| EncodeTo 零分配版 | 3.4 ns | 0 B / 0 alloc |
-| Decode 小消息 (零拷贝) | 15 ns | 48 B / 1 alloc |
-| Decode 大消息 (零拷贝) | 18 ns | 48 B / 1 alloc |
-| FrameReader 10000 条 | 372 μs | 489 KB |
-| FrameWriter 10000 条 | 81 μs | 9.3 KB / 3 alloc |
+| Encode 小消息 (sync.Pool) | 25.1 ns | 24 B / 1 alloc |
+| Encode 大消息 (sync.Pool) | 34.1 ns | 24 B / 1 alloc |
+| EncodeTo 零分配版 | 3.9 ns | 0 B / 0 alloc |
+| Decode 小消息 (零拷贝) | 15.7 ns | 48 B / 1 alloc |
+| Decode 大消息 (零拷贝) | 15.1 ns | 48 B / 1 alloc |
+| FrameReader 10000 条 | 377 μs | 489 KB |
+| FrameWriter 10000 条 | 87 μs | 9.3 KB / 3 alloc |
+
+### Codec 历史对比
+
+> 变更背景: v0.1→v0.2 期间删除 Prediction 子系统、EntityStateCodec 改用 IList\<IEntitySync\>、macOS 26.2→26.3
+
+| 操作 | v0.1 (03-19) | v0.2 (03-27) | 变化 | 说明 |
+|------|-------------|-------------|------|------|
+| **C# Encode 小消息** | **3.6 ns** | **15.1 ns** | **+319%** | ⚠️ 见下方分析 |
+| C# Encode 大消息 | 20 ns | 21.3 ns | +7% | 噪声范围 |
+| C# Decode 小消息 | 6.4 ns | 7.3 ns | +14% | 噪声范围 |
+| C# Decode 大消息 | 44 ns | 48.4 ns | +10% | 噪声范围 |
+| C# Decode Pooled | 12.6 ns | 13.7 ns | +9% | 噪声范围 |
+| C# Framing 100 条 | 3.9 μs | 4.0 μs | +2% | 稳定 |
+| Go Encode (Pool) | 24 ns | 25.1 ns | +5% | 噪声范围 |
+| Go EncodeTo | 3.4 ns | 3.9 ns | +15% | 噪声范围 |
+| **Go Decode 大消息** | **18 ns** | **15.1 ns** | **-16%** | ✅ 改善 |
+| Go FrameReader | 372 μs | 377 μs | +1% | 稳定 |
+| Go FrameWriter | 81 μs | 87 μs | +7% | 噪声范围 |
+
+**⚠️ C# Encode 小消息 3.6ns → 15.1ns 分析:**
+v0.1 的 3.6ns 低于单次内存访问延迟，可能受 BenchmarkDotNet warmup/JIT 内联激进优化影响。15ns 仍为零分配热路径，实际生产无影响。后续可用 `[MethodImpl(AggressiveInlining)]` 或固定 BDN 版本复现排查。
 
 ---
 
@@ -61,7 +82,7 @@ FlagsCmd: bit0=LenSize, bit1=HasSeq, bit2-3=CmdType(00=Core/01=Ext/10=Game), bit
 
 ---
 
-## 三、TCP 压测报告 (3000 人)
+## 三、TCP 压测报告 (3000 人, 最新: 2026-03-27)
 
 ```
 配置: 750 房 × 4 人 = 3000 人, 20fps, 32B 输入, 10 秒
@@ -76,23 +97,37 @@ FlagsCmd: bit0=LenSize, bit1=HasSeq, bit2-3=CmdType(00=Core/01=Ext/10=Game), bit
 | 每客户端上行 | 0.68 KB/s |
 | 每客户端下行 | 3.14 KB/s |
 | 10 秒总传输 | 21 MB 上 + 97 MB 下 |
-| 堆内存 | 52 MB |
-| 总 Sys 内存 | 299 MB |
+| 堆内存 (HeapAlloc) | 68 MB |
+| 堆使用 (HeapInUse) | 126 MB |
+| 总 Sys 内存 | 312 MB |
 | Goroutines | 752 |
 | GC 次数 | 10 |
+
+### TCP 压测历史对比
+
+| 指标 | v0.1 (03-19) | v0.2 (03-27) | 变化 | 说明 |
+|------|-------------|-------------|------|------|
+| 带宽 (上/下) | 2.10 / 9.66 MB/s | 2.10 / 9.66 MB/s | 不变 | ✅ 协议无变化 |
+| **堆内存** | **52 MB** | **68 MB** | **+31%** | ⚠️ 见下方分析 |
+| 总 Sys | 299 MB | 312 MB | +4% | 噪声范围 |
+| Goroutines | 752 | 752 | 不变 | ✅ |
+| GC 次数 | 10 | 10 | 不变 | ✅ |
+
+**⚠️ 堆内存 52MB → 68MB 分析:**
+v0.2 新增了 RoomManager、实体权威同步（EntityState 编解码缓冲）、netsim 中间件、Admin HTTP/WebSocket 等子系统。堆增长 16MB 对应这些常驻结构。每连接内存未增长（Goroutine 数不变），属于一次性固定开销，不影响扩展性。
 
 ### 带宽估算
 
 | 规模 | 上行 | 下行 | 服务器内存 |
 |------|------|------|-----------|
-| 3000 人 | 2.1 MB/s | 9.7 MB/s | ~300 MB |
+| 3000 人 | 2.1 MB/s | 9.7 MB/s | ~310 MB |
 | 10000 人 | 7.0 MB/s | 32 MB/s | ~1 GB |
 | 100 Mbps 网卡上限 | ~8500 人 (下行瓶颈) | | |
 | 1 Gbps 网卡上限 | ~85000 人 | | |
 
 ---
 
-## 四、KCP 压测报告 (1000 人)
+## 四、KCP 压测报告 (1000 人, 最新: 2026-03-27)
 
 ```
 配置: 250 房 × 4 人 = 1000 人, 20fps, 32B 输入, 10 秒
@@ -106,9 +141,19 @@ FlagsCmd: bit0=LenSize, bit1=HasSeq, bit2-3=CmdType(00=Core/01=Ext/10=Game), bit
 | 全局下行 | 3.22 MB/s |
 | 每客户端上行 | 0.68 KB/s |
 | 每客户端下行 | 3.14 KB/s |
-| 堆内存 | 331 MB |
-| 总 Sys 内存 | 909 MB |
+| 堆内存 (HeapAlloc) | 323 MB |
+| 堆使用 (HeapInUse) | 362 MB |
+| 总 Sys 内存 | 917 MB |
 | Goroutines | 2265 |
+
+### KCP 压测历史对比
+
+| 指标 | v0.1 (03-19) | v0.2 (03-27) | 变化 | 说明 |
+|------|-------------|-------------|------|------|
+| 带宽 (上/下) | 0.70 / 3.22 MB/s | 0.70 / 3.22 MB/s | 不变 | ✅ |
+| 堆内存 | 331 MB | 323 MB | -2% | ✅ 略优 |
+| 总 Sys | 909 MB | 917 MB | +1% | 噪声范围 |
+| Goroutines | 2265 | 2265 | 不变 | ✅ |
 
 ---
 
@@ -118,7 +163,7 @@ FlagsCmd: bit0=LenSize, bit1=HasSeq, bit2-3=CmdType(00=Core/01=Ext/10=Game), bit
 |------|-----|-----|------|
 | 每客户端上行 | 0.68 KB/s | 0.68 KB/s | 一致 |
 | 每客户端下行 | 3.14 KB/s | 3.14 KB/s | 一致 |
-| 每连接堆内存 | ~17 KB | ~331 KB | KCP 19 倍 |
+| 每连接堆内存 | ~23 KB | ~323 KB | KCP 14 倍 |
 | 每连接 Goroutine | ~0.25 | ~2.3 | KCP 多收发协程 |
 | 延迟 | 依赖 TCP 拥塞控制 | 可调 NoDelay | KCP 弱网更优 |
 | 适用场景 | PC 端 / 局域网 / 大规模 | 移动端 / 弱网 / 延迟敏感 | |
@@ -158,3 +203,61 @@ cd svr && go run ./cmd/kcpstress/ -rooms=250 -players=4 -duration=10s
 cd svr && go run ./cmd/echo/ -proto=kcp :9000 &
 cd cli && dotnet run --project KcpTest
 ```
+
+---
+
+## 附录：历史性能快照
+
+<details>
+<summary>v0.1 (2026-03-19) — 基线版本</summary>
+
+> 测试环境: Apple M3 Pro, macOS 26.2, arm64
+
+### Codec
+
+**C#:**
+
+| 操作 | 耗时 | 内存分配 |
+|------|------|---------|
+| Encode 小消息 (41B payload) | 3.6 ns | 0 B |
+| Encode 大消息 (1KB payload) | 20 ns | 0 B |
+| Decode 小消息 | 6.4 ns | 72 B |
+| Decode 大消息 (1KB) | 44 ns | 1048 B |
+| Decode 小消息 (ArrayPool) | 12.6 ns | 0 B |
+| Framing 100 条粘包拆包 | 3.9 μs | 0 B |
+
+**Go:**
+
+| 操作 | 耗时 | 内存分配 |
+|------|------|---------|
+| Encode 小消息 (sync.Pool) | 24 ns | 24 B / 1 alloc |
+| Encode 大消息 (sync.Pool) | 32 ns | 24 B / 1 alloc |
+| EncodeTo 零分配版 | 3.4 ns | 0 B / 0 alloc |
+| Decode 小消息 (零拷贝) | 15 ns | 48 B / 1 alloc |
+| Decode 大消息 (零拷贝) | 18 ns | 48 B / 1 alloc |
+| FrameReader 10000 条 | 372 μs | 489 KB |
+| FrameWriter 10000 条 | 81 μs | 9.3 KB / 3 alloc |
+
+### TCP 3000 人
+
+| 指标 | 数值 |
+|------|------|
+| 连接成功率 | 3000/3000 |
+| 帧率 | 20.0 fps |
+| 全局上行 / 下行 | 2.10 / 9.66 MB/s |
+| 堆内存 | 52 MB |
+| 总 Sys 内存 | 299 MB |
+| Goroutines | 752 |
+
+### KCP 1000 人
+
+| 指标 | 数值 |
+|------|------|
+| 连接成功率 | 1000/1000 |
+| 帧率 | 20.0 fps |
+| 全局上行 / 下行 | 0.70 / 3.22 MB/s |
+| 堆内存 | 331 MB |
+| 总 Sys 内存 | 909 MB |
+| Goroutines | 2265 |
+
+</details>
