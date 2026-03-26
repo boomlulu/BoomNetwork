@@ -1,7 +1,7 @@
 package session
 
 import (
-	"fmt"
+	"log/slog"
 	"sync"
 
 	"github.com/boom/boomnetwork/codec"
@@ -129,8 +129,8 @@ func (r *Router) dispatchLocked(conn *transport.Conn, msg *codec.Message,
 		return fallback(conn, msg)
 	}
 
-	fmt.Printf("[Router] No handler for CmdType=%d Cmd=%d ExtCmd=%d GameCmd=%d\n",
-		msg.CmdType, msg.Cmd, msg.ExtCmd, msg.GameCmd)
+	slog.Warn("no handler for message", "component", "router",
+		"cmdType", msg.CmdType, "cmd", msg.Cmd, "extCmd", msg.ExtCmd, "gameCmd", msg.GameCmd)
 	return nil
 }
 
@@ -145,7 +145,7 @@ func (r *Router) AsTransportHandler() transport.Handler {
 		rsp.HasSeq = msg.HasSeq
 		rsp.Seq = msg.Seq
 		if err := conn.Send(rsp); err != nil {
-			fmt.Printf("[Router] Send response to client %d failed: %v\n", conn.ID, err)
+			slog.Warn("send response failed", "component", "router", "connId", conn.ID, "err", err)
 		}
 	}
 }

@@ -2,6 +2,7 @@ package transport
 
 import (
 	"fmt"
+	"log/slog"
 	"net"
 	"sync"
 	"time"
@@ -105,7 +106,7 @@ func (s *TcpServer) Listen(addr string) error {
 		return fmt.Errorf("listen %s: %w", addr, err)
 	}
 	s.listener = ln
-	fmt.Printf("[Server] Listening on %s\n", addr)
+	slog.Info("listening", "component", "tcp", "addr", addr)
 
 	go s.acceptLoop()
 	return nil
@@ -155,7 +156,7 @@ func (s *TcpServer) acceptLoop() {
 		s.conns[c.ID] = c
 		s.mu.Unlock()
 
-		fmt.Printf("[Server] Client %d connected from %s\n", c.ID, raw.RemoteAddr())
+		slog.Info("client connected", "component", "tcp", "connId", c.ID, "addr", raw.RemoteAddr())
 		go s.handleConn(c)
 	}
 }
@@ -169,7 +170,7 @@ func (s *TcpServer) handleConn(c *Conn) {
 			s.onDisconnect(c)
 		}
 		c.Close()
-		fmt.Printf("[Server] Client %d disconnected\n", c.ID)
+		slog.Info("client disconnected", "component", "tcp", "connId", c.ID)
 	}()
 
 	reader := codec.NewFrameReader(c.conn)
@@ -190,7 +191,7 @@ func (s *TcpServer) handleConn(c *Conn) {
 
 		// 速率限制
 		if c.rateLimiter != nil && !c.rateLimiter.Allow() {
-			fmt.Printf("[Server] Client %d rate limited, disconnecting\n", c.ID)
+			slog.Warn("client rate limited, disconnecting", "component", "tcp", "connId", c.ID)
 			if s.onRateLimited != nil {
 				s.onRateLimited()
 			}

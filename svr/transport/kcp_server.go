@@ -2,6 +2,7 @@ package transport
 
 import (
 	"fmt"
+	"log/slog"
 	"net"
 	"sync"
 	"time"
@@ -60,7 +61,7 @@ func (s *KcpServer) Listen(addr string) error {
 		return fmt.Errorf("kcp listen %s: %w", addr, err)
 	}
 	s.listener = ln
-	fmt.Printf("[KcpServer] Listening on %s\n", addr)
+	slog.Info("listening", "component", "kcp", "addr", addr)
 
 	go s.acceptLoop()
 	return nil
@@ -110,7 +111,7 @@ func (s *KcpServer) acceptLoop() {
 		s.conns[c.ID] = c
 		s.mu.Unlock()
 
-		fmt.Printf("[KcpServer] Client %d connected from %s\n", c.ID, raw.RemoteAddr())
+		slog.Info("client connected", "component", "kcp", "connId", c.ID, "addr", raw.RemoteAddr())
 		go s.handleConn(c)
 	}
 }
@@ -124,7 +125,7 @@ func (s *KcpServer) handleConn(c *Conn) {
 			s.onDisconnect(c)
 		}
 		c.Close()
-		fmt.Printf("[KcpServer] Client %d disconnected\n", c.ID)
+		slog.Info("client disconnected", "component", "kcp", "connId", c.ID)
 	}()
 
 	reader := codec.NewFrameReader(c.conn)
@@ -141,7 +142,7 @@ func (s *KcpServer) handleConn(c *Conn) {
 
 		// 速率限制（与 TCP 一致）
 		if c.rateLimiter != nil && !c.rateLimiter.Allow() {
-			fmt.Printf("[KcpServer] Client %d rate limited, disconnecting\n", c.ID)
+			slog.Warn("client rate limited, disconnecting", "component", "kcp", "connId", c.ID)
 			if s.onRateLimited != nil {
 				s.onRateLimited()
 			}
