@@ -12,19 +12,25 @@ import (
 
 // KcpServer KCP 服务器
 type KcpServer struct {
-	listener     *kcp.Listener
-	handler      Handler
-	config       ServerConfig
-	security     SecurityConfig
-	nextID       int
-	mu           sync.Mutex
-	conns        map[int]*Conn
-	onDisconnect func(*Conn)
+	listener      *kcp.Listener
+	handler       Handler
+	config        ServerConfig
+	security      SecurityConfig
+	nextID        int
+	mu            sync.Mutex
+	conns         map[int]*Conn
+	onDisconnect  func(*Conn)
+	onRateLimited func()
 }
 
 // SetOnDisconnect 设置断开连接回调
 func (s *KcpServer) SetOnDisconnect(fn func(*Conn)) {
 	s.onDisconnect = fn
+}
+
+// SetOnRateLimited 设置限流回调
+func (s *KcpServer) SetOnRateLimited(fn func()) {
+	s.onRateLimited = fn
 }
 
 // SetSecurity 设置安全配置
@@ -40,9 +46,10 @@ func NewKcpServer(handler Handler, configs ...ServerConfig) *KcpServer {
 		cfg = configs[0]
 	}
 	return &KcpServer{
-		handler: handler,
-		config:  cfg,
-		conns:   make(map[int]*Conn),
+		handler:  handler,
+		config:   cfg,
+		security: DefaultSecurityConfig(),
+		conns:    make(map[int]*Conn),
 	}
 }
 
@@ -95,9 +102,10 @@ func (s *KcpServer) acceptLoop() {
 		s.mu.Lock()
 		s.nextID++
 		c := &Conn{
-			ID:     s.nextID,
-			conn:   raw,
-			writer: codec.NewFrameWriter(raw),
+			ID:          s.nextID,
+			conn:        raw,
+			writer:      codec.NewFrameWriter(raw),
+			rateLimiter: NewRateLimiter(s.security.MaxMessagesPerSec),
 		}
 		s.conns[c.ID] = c
 		s.mu.Unlock()
@@ -130,6 +138,16 @@ func (s *KcpServer) handleConn(c *Conn) {
 		if err != nil {
 			return
 		}
+
+		// 速率限制（与 TCP 一致）
+		if c.rateLimiter != nil && !c.rateLimiter.Allow() {
+			fmt.Printf("[KcpServer] Client %d rate limited, disconnecting\n", c.ID)
+			if s.onRateLimited != nil {
+				s.onRateLimited()
+			}
+			return
+		}
+
 		s.handler(c, msg)
 	}
 }
@@ -143,6 +161,7 @@ type Server interface {
 	Close()
 	ConnCount() int
 	SetOnDisconnect(fn func(*Conn))
+	SetOnRateLimited(fn func())
 	SetSecurity(cfg SecurityConfig)
 }
 

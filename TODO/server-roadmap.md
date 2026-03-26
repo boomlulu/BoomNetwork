@@ -43,18 +43,20 @@
 
 ---
 
-## 一、紧急且重要 — 阻断上线的硬伤
+## 一、紧急且重要 — 阻断上线的硬伤 ✅
 
 > **判断标准**：这些问题在真实对局中**一定会触发**，且后果不可接受
+>
+> **已完成**（2026-03-26）
 
-| # | 任务 | 问题 | 方案 | 优先级 |
-|---|------|------|------|--------|
-| S1 | **Prometheus 指标修复** | `frames_pushed`/`bytes_sent`/`bytes_received`/`message_errors`/`rate_limited` 5 个指标定义了但从未递增；`rooms_current` 只增不减 | 在对应代码路径补上 `.Inc()`/`.Dec()`，删除永远不会触发的僵尸指标 | P0 |
-| S2 | **KCP 限流对齐** | TCP 有 RateLimiter，KCP 完全没有。恶意客户端可无限发包 | KCP 连接创建时也设置 `NewRateLimiter`，与 TCP 一致 | P0 |
-| S3 | **Room panic 恢复一致性** | `recover()` 后 `running=false`，但 `players` map 和 `playerRoomMap` 残留 → 玩家重连找到僵尸房间 | panic 恢复后调用 `RoomManager.RemoveRoom()`，广播 `CmdStopFrameSync` 给所有在线玩家 | P0 |
-| S4 | **重连竞态修复** | 快速多次重连时 `connPlayerMap`/`playerConnMap` 可能不一致 → 旧连接和新连接争夺同一 playerId | 重连时先 CAS 检查旧连接，关闭旧连接后再写入新映射 | P0 |
-| S5 | **JoinRoom 错误码区分** | "房间不存在"/"房间已满"/"未绑定" 都返回 8 字节零 → 客户端无法提示用户 | 定义 JoinRoomResult 枚举（Success/NotFound/Full/NotBound），写入响应第一字节 | P1 |
-| S6 | **playerRate map 泄漏** | `playerRate` 只增不删，长时间运行后内存持续增长 | 玩家断线时 `delete(playerRate, pid)`，或加 TTL 过期清理 | P1 |
+| # | 任务 | 问题 | 方案 | 状态 |
+|---|------|------|------|------|
+| S1 | **Prometheus 指标修复** | `frames_pushed`/`bytes_sent`/`bytes_received`/`message_errors`/`rate_limited` 5 个指标定义了但从未递增；`rooms_current` 从未被调用 | 在 stepFrame/rxHandler/txStats/statsConn/sendMsg 路径补上 `.Inc()`/`.Add()`；RoomManager 的 create/remove/cleanup/stopAll 全路径补上 `RoomsCurrent.Inc()/Dec()/Sub()` | ✅ |
+| S2 | **KCP 限流对齐** | TCP 有 RateLimiter，KCP 完全没有。恶意客户端可无限发包 | KCP 连接创建时设置 `NewRateLimiter`，handleConn 中加 `Allow()` 检查，与 TCP 一致；KcpServer 构造函数初始化 `DefaultSecurityConfig()` | ✅ |
+| S3 | **Room panic 恢复一致性** | `recover()` 后 `running=false`，但 `players` map 和 `playerRoomMap` 残留 → 玩家重连找到僵尸房间 | panic 恢复时：广播 `CmdStopFrameSync`、清空 players map、通过 `OnPanic` 回调清理 `playerRoomMap` 并调 `RoomManager.RemoveRoom()` | ✅ |
+| S4 | **重连竞态修复** | 快速多次重连时 `connPlayerMap`/`playerConnMap` 可能不一致 → 旧连接和新连接争夺同一 playerId | 重连时先关闭旧连接并清理旧 connID 映射；`onClientDisconnect` 用 CAS 检查 `playerConnMap` 是否仍指向当前 conn，防止覆盖新连接 | ✅ |
+| S5 | **JoinRoom 错误码区分** | "房间不存在"/"房间已满"/"未绑定" 都返回 8 字节零 → 客户端无法提示用户 | 定义 `JoinRoomResult` 枚举（Success=0/NotFound=1/Full=2/NotBound=3/BadData=4），错误码写入 byte[4]（向后兼容：PlayerId=0 仍表示失败） | ✅ |
+| S6 | **playerRate map 泄漏** | `playerRate` 只增不删，长时间运行后内存持续增长 | 添加 `PlayerRates.Remove(pid)`，在 `onClientDisconnect` 中调用清理 | ✅ |
 
 ---
 
@@ -127,15 +129,14 @@
 ## 下一步建议
 
 ```
-Phase 1 — 止血（1-2 天）:
-  S1 指标修复 → S2 KCP 限流 → S3 panic 恢复 → S4 重连竞态 → S6 map 泄漏
-  这些都是 bug fix 级别，改动小但不修就是定时炸弹
+Phase 1 — 止血 ✅（2026-03-26 完成）:
+  S1 指标修复 → S2 KCP 限流 → S3 panic 恢复 → S4 重连竞态 → S5 错误码 → S6 map 泄漏
 
-Phase 2 — 可观测（2-3 天）:
+Phase 2 — 可观测（下一步）:
   S7 结构化日志 → S9 指标补全 → S10 Grafana 模板
   没有可观测性 = 线上裸奔
 
-Phase 3 — 安全 + 运维（1-2 天）:
+Phase 3 — 安全 + 运维:
   S15 token 环境变量 → S16 bind 失败断连 → S19 systemd 入库 → S20 Docker 修复
 
 验收标准:

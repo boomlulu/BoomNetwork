@@ -41,6 +41,7 @@ namespace BoomNetwork.Core
         JoinRoomFailed      = 5001,
         RoomNotFound        = 5002,
         RoomFull            = 5003,
+        RoomNotBound        = 5004, // SessionBind 未调用
     }
 
     /// <summary>

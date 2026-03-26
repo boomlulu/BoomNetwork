@@ -98,6 +98,9 @@ type Room struct {
 	// 轻量状态同步 KV 存储
 	dataStore   map[int64]DataEntry // key = DataStoreKey(playerId, key)
 	dataVersion uint32
+
+	// panic 恢复回调：通知外部清理 playerRoomMap 等全局状态
+	OnPanic func(room *Room, playerIds []int32)
 }
 
 // NewRoom 创建帧同步房间
@@ -409,9 +412,25 @@ func (r *Room) tickLoop() {
 		if rec := recover(); rec != nil {
 			log.Printf("[Room %d] PANIC recovered: %v\n", r.ID, rec)
 			Metrics.RoomPanics.Inc()
+
+			// 广播 StopFrameSync 给所有在线玩家
+			r.broadcast(codec.NewCoreMessage(CmdStopFrameSync, nil))
+
+			// 收集玩家 ID 并清理房间状态
 			r.mu.Lock()
 			r.running = false
+			playerIds := make([]int32, 0, len(r.players))
+			for id := range r.players {
+				playerIds = append(playerIds, id)
+			}
+			r.players = make(map[int32]*Player)
+			onPanic := r.OnPanic
 			r.mu.Unlock()
+
+			// 通知外部清理全局映射（playerRoomMap 等）
+			if onPanic != nil {
+				onPanic(r, playerIds)
+			}
 		}
 	}()
 
@@ -499,6 +518,7 @@ func (r *Room) stepFrame() {
 	r.mu.Unlock()
 
 	// 广播在锁外执行，不阻塞其他操作
+	Metrics.FramesPushed.Inc()
 	msg := codec.NewCoreMessage(CmdPushFrames, r.frameBuf[:size])
 	for _, p := range r.broadcastSlice {
 		p.Conn.Send(msg)

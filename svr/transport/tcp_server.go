@@ -65,6 +65,12 @@ type TcpServer struct {
 	mu           sync.Mutex
 	conns        map[int]*Conn
 	onDisconnect func(*Conn)
+	onRateLimited func() // 触发限流时回调（用于指标统计）
+}
+
+// SetOnRateLimited 设置限流回调
+func (s *TcpServer) SetOnRateLimited(fn func()) {
+	s.onRateLimited = fn
 }
 
 // SetSecurity 设置安全配置
@@ -185,6 +191,9 @@ func (s *TcpServer) handleConn(c *Conn) {
 		// 速率限制
 		if c.rateLimiter != nil && !c.rateLimiter.Allow() {
 			fmt.Printf("[Server] Client %d rate limited, disconnecting\n", c.ID)
+			if s.onRateLimited != nil {
+				s.onRateLimited()
+			}
 			return
 		}
 

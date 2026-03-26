@@ -123,6 +123,7 @@ func main() {
 	baseDispatch := router.Dispatch
 	rxHandler := func(conn *transport.Conn, msg *codec.Message) {
 		GameStats.RecordRx(int64(len(msg.Data)))
+		framesync.Metrics.BytesReceived.Add(float64(len(msg.Data)))
 		// 关键 RX 消息的日志在 txStats 中带 detail 记录，这里跳过避免双记
 		if msg.CmdType == codec.CmdTypeCore && msg.Cmd == framesync.CmdReconnect {
 			// txStats 已处理
@@ -145,6 +146,7 @@ func main() {
 	}
 	server := transport.NewServer(*proto, rxHandler)
 	server.SetOnDisconnect(onClientDisconnect)
+	server.SetOnRateLimited(func() { framesync.Metrics.RateLimited.Inc() })
 
 	// 安全配置
 	secCfg := transport.DefaultSecurityConfig()
@@ -223,7 +225,20 @@ func onClientDisconnect(conn *transport.Conn) {
 		return
 	}
 	playerId := val.(int32)
-	playerConnMap.Delete(playerId)
+
+	// CAS 检查：只有当 playerConnMap 中仍指向当前 conn 时才删除
+	// 防止重连后旧连接断开覆盖新连接的映射
+	currentConn, loaded := playerConnMap.Load(playerId)
+	if loaded && currentConn.(*transport.Conn) == conn {
+		playerConnMap.Delete(playerId)
+	} else {
+		// 已被新连接替换，跳过房间断线处理
+		log.Printf("[Server] Player %d old conn %d disconnected (already reconnected), skip room cleanup\n", playerId, conn.ID)
+		return
+	}
+
+	// 清理 per-player 速率统计，防止 map 泄漏
+	PlayerRates.Remove(playerId)
 
 	roomVal, ok := playerRoomMap.Load(playerId)
 	if !ok {
@@ -328,6 +343,7 @@ func handleHeartbeat(conn *transport.Conn, msg *codec.Message) *codec.Message {
 
 func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	if len(msg.Data) < 4 {
+		framesync.Metrics.MessageErrors.Inc()
 		rsp := framesync.EncodeReconnectRsp(framesync.ReconnectFail, 0, 0, 0, nil)
 		return codec.NewCoreMessage(framesync.CmdReconnectRsp, rsp)
 	}
@@ -369,10 +385,19 @@ func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
 		}
 	}
 
+	// 关闭旧连接（如果存在），防止旧连接的 disconnect 回调干扰新映射
+	if oldConn, ok := playerConnMap.Load(playerId); ok {
+		oldC := oldConn.(*transport.Conn)
+		if oldC != conn {
+			connPlayerMap.Delete(oldC.ID) // 先清理旧 connID 映射
+			oldC.Close()
+		}
+	}
+
 	// 更新连接映射
 	connPlayerMap.Store(conn.ID, playerId)
 	playerConnMap.Store(playerId, conn)
-	room.AddPlayer(playerId, conn)
+	room.AddPlayer(playerId, &statsConn{inner: &simConn{inner: conn, cfg: GlobalNetSim}, pid: playerId})
 
 	// 决定从哪帧开始补帧
 	var replayFrom uint32
@@ -440,19 +465,20 @@ func handleCreateRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 
 func handleJoinRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	if len(msg.Data) < 4 {
-		return codec.NewExtMessage(framesync.ExtCmdJoinRoomRsp, make([]byte, 8))
+		framesync.Metrics.MessageErrors.Inc()
+		return codec.NewExtMessage(framesync.ExtCmdJoinRoomRsp, framesync.EncodeJoinRoomError(framesync.JoinRoomBadData))
 	}
 
 	roomId := int32(binary.LittleEndian.Uint32(msg.Data[0:4]))
 	room := roomMgr.GetRoom(roomId)
 	if room == nil {
 		log.Printf("[Server] JoinRoom failed: room %d not found\n", roomId)
-		return codec.NewExtMessage(framesync.ExtCmdJoinRoomRsp, make([]byte, 8))
+		return codec.NewExtMessage(framesync.ExtCmdJoinRoomRsp, framesync.EncodeJoinRoomError(framesync.JoinRoomNotFound))
 	}
 
 	if room.PlayerCount() >= room.MaxPlayers() {
 		log.Printf("[Server] JoinRoom failed: room %d full\n", roomId)
-		return codec.NewExtMessage(framesync.ExtCmdJoinRoomRsp, make([]byte, 8))
+		return codec.NewExtMessage(framesync.ExtCmdJoinRoomRsp, framesync.EncodeJoinRoomError(framesync.JoinRoomFull))
 	}
 
 	// 先取已有玩家列表（新人加入前）
@@ -462,7 +488,7 @@ func handleJoinRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	val, ok := connPlayerMap.Load(conn.ID)
 	if !ok {
 		log.Printf("[Server] JoinRoom failed: conn %d not bound (SessionBind missing)\n", conn.ID)
-		return codec.NewExtMessage(framesync.ExtCmdJoinRoomRsp, make([]byte, 8))
+		return codec.NewExtMessage(framesync.ExtCmdJoinRoomRsp, framesync.EncodeJoinRoomError(framesync.JoinRoomNotBound))
 	}
 	playerId := val.(int32)
 	bindPlayerToRoom(playerId, conn, room)
@@ -668,6 +694,20 @@ func bindPlayerToRoom(playerId int32, conn *transport.Conn, room *framesync.Room
 	playerRoomMap.Store(playerId, room)
 	playerConnMap.Store(playerId, conn)
 	room.AddPlayer(playerId, &statsConn{inner: &simConn{inner: conn, cfg: GlobalNetSim}, pid: playerId})
+
+	// 确保 panic 恢复回调已设置（幂等）
+	if room.OnPanic == nil {
+		room.OnPanic = onRoomPanic
+	}
+}
+
+// onRoomPanic Room tickLoop panic 后清理全局映射并移除僵尸房间
+func onRoomPanic(room *framesync.Room, playerIds []int32) {
+	for _, pid := range playerIds {
+		playerRoomMap.Delete(pid)
+	}
+	roomMgr.RemoveRoom(room.ID)
+	log.Printf("[Server] Room %d cleaned up after panic (evicted %d players)\n", room.ID, len(playerIds))
 }
 
 func handleRequestStart(conn *transport.Conn, msg *codec.Message) *codec.Message {
@@ -730,6 +770,7 @@ func handleRequestStop(conn *transport.Conn, msg *codec.Message) *codec.Message 
 // sendMsg 发送消息并记录游戏 TX 流量 + 消息日志
 func sendMsg(conn *transport.Conn, msg *codec.Message) {
 	GameStats.RecordTx(int64(len(msg.Data)))
+	framesync.Metrics.BytesSent.Add(float64(len(msg.Data)))
 	logMsgFromMsg("tx", msg, connPid(conn), "")
 	conn.Send(msg)
 }

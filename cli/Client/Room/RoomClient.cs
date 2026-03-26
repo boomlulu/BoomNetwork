@@ -87,7 +87,7 @@ namespace BoomNetwork.Client.Room
                     var (playerId, rspRoomId, existingPlayers) = RoomCodec.DecodeJoinRoomRsp(msg.DataSpan);
                     if (playerId == 0)
                     {
-                        OnError?.Invoke(new NetworkError(ErrorCode.JoinRoomFailed, $"Join room {roomId} failed"));
+                        OnError?.Invoke(new NetworkError(JoinRoomErrorCode(rspRoomId), $"Join room {roomId} failed ({JoinRoomErrorName(rspRoomId)})"));
                         return;
                     }
                     MyPlayerId = playerId;
@@ -114,7 +114,7 @@ namespace BoomNetwork.Client.Room
                     var (playerId, rspRoomId, existingPlayers) = RoomCodec.DecodeJoinRoomRsp(msg.DataSpan);
                     if (playerId == 0)
                     {
-                        OnError?.Invoke(new NetworkError(ErrorCode.JoinRoomFailed, "MatchRoom failed"));
+                        OnError?.Invoke(new NetworkError(JoinRoomErrorCode(rspRoomId), $"MatchRoom failed ({JoinRoomErrorName(rspRoomId)})"));
                         return;
                     }
                     MyPlayerId = playerId;
@@ -144,6 +144,24 @@ namespace BoomNetwork.Client.Room
                     OnError?.Invoke(err);
                 });
         }
+
+        // JoinRoom 服务端错误码 → 客户端 ErrorCode 映射
+        private static ErrorCode JoinRoomErrorCode(int serverCode) => serverCode switch
+        {
+            1 => ErrorCode.RoomNotFound,
+            2 => ErrorCode.RoomFull,
+            3 => ErrorCode.RoomNotBound,
+            _ => ErrorCode.JoinRoomFailed,
+        };
+
+        private static string JoinRoomErrorName(int serverCode) => serverCode switch
+        {
+            1 => "NotFound",
+            2 => "Full",
+            3 => "NotBound",
+            4 => "BadData",
+            _ => "Unknown",
+        };
 
         private void HandleMessage(Message msg)
         {

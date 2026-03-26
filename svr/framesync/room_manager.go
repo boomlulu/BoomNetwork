@@ -32,6 +32,7 @@ func (rm *RoomManager) createRoomLocked() *Room {
 	room := NewRoomWithConfig(rm.config)
 	room.ID = id
 	rm.rooms[id] = room
+	Metrics.RoomsCurrent.Inc()
 	log.Printf("[RoomManager] Room %d created\n", id)
 	return room
 }
@@ -61,6 +62,7 @@ func (rm *RoomManager) RemoveRoom(id int32) {
 
 	if ok {
 		room.Stop()
+		Metrics.RoomsCurrent.Dec()
 		log.Printf("[RoomManager] Room %d removed\n", id)
 	}
 }
@@ -98,6 +100,7 @@ func (rm *RoomManager) CreateRoomWithMaxPlayers(maxPlayers int) *Room {
 	room := NewRoomWithConfig(cfg)
 	room.ID = id
 	rm.rooms[id] = room
+	Metrics.RoomsCurrent.Inc()
 	log.Printf("[RoomManager] Room %d created (max=%d)\n", id, maxPlayers)
 	return room
 }
@@ -117,6 +120,7 @@ func (rm *RoomManager) CleanupEmptyRooms() int {
 	rm.mu.Unlock()
 
 	if len(toRemove) > 0 {
+		Metrics.RoomsCurrent.Sub(float64(len(toRemove)))
 		log.Printf("[RoomManager] Cleaned up %d empty room(s): %v\n", len(toRemove), toRemove)
 	}
 	return len(toRemove)
@@ -135,6 +139,7 @@ func (rm *RoomManager) StopAll() {
 	for _, r := range rooms {
 		r.Stop()
 	}
+	Metrics.RoomsCurrent.Sub(float64(len(rooms)))
 	log.Printf("[RoomManager] All %d rooms stopped\n", len(rooms))
 }
 
@@ -157,6 +162,7 @@ func (rm *RoomManager) MatchRoom(maxPlayers int, matchKey string) *Room {
 	room.ID = id
 	room.MatchKey = matchKey
 	rm.rooms[id] = room
+	Metrics.RoomsCurrent.Inc()
 	log.Printf("[RoomManager] Room %d created by match (max=%d, key=%q)\n", id, maxPlayers, matchKey)
 	return room
 }

@@ -234,7 +234,27 @@ func EncodeRoomList(rooms []RoomInfo) []byte {
 	return buf
 }
 
-// EncodeJoinRoomRsp 编码加入房间响应
+// JoinRoomResult 加入房间结果码
+type JoinRoomResult byte
+
+const (
+	JoinRoomSuccess  JoinRoomResult = 0
+	JoinRoomNotFound JoinRoomResult = 1
+	JoinRoomFull     JoinRoomResult = 2
+	JoinRoomNotBound JoinRoomResult = 3 // SessionBind 未调用
+	JoinRoomBadData  JoinRoomResult = 4 // 请求数据格式错误
+)
+
+// EncodeJoinRoomError 编码加入房间失败响应
+// Wire: [PlayerId=0:4][ErrorCode:1][0,0,0] — 8 字节
+// PlayerId=0 表示失败（与旧版兼容），ErrorCode 在 byte[4] 区分原因
+func EncodeJoinRoomError(result JoinRoomResult) []byte {
+	buf := make([]byte, 8)
+	buf[4] = byte(result)
+	return buf
+}
+
+// EncodeJoinRoomRsp 编码加入房间成功响应
 // Wire: [PlayerId:4][RoomId:4][PlayerCount:2][PlayerIds:4×N]
 func EncodeJoinRoomRsp(playerId int32, roomId int32, existingPlayerIds []int32) []byte {
 	buf := make([]byte, 8+2+len(existingPlayerIds)*4)

@@ -249,6 +249,7 @@ func txStats(h session.Handler) session.Handler {
 		rsp := h(conn, msg)
 		if rsp != nil {
 			GameStats.RecordTx(int64(len(rsp.Data)))
+			framesync.Metrics.BytesSent.Add(float64(len(rsp.Data)))
 			// TX 侧关键消息解码
 			if rsp.CmdType == codec.CmdTypeCore && rsp.Cmd == framesync.CmdStartFrameSync {
 				if len(rsp.Data) >= 8 {
@@ -294,6 +295,7 @@ type statsConn struct {
 
 func (sc *statsConn) Send(msg *codec.Message) error {
 	GameStats.RecordTx(int64(len(msg.Data)))
+	framesync.Metrics.BytesSent.Add(float64(len(msg.Data)))
 	logMsgFromMsg("tx", msg, sc.pid, "")
 	return sc.inner.Send(msg)
 }
@@ -319,6 +321,13 @@ type rateBucket struct {
 }
 
 var PlayerRates = &playerRate{counts: make(map[int32]*[ringSize]rateBucket)}
+
+// Remove 删除玩家的速率记录（断线清理用）
+func (pr *playerRate) Remove(pid int32) {
+	pr.mu.Lock()
+	delete(pr.counts, pid)
+	pr.mu.Unlock()
+}
 
 func (pr *playerRate) Record(pid int32) {
 	if pid <= 0 {
