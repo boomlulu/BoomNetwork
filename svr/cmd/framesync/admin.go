@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"runtime"
@@ -49,6 +49,8 @@ func startAdminServer(ctx context.Context, addr, token string) {
 	mux.HandleFunc("/perf", withAuth(token, handlePerf))
 	mux.HandleFunc("/rates", withAuth(token, handleRates))
 	mux.HandleFunc("/netsim", withAuth(token, handleNetSim))
+	mux.HandleFunc("/log-level", withAuth(token, handleLogLevel))
+	mux.HandleFunc("/config/reload", withAuth(token, handleConfigReload))
 
 	// WebSocket GM 长连接
 	hub := newGMHub(ctx)
@@ -68,12 +70,12 @@ func startAdminServer(ctx context.Context, addr, token string) {
 		hub.Stop()
 	}()
 
-	log.Printf("[Admin] Listening on %s (HTTP + WebSocket)\n", addr)
+	slog.Info("admin listening", "addr", addr)
 	if token != "" {
-		log.Printf("[Admin] Auth enabled (Bearer Token)\n")
+		slog.Info("admin auth enabled")
 	}
 	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
-		log.Printf("[Admin] Failed: %v\n", err)
+		slog.Error("admin server failed", "error", err)
 	}
 }
 
@@ -261,7 +263,7 @@ func handleKick(w http.ResponseWriter, r *http.Request) {
 	// 通知同房其他玩家
 	broadcastToRoom(room, playerId, codec.NewExtMessage(framesync.ExtCmdPlayerLeft, framesync.EncodePlayerId(playerId)))
 
-	log.Printf("[Admin] Kicked player %d from room %d\n", playerId, room.ID)
+	slog.Info("admin kicked player", "player_id", playerId, "room_id", room.ID)
 
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"ok":true,"kicked":%d,"room":%d}`, playerId, room.ID)
@@ -301,7 +303,7 @@ func handleStopRoom(w http.ResponseWriter, r *http.Request) {
 	// 从管理器移除
 	roomMgr.RemoveRoom(roomId)
 
-	log.Printf("[Admin] Stopped and removed room %d\n", roomId)
+	slog.Info("admin stopped room", "room_id", roomId)
 
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"ok":true,"stopped":%d}`, roomId)
@@ -339,7 +341,7 @@ func handleAdminKillRoom(w http.ResponseWriter, r *http.Request) {
 	room.Stop()
 	roomMgr.RemoveRoom(roomId)
 
-	log.Printf("[Admin] Killed room %d (force)\n", roomId)
+	slog.Info("admin killed room", "room_id", roomId)
 
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"ok":true,"killed":%d}`, roomId)
@@ -364,7 +366,7 @@ func handleAdminCreateRoom(w http.ResponseWriter, r *http.Request) {
 	room := roomMgr.CreateRoomWithMaxPlayers(maxPlayers)
 	room.MatchKey = matchKey
 
-	log.Printf("[Admin] Created room %d (max=%d, key=%q)\n", room.ID, maxPlayers, matchKey)
+	slog.Info("admin created room", "room_id", room.ID, "max_players", maxPlayers, "match_key", matchKey)
 
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"ok":true,"room_id":%d}`, room.ID)
@@ -538,16 +540,57 @@ func handleNetSim(w http.ResponseWriter, r *http.Request) {
 		if req.LossPercent != nil {
 			atomic.StoreInt32(&GlobalNetSim.LossPercent, int32(*req.LossPercent))
 		}
-		log.Printf("[Admin] NetSim updated: enabled=%v latency=%dms jitter=%dms loss=%d%%\n",
-			GlobalNetSim.IsEnabled(),
-			atomic.LoadInt32(&GlobalNetSim.LatencyMs),
-			atomic.LoadInt32(&GlobalNetSim.JitterMs),
-			atomic.LoadInt32(&GlobalNetSim.LossPercent))
+		slog.Info("admin netsim updated",
+			"enabled", GlobalNetSim.IsEnabled(),
+			"latency_ms", atomic.LoadInt32(&GlobalNetSim.LatencyMs),
+			"jitter_ms", atomic.LoadInt32(&GlobalNetSim.JitterMs),
+			"loss_percent", atomic.LoadInt32(&GlobalNetSim.LossPercent))
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, `{"ok":true}`)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// ===================== GET/POST /log-level (S8) =====================
+
+func handleLogLevel(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"level":%q}`, logLevel.Level().String())
+	case http.MethodPost:
+		var body struct {
+			Level string `json:"level"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "bad json", http.StatusBadRequest)
+			return
+		}
+		var lvl slog.Level
+		if err := lvl.UnmarshalText([]byte(body.Level)); err != nil {
+			http.Error(w, "invalid level (use DEBUG/INFO/WARN/ERROR)", http.StatusBadRequest)
+			return
+		}
+		logLevel.Set(lvl)
+		slog.Info("log level changed", "level", lvl.String())
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"level":%q}`, lvl.String())
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// ===================== POST /config/reload (S12) =====================
+
+func handleConfigReload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	reloadConfig()
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{"ok":true,"level":%q}`, logLevel.Level().String())
 }
 
 func jsonError(w http.ResponseWriter, code int, msg string) {

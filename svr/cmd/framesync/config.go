@@ -1,7 +1,7 @@
 package main
 
 import (
-	"log"
+	"log/slog"
 	"os"
 
 	"go.yaml.in/yaml/v2"
@@ -53,6 +53,9 @@ type ServerConfig struct {
 	// 安全限流
 	MaxMessageSize    int `yaml:"maxMessageSize"`
 	MaxMessagesPerSec int `yaml:"maxMessagesPerSec"`
+
+	// 日志级别（热重载）: DEBUG / INFO / WARN / ERROR
+	LogLevel string `yaml:"logLevel"`
 }
 
 func DefaultConfig() ServerConfig {
@@ -74,6 +77,7 @@ func DefaultConfig() ServerConfig {
 
 		MaxMessageSize:    65536,
 		MaxMessagesPerSec: 100,
+		LogLevel:          "info",
 	}
 }
 
@@ -86,16 +90,16 @@ func LoadConfig(path string) ServerConfig {
 
 	data, err := os.ReadFile(path)
 	if err != nil {
-		log.Printf("[Config] File %s not found, using defaults\n", path)
+		slog.Warn("config file not found, using defaults", "path", path)
 		return cfg
 	}
 
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		log.Printf("[Config] Parse error: %v, using defaults\n", err)
+		slog.Warn("config parse error, using defaults", "error", err)
 		return cfg
 	}
 
-	log.Printf("[Config] Loaded from %s\n", path)
+	slog.Info("config loaded", "path", path)
 	return cfg
 }
 
@@ -154,5 +158,5 @@ maxMessageSize: 65536     # 单条消息最大字节
 maxMessagesPerSec: 100    # 每秒最大消息数
 `
 	os.WriteFile(path, []byte(content), 0644)
-	log.Printf("[Config] Default config saved to %s\n", path)
+	slog.Info("config default saved", "path", path)
 }
