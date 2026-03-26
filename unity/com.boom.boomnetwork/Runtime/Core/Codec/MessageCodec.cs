@@ -1,6 +1,7 @@
 using System;
 using System.Buffers;
 using System.Buffers.Binary;
+using System.Runtime.CompilerServices;
 
 namespace BoomNetwork.Core.Codec
 {
@@ -17,16 +18,18 @@ namespace BoomNetwork.Core.Codec
     /// </summary>
     public static class MessageCodec
     {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static int Encode(in Message msg, Span<byte> output)
         {
-            int totalSize = msg.TotalSize;
-            if (output.Length < totalSize)
-                throw new ArgumentException($"Buffer too small: need {totalSize}, got {output.Length}");
-
             int dataLen = msg.DataLength;
-            int extra = msg.CmdExtraSize;
+            int extra = msg.GetCmdExtraSize();
             int totalPayload = dataLen + extra;
             bool largeLen = totalPayload > 65530;
+            int seqSize = msg.HasSeq ? 4 : 0;
+            int headerSize = 1 + (largeLen ? 4 : 2) + seqSize + extra;
+            int totalSize = headerSize + dataLen;
+            if (output.Length < totalSize)
+                throw new ArgumentException($"Buffer too small: need {totalSize}, got {output.Length}");
 
             // FlagsCmd
             byte flagsCmd = (byte)(((byte)msg.MsgType & 0x03) << 2);

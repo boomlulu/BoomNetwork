@@ -14,7 +14,7 @@ namespace BoomNetwork.Tests
         {
             var msg = new Message
             {
-                Cmd = 42,
+                Cmd = 10,
                 HasSeq = false,
                 Data = Array.Empty<byte>(),
                 DataLength = 0,
@@ -26,7 +26,7 @@ namespace BoomNetwork.Tests
             Assert.That(written, Is.EqualTo(3)); // FlagsCmd(1) + BodyLen(2) = 3
 
             var decoded = MessageCodec.Decode(buf);
-            Assert.That(decoded.Cmd, Is.EqualTo((byte)42));
+            Assert.That(decoded.Cmd, Is.EqualTo((byte)10));
             Assert.That(decoded.HasSeq, Is.False);
             Assert.That(decoded.DataLength, Is.EqualTo(0));
         }
@@ -84,11 +84,11 @@ namespace BoomNetwork.Tests
         [Test]
         public void Encode_Decode_MaxCmd()
         {
-            var msg = new Message { Cmd = 63, Data = Array.Empty<byte>() };
+            var msg = new Message { Cmd = 15, Data = Array.Empty<byte>() }; // Core Cmd 4-bit max = 15
             var buf = new byte[MessageCodec.EncodedSize(msg)];
             MessageCodec.Encode(msg, buf);
             var decoded = MessageCodec.Decode(buf);
-            Assert.That(decoded.Cmd, Is.EqualTo((byte)63));
+            Assert.That(decoded.Cmd, Is.EqualTo((byte)15));
         }
 
         [Test]

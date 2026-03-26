@@ -1,4 +1,5 @@
 using System;
+using System.Runtime.CompilerServices;
 
 namespace BoomNetwork.Core
 {
@@ -55,19 +56,21 @@ namespace BoomNetwork.Core
         public int DataLength;
 
         /// <summary>ExtCmd/GameCmd 在 body 内占的额外字节</summary>
-        public int CmdExtraSize => MsgType switch
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public int GetCmdExtraSize() => MsgType switch
         {
             CmdType.Extended => 2,
             CmdType.Game => 4,
             _ => 0,
         };
 
-        /// <summary>包头大小</summary>
+        /// <summary>包头大小（供外部调用，内部热路径应直接用 CalcSizes）</summary>
         public int HeaderSize
         {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
             get
             {
-                int extra = CmdExtraSize;
+                int extra = GetCmdExtraSize();
                 int payload = DataLength + extra;
                 int size = 1; // FlagsCmd
                 size += payload > 65530 ? 4 : 2; // BodyLen
@@ -77,7 +80,7 @@ namespace BoomNetwork.Core
             }
         }
 
-        public bool NeedLargeLen => (DataLength + CmdExtraSize) > 65530;
+        public bool NeedLargeLen => (DataLength + GetCmdExtraSize()) > 65530;
 
         /// <summary>总大小 = 包头 + Data</summary>
         public int TotalSize => HeaderSize + DataLength;

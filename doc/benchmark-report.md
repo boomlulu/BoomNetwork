@@ -11,45 +11,43 @@
 
 | 操作 | 耗时 | 内存分配 |
 |------|------|---------|
-| Encode 小消息 (41B payload) | 15.1 ns | 0 B |
-| Encode 大消息 (1KB payload) | 21.3 ns | 0 B |
-| Decode 小消息 | 7.3 ns | 72 B |
-| Decode 大消息 (1KB) | 48.4 ns | 1048 B |
-| Decode 小消息 (ArrayPool) | 13.7 ns | 0 B |
+| Encode 小消息 (41B payload) | 3.8 ns | 0 B |
+| Encode 大消息 (1KB payload) | 20.2 ns | 0 B |
+| Decode 小消息 | 7.2 ns | 72 B |
+| Decode 大消息 (1KB) | 47.1 ns | 1048 B |
+| Decode 小消息 (ArrayPool) | 13.5 ns | 0 B |
 | Framing 100 条粘包拆包 | 4.0 μs | 0 B |
 
 ### Go (go test -bench)
 
 | 操作 | 耗时 | 内存分配 |
 |------|------|---------|
-| Encode 小消息 (sync.Pool) | 25.1 ns | 24 B / 1 alloc |
-| Encode 大消息 (sync.Pool) | 34.1 ns | 24 B / 1 alloc |
+| Encode 小消息 (sync.Pool) | 24.6 ns | 24 B / 1 alloc |
+| Encode 大消息 (sync.Pool) | 32.8 ns | 24 B / 1 alloc |
 | EncodeTo 零分配版 | 3.9 ns | 0 B / 0 alloc |
-| Decode 小消息 (零拷贝) | 15.7 ns | 48 B / 1 alloc |
-| Decode 大消息 (零拷贝) | 15.1 ns | 48 B / 1 alloc |
-| FrameReader 10000 条 | 377 μs | 489 KB |
-| FrameWriter 10000 条 | 87 μs | 9.3 KB / 3 alloc |
+| Decode 小消息 (零拷贝) | 15.6 ns | 48 B / 1 alloc |
+| Decode 大消息 (零拷贝) | 15.2 ns | 48 B / 1 alloc |
+| FrameReader 10000 条 | 378 μs | 489 KB |
+| FrameWriter 10000 条 | 89 μs | 9.3 KB / 3 alloc |
 
 ### Codec 历史对比
 
-> 变更背景: v0.1→v0.2 期间删除 Prediction 子系统、EntityStateCodec 改用 IList\<IEntitySync\>、macOS 26.2→26.3
+| 操作 | v0.1 (03-19) | v0.2 未优化 | v0.2 优化后 | 变化 (v0.1→最终) |
+|------|-------------|-----------|-----------|-----------------|
+| **C# Encode 小消息** | 3.6 ns | 15.1 ns ⚠️ | **3.8 ns** | +6% ✅ 已修复 |
+| C# Encode 大消息 | 20 ns | 21.3 ns | 20.2 ns | +1% ✅ |
+| C# Decode 小消息 | 6.4 ns | 7.3 ns | 7.2 ns | +13% |
+| C# Decode 大消息 | 44 ns | 48.4 ns | 47.1 ns | +7% |
+| C# Decode Pooled | 12.6 ns | 13.7 ns | 13.5 ns | +7% |
+| C# Framing 100 条 | 3.9 μs | 4.0 μs | 4.0 μs | +2% 稳定 |
+| Go Encode (Pool) | 24 ns | 25.1 ns | 24.6 ns | +3% |
+| Go EncodeTo | 3.4 ns | 3.9 ns | 3.9 ns | +15% |
+| **Go Decode 大消息** | 18 ns | 15.1 ns | 15.2 ns | **-16% ✅ 改善** |
+| Go FrameReader | 372 μs | 377 μs | 378 μs | +2% 稳定 |
+| Go FrameWriter | 81 μs | 87 μs | 89 μs | +10% |
 
-| 操作 | v0.1 (03-19) | v0.2 (03-27) | 变化 | 说明 |
-|------|-------------|-------------|------|------|
-| **C# Encode 小消息** | **3.6 ns** | **15.1 ns** | **+319%** | ⚠️ 见下方分析 |
-| C# Encode 大消息 | 20 ns | 21.3 ns | +7% | 噪声范围 |
-| C# Decode 小消息 | 6.4 ns | 7.3 ns | +14% | 噪声范围 |
-| C# Decode 大消息 | 44 ns | 48.4 ns | +10% | 噪声范围 |
-| C# Decode Pooled | 12.6 ns | 13.7 ns | +9% | 噪声范围 |
-| C# Framing 100 条 | 3.9 μs | 4.0 μs | +2% | 稳定 |
-| Go Encode (Pool) | 24 ns | 25.1 ns | +5% | 噪声范围 |
-| Go EncodeTo | 3.4 ns | 3.9 ns | +15% | 噪声范围 |
-| **Go Decode 大消息** | **18 ns** | **15.1 ns** | **-16%** | ✅ 改善 |
-| Go FrameReader | 372 μs | 377 μs | +1% | 稳定 |
-| Go FrameWriter | 81 μs | 87 μs | +7% | 噪声范围 |
-
-**⚠️ C# Encode 小消息 3.6ns → 15.1ns 分析:**
-v0.1 的 3.6ns 低于单次内存访问延迟，可能受 BenchmarkDotNet warmup/JIT 内联激进优化影响。15ns 仍为零分配热路径，实际生产无影响。后续可用 `[MethodImpl(AggressiveInlining)]` 或固定 BDN 版本复现排查。
+**C# Encode 小消息 v0.2 回退分析与修复:**
+三层 Cmd 分级重构引入 `CmdExtraSize` switch 属性，Encode 一次调用中求值 3 次（`TotalSize` → `HeaderSize` → inline），且 switch 表达式阻止了 JIT 内联。修复：`CmdExtraSize` 改为 `[AggressiveInlining]` 方法，Encode 内部只算一次 extra 直接计算 totalSize，跳过属性链。15.1ns → 3.8ns，恢复到 v0.1 水平。
 
 ---
 
@@ -207,6 +205,22 @@ cd cli && dotnet run --project KcpTest
 ---
 
 ## 附录：历史性能快照
+
+<details>
+<summary>v0.2 优化前 (2026-03-27 02:14) — Encode 回退快照</summary>
+
+> 三层 Cmd 分级重构后、AggressiveInlining 优化前的中间状态
+
+**C# Codec (关键差异):**
+
+| 操作 | 耗时 | 说明 |
+|------|------|------|
+| Encode 小消息 | 15.1 ns | CmdExtraSize switch 求值 3 次，阻止 JIT 内联 |
+| Encode 大消息 | 21.3 ns | |
+
+**修复措施:** `CmdExtraSize` 属性 → `[AggressiveInlining] GetCmdExtraSize()` 方法，Encode 内只算一次 extra 直接计算 totalSize。
+
+</details>
 
 <details>
 <summary>v0.1 (2026-03-19) — 基线版本</summary>
