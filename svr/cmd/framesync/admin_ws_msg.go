@@ -102,13 +102,15 @@ type StatsPush struct {
 
 // MsgEntryWire — topic: messages（单条推送）
 type MsgEntryWire struct {
-	Ts     int64  `msgpack:"ts"`
-	Dir    string `msgpack:"dir"`
-	Cmd    byte   `msgpack:"cmd"`
-	Name   string `msgpack:"name"`
-	Pid    int32  `msgpack:"pid"`
-	Size   int    `msgpack:"size"`
-	Detail string `msgpack:"detail,omitempty"`
+	Ts       int64  `msgpack:"ts"`
+	Dir      string `msgpack:"dir"`
+	Cmd      byte   `msgpack:"cmd"`
+	Name     string `msgpack:"name"`
+	Pid      int32  `msgpack:"pid"`
+	Size     int    `msgpack:"size"`
+	Detail   string `msgpack:"detail,omitempty"`
+	RoomID   int32  `msgpack:"room_id,omitempty"`
+	MatchKey string `msgpack:"match_key,omitempty"`
 }
 
 // MsgEntryToWire 将内部 MsgEntry 转为 wire 格式
@@ -116,6 +118,7 @@ func MsgEntryToWire(e MsgEntry) MsgEntryWire {
 	return MsgEntryWire{
 		Ts: e.Ts, Dir: e.Dir, Cmd: e.Cmd, Name: e.Name,
 		Pid: e.Pid, Size: e.Size, Detail: e.Detail,
+		RoomID: e.RoomID, MatchKey: e.MatchKey,
 	}
 }
 

@@ -114,18 +114,22 @@ namespace BoomNetwork.GM.Editor
         public long Ts;
         public string Dir, Name, Detail;
         public int Cmd, Pid, Size;
+        public int RoomID;
+        public string MatchKey;
 
         public static GmMsgEntry From(Dictionary<string, object> m)
         {
             return new GmMsgEntry
             {
-                Ts     = MsgPackLite.GetLong(m, "ts"),
-                Dir    = MsgPackLite.GetString(m, "dir"),
-                Cmd    = MsgPackLite.GetInt(m, "cmd"),
-                Name   = MsgPackLite.GetString(m, "name"),
-                Pid    = MsgPackLite.GetInt(m, "pid"),
-                Size   = MsgPackLite.GetInt(m, "size"),
-                Detail = MsgPackLite.GetString(m, "detail"),
+                Ts       = MsgPackLite.GetLong(m, "ts"),
+                Dir      = MsgPackLite.GetString(m, "dir"),
+                Cmd      = MsgPackLite.GetInt(m, "cmd"),
+                Name     = MsgPackLite.GetString(m, "name"),
+                Pid      = MsgPackLite.GetInt(m, "pid"),
+                Size     = MsgPackLite.GetInt(m, "size"),
+                Detail   = MsgPackLite.GetString(m, "detail"),
+                RoomID   = MsgPackLite.GetInt(m, "room_id"),
+                MatchKey = MsgPackLite.GetString(m, "match_key"),
             };
         }
     }

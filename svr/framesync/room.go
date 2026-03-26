@@ -211,6 +211,7 @@ func (r *Room) GetRoomInfo() RoomInfo {
 		PlayerCount: r.PlayerCount(),
 		MaxPlayers:  r.config.MaxPlayers,
 		Running:     r.IsRunning(),
+		MatchKey:    r.MatchKey,
 	}
 }
 

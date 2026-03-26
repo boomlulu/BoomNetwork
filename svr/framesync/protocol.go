@@ -193,12 +193,18 @@ type RoomInfo struct {
 	PlayerCount int
 	MaxPlayers  int
 	Running     bool
+	MatchKey    string
 }
 
 // EncodeRoomList 编码房间列表
-// Wire: [Count:2] + N × [RoomId:4][PlayerCount:2][MaxPlayers:2][Running:1]
+// Wire: [Count:2] + N × [RoomId:4][PlayerCount:2][MaxPlayers:2][Running:1][MatchKeyLen:2][MatchKey:N]
 func EncodeRoomList(rooms []RoomInfo) []byte {
-	buf := make([]byte, 2+len(rooms)*9)
+	// 计算总长度（变长）
+	size := 2
+	for _, r := range rooms {
+		size += 9 + 2 + len(r.MatchKey)
+	}
+	buf := make([]byte, size)
 	binary.LittleEndian.PutUint16(buf[0:], uint16(len(rooms)))
 	offset := 2
 	for _, r := range rooms {
@@ -212,6 +218,10 @@ func EncodeRoomList(rooms []RoomInfo) []byte {
 			buf[offset] = 1
 		}
 		offset += 1
+		binary.LittleEndian.PutUint16(buf[offset:], uint16(len(r.MatchKey)))
+		offset += 2
+		copy(buf[offset:], r.MatchKey)
+		offset += len(r.MatchKey)
 	}
 	return buf
 }

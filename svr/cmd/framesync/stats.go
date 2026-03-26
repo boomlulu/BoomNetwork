@@ -102,15 +102,17 @@ const msgRingSize = 100
 
 // MsgEntry 单条网络消息记录
 type MsgEntry struct {
-	Ts      int64  `json:"ts"`               // unix ms
-	Dir     string `json:"dir"`              // "rx" / "tx"
-	Cmd     byte   `json:"cmd"`              // Core Cmd (CmdType=0)
-	ExtCmd  uint16 `json:"ext_cmd,omitempty"` // Extended Cmd (CmdType=1)
-	GameCmd uint32 `json:"game_cmd,omitempty"` // Game Cmd (CmdType=2)
-	Name    string `json:"name"`             // 命令名（人可读）
-	Pid     int32  `json:"pid"`              // 玩家 ID (0=未知)
-	Size    int    `json:"size"`             // 数据字节数
-	Detail  string `json:"detail,omitempty"` // G7: 关键消息解码摘要
+	Ts       int64  `json:"ts"`                         // unix ms
+	Dir      string `json:"dir"`                        // "rx" / "tx"
+	Cmd      byte   `json:"cmd"`                        // Core Cmd (CmdType=0)
+	ExtCmd   uint16 `json:"ext_cmd,omitempty"`           // Extended Cmd (CmdType=1)
+	GameCmd  uint32 `json:"game_cmd,omitempty"`          // Game Cmd (CmdType=2)
+	Name     string `json:"name"`                       // 命令名（人可读）
+	Pid      int32  `json:"pid"`                        // 玩家 ID (0=未知)
+	Size     int    `json:"size"`                       // 数据字节数
+	Detail   string `json:"detail,omitempty"`           // G7: 关键消息解码摘要
+	RoomID   int32  `json:"room_id,omitempty"`          // 房间 ID (0=未知)
+	MatchKey string `json:"match_key,omitempty"`        // 匹配 Key
 }
 
 type msgRing struct {
@@ -169,34 +171,53 @@ var (
 	MsgLog    = &msgRing{}
 )
 
+// lookupRoom 通过 playerRoomMap 查询玩家所在房间的 RoomID 和 MatchKey
+func lookupRoom(pid int32) (int32, string) {
+	if pid == 0 {
+		return 0, ""
+	}
+	if val, ok := playerRoomMap.Load(pid); ok {
+		if r, ok := val.(*framesync.Room); ok {
+			return r.ID, r.MatchKey
+		}
+	}
+	return 0, ""
+}
+
 // LogMsg 记录一条网络消息到环形缓冲 + G8 速率统计
 // cmdType: codec.CmdTypeCore / CmdTypeExtended / CmdTypeGame
 func LogMsg(dir string, cmdType byte, cmd byte, extCmd uint16, gameCmd uint32, pid int32, dataSize int) {
+	roomID, matchKey := lookupRoom(pid)
 	MsgLog.Push(MsgEntry{
-		Ts:      time.Now().UnixMilli(),
-		Dir:     dir,
-		Cmd:     cmd,
-		ExtCmd:  extCmd,
-		GameCmd: gameCmd,
-		Name:    MsgName(cmdType, cmd, extCmd, gameCmd),
-		Pid:     pid,
-		Size:    dataSize,
+		Ts:       time.Now().UnixMilli(),
+		Dir:      dir,
+		Cmd:      cmd,
+		ExtCmd:   extCmd,
+		GameCmd:  gameCmd,
+		Name:     MsgName(cmdType, cmd, extCmd, gameCmd),
+		Pid:      pid,
+		Size:     dataSize,
+		RoomID:   roomID,
+		MatchKey: matchKey,
 	})
 	PlayerRates.Record(pid)
 }
 
 // LogMsgWithDetail G7: 关键消息带解码摘要
 func LogMsgWithDetail(dir string, cmdType byte, cmd byte, extCmd uint16, gameCmd uint32, pid int32, dataSize int, detail string) {
+	roomID, matchKey := lookupRoom(pid)
 	MsgLog.Push(MsgEntry{
-		Ts:      time.Now().UnixMilli(),
-		Dir:     dir,
-		Cmd:     cmd,
-		ExtCmd:  extCmd,
-		GameCmd: gameCmd,
-		Name:    MsgName(cmdType, cmd, extCmd, gameCmd),
-		Pid:     pid,
-		Size:    dataSize,
-		Detail:  detail,
+		Ts:       time.Now().UnixMilli(),
+		Dir:      dir,
+		Cmd:      cmd,
+		ExtCmd:   extCmd,
+		GameCmd:  gameCmd,
+		Name:     MsgName(cmdType, cmd, extCmd, gameCmd),
+		Pid:      pid,
+		Size:     dataSize,
+		Detail:   detail,
+		RoomID:   roomID,
+		MatchKey: matchKey,
 	})
 	PlayerRates.Record(pid)
 }

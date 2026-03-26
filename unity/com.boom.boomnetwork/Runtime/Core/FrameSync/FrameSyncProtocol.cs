@@ -222,6 +222,7 @@ namespace BoomNetwork.Core.FrameSync
         public int PlayerCount;
         public int MaxPlayers;
         public bool Running;     // 帧同步是否已开始
+        public string MatchKey;  // 匹配 key
     }
 
     /// <summary>
@@ -230,7 +231,7 @@ namespace BoomNetwork.Core.FrameSync
     public static class RoomCodec
     {
         // === GetRoomsRsp ===
-        // Wire: [RoomCount:2] + N × [RoomId:4][PlayerCount:2][MaxPlayers:2][Running:1]
+        // Wire: [RoomCount:2] + N × [RoomId:4][PlayerCount:2][MaxPlayers:2][Running:1][MatchKeyLen:2][MatchKey:N]
 
         public static RoomInfo[] DecodeRoomList(ReadOnlySpan<byte> buf)
         {
@@ -250,6 +251,25 @@ namespace BoomNetwork.Core.FrameSync
                 offset += 2;
                 rooms[i].Running = buf[offset] != 0;
                 offset += 1;
+                // MatchKey（向后兼容：老服务器不发此字段）
+                if (offset + 2 <= buf.Length)
+                {
+                    int keyLen = BinaryPrimitives.ReadUInt16LittleEndian(buf.Slice(offset));
+                    offset += 2;
+                    if (keyLen > 0 && offset + keyLen <= buf.Length)
+                    {
+                        rooms[i].MatchKey = System.Text.Encoding.UTF8.GetString(buf.Slice(offset, keyLen));
+                        offset += keyLen;
+                    }
+                    else
+                    {
+                        rooms[i].MatchKey = "";
+                    }
+                }
+                else
+                {
+                    rooms[i].MatchKey = "";
+                }
             }
             return rooms;
         }

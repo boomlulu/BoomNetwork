@@ -76,6 +76,8 @@ namespace BoomNetwork.GM.Editor
             public long Ts;
             public string Dir, Name;
             public int Cmd, Pid, Size;
+            public int RoomID;
+            public string MatchKey;
         }
 
         public MsgEntry[] FetchMessages(int limit = 100)
@@ -266,6 +268,7 @@ namespace BoomNetwork.GM.Editor
                     Ts = ParseLong(obj, "ts"), Dir = ParseStr(obj, "dir"),
                     Name = ParseStr(obj, "name"), Cmd = ParseInt(obj, "cmd"),
                     Pid = ParseInt(obj, "pid"), Size = ParseInt(obj, "size"),
+                    RoomID = ParseInt(obj, "room_id"), MatchKey = ParseStr(obj, "match_key"),
                 });
                 i = end + 1;
             }

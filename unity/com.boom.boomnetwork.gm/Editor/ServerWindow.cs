@@ -59,6 +59,11 @@ namespace BoomNetwork.GM.Editor
         private bool _hideHeartbeat = true;
         private string[] _cmdFilterNames;
         private int[] _cmdFilterValues;
+        private string _filterPlayer = "";
+        private string _filterRoom = "";
+        private string _filterMatchKey = "";
+        private int _filterDir; // 0=All, 1=↓rx, 2=↑tx
+        private static readonly string[] DirFilterNames = { "All", "↓ rx", "↑ tx" };
 
         // ===== Rooms page =====
         private Vector2 _roomScroll;
@@ -223,6 +228,7 @@ namespace BoomNetwork.GM.Editor
                             {
                                 Ts = me.Ts, Dir = me.Dir, Cmd = me.Cmd,
                                 Name = me.Name, Pid = me.Pid, Size = me.Size,
+                                RoomID = me.RoomID, MatchKey = me.MatchKey,
                             });
                             if (_wsMsgBuffer.Count > WS_MSG_BUFFER_MAX)
                                 _wsMsgBuffer.RemoveAt(0);
@@ -500,12 +506,12 @@ namespace BoomNetwork.GM.Editor
 
         void DrawMessages()
         {
-            // Toolbar
+            // Toolbar row 1: Cmd filter + HB + controls
             EditorGUILayout.BeginHorizontal();
-            EditorGUILayout.LabelField("Filter:", GUILayout.Width(38));
+            EditorGUILayout.LabelField("Cmd:", GUILayout.Width(30));
             int filterIdx = Array.IndexOf(_cmdFilterValues, _cmdFilter);
             if (filterIdx < 0) filterIdx = 0;
-            int newIdx = EditorGUILayout.Popup(filterIdx, _cmdFilterNames, GUILayout.Width(130));
+            int newIdx = EditorGUILayout.Popup(filterIdx, _cmdFilterNames, GUILayout.Width(120));
             _cmdFilter = _cmdFilterValues[newIdx];
 
             _hideHeartbeat = GUILayout.Toggle(_hideHeartbeat, "Hide HB", GUILayout.Width(65));
@@ -521,6 +527,32 @@ namespace BoomNetwork.GM.Editor
             EditorGUILayout.LabelField($"{_messages.Length}", GUILayout.Width(30));
             EditorGUILayout.EndHorizontal();
 
+            // Toolbar row 2: Dir + Player + Room + MatchKey + Clear
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField("Dir:", GUILayout.Width(24));
+            _filterDir = EditorGUILayout.Popup(_filterDir, DirFilterNames, GUILayout.Width(55));
+
+            EditorGUILayout.LabelField("Player:", GUILayout.Width(42));
+            _filterPlayer = EditorGUILayout.TextField(_filterPlayer, GUILayout.Width(40));
+
+            EditorGUILayout.LabelField("Room:", GUILayout.Width(36));
+            _filterRoom = EditorGUILayout.TextField(_filterRoom, GUILayout.Width(40));
+
+            EditorGUILayout.LabelField("Key:", GUILayout.Width(26));
+            _filterMatchKey = EditorGUILayout.TextField(_filterMatchKey, GUILayout.Width(60));
+
+            if (GUILayout.Button("Clear", GUILayout.Width(42)))
+            {
+                _filterDir = 0;
+                _filterPlayer = "";
+                _filterRoom = "";
+                _filterMatchKey = "";
+                _cmdFilter = -1;
+            }
+
+            GUILayout.FlexibleSpace();
+            EditorGUILayout.EndHorizontal();
+
             EditorGUILayout.Space(2);
 
             // Header
@@ -528,6 +560,7 @@ namespace BoomNetwork.GM.Editor
             EditorGUILayout.LabelField("Time",    EditorStyles.miniLabel, GUILayout.Width(60));
             EditorGUILayout.LabelField("Dir",     EditorStyles.miniLabel, GUILayout.Width(22));
             EditorGUILayout.LabelField("Command", EditorStyles.miniLabel, GUILayout.Width(115));
+            EditorGUILayout.LabelField("Room",    EditorStyles.miniLabel, GUILayout.Width(40));
             EditorGUILayout.LabelField("P",       EditorStyles.miniLabel, GUILayout.Width(30));
             EditorGUILayout.LabelField("Size",    EditorStyles.miniLabel);
             EditorGUILayout.EndHorizontal();
@@ -538,6 +571,11 @@ namespace BoomNetwork.GM.Editor
             {
                 if (_hideHeartbeat && (m.Cmd == 7 || m.Cmd == 8)) return false;
                 if (_cmdFilter >= 0 && m.Cmd != _cmdFilter) return false;
+                if (_filterDir == 1 && m.Dir != "rx") return false;
+                if (_filterDir == 2 && m.Dir != "tx") return false;
+                if (_filterPlayer.Length > 0 && !m.Pid.ToString().Contains(_filterPlayer)) return false;
+                if (_filterRoom.Length > 0 && !m.RoomID.ToString().Contains(_filterRoom)) return false;
+                if (_filterMatchKey.Length > 0 && (m.MatchKey == null || !m.MatchKey.Contains(_filterMatchKey))) return false;
                 return true;
             }).ToArray();
 
@@ -553,6 +591,7 @@ namespace BoomNetwork.GM.Editor
                 GUI.contentColor = prev;
 
                 EditorGUILayout.LabelField(msg.Name, GUILayout.Width(115));
+                EditorGUILayout.LabelField(msg.RoomID > 0 ? $"R{msg.RoomID}" : "—", GUILayout.Width(40));
                 EditorGUILayout.LabelField(msg.Pid > 0 ? $"P{msg.Pid}" : "—", GUILayout.Width(30));
                 EditorGUILayout.LabelField(AdminClient.FmtBytes(msg.Size));
                 EditorGUILayout.EndHorizontal();
@@ -564,11 +603,13 @@ namespace BoomNetwork.GM.Editor
         void CopyMessages()
         {
             var sb = new System.Text.StringBuilder();
-            sb.AppendLine("Time\tDir\tCommand\tPlayer\tSize");
+            sb.AppendLine("Time\tDir\tCommand\tRoom\tPlayer\tMatchKey\tSize");
             foreach (var m in _messages)
             {
                 var dt = DateTimeOffset.FromUnixTimeMilliseconds(m.Ts).LocalDateTime;
-                sb.AppendLine($"{dt:HH:mm:ss}\t{m.Dir}\t{m.Name}\tP{m.Pid}\t{m.Size}");
+                var room = m.RoomID > 0 ? $"R{m.RoomID}" : "—";
+                var key = m.MatchKey ?? "";
+                sb.AppendLine($"{dt:HH:mm:ss}\t{m.Dir}\t{m.Name}\t{room}\tP{m.Pid}\t{key}\t{m.Size}");
             }
             GUIUtility.systemCopyBuffer = sb.ToString();
             ShowNotification(new GUIContent($"Copied {_messages.Length} messages"));
