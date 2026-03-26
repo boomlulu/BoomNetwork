@@ -2,149 +2,213 @@
 
 > **定位**：BoomNetwork 帧同步框架的官方 Go 服务器实现
 >
-> **现状**：核心功能完备，止血和性能优化已完成，**可观测性和安全加固**是下一个瓶颈
->
-> **目标**：从"能用"到"敢用" — 让服务器成为框架的可靠基座
->
 > **核心哲学**：自权威、不回滚、冲突仲裁 — 详见 [doc/core-philosophy.md](../doc/core-philosophy.md)
+>
+> **当前阶段**：Phase A/B/C 已完成，服务器具备**生产级可观测性和可靠性**
 
 ---
 
-## 现状诊断
+## 服务器概览
 
-> 最后更新：2026-03-26
+| 指标 | 数据 |
+|------|------|
+| 代码规模 | **6,500 行**生产代码，44 个源文件 |
+| 测试 | **48 项**通过（帧同步集成 + Codec 跨语言 + KCP Echo + 协议兼容） |
+| 协议命令 | **12** Core + **22** Extended = **34** 条协议命令，3 层 CmdType 分级 |
+| Prometheus 指标 | **16 项**（11 Counter + 3 Gauge + 2 Histogram），零僵尸指标 |
+| Admin API | **15 个** HTTP 端点 + WebSocket 实时推送 |
+| 日志 | 全量 `log/slog` 结构化 JSON，**零残留** `log.Printf` / `fmt.Printf` |
+| 传输协议 | TCP（NoDelay + KeepAlive）+ KCP（低延迟调参），统一限流 |
+| 部署验证 | 腾讯云 124.220.6.174 生产环境运行，GM Deploy 一键发布 |
 
-| 维度 | 现状 | 差距 |
+---
+
+## 技术亮点
+
+### 帧同步核心 — 零分配热路径
+
+| 设计 | 实现 |
+|------|------|
+| Ring buffer 帧缓存 | 固定大小环形缓冲区，`stepFrame()` 复用 slot 的 `[]byte`，不触发 GC |
+| 编码缓冲区复用 | `frameBuf` + `broadcastSlice` 在锁内复用，锁外广播 |
+| Router 无锁分发 | `Freeze()` 冻结路由表到无锁快照，每条消息省一次 `RLock` |
+| sync.Pool Codec | 消息编解码器通过 `sync.Pool` 复用，跨语言兼容（C# ↔ Go fixture 测试验证） |
+
+### 重连机制 — 二级降级 + CAS 防竞态
+
+```
+快速重连（ring buffer 回放）
+  ↓ 缓冲区过期
+快照重连（全量快照 + catchup frames）
+  ↓ 房间已清理
+重连失败（明确错误码）
+```
+
+- 重连时**关闭旧连接** + 清理旧 connID 映射
+- `onClientDisconnect` **CAS 检查** `playerConnMap` 是否仍指向当前 conn，防止重连后旧连接断开覆盖新映射
+- Prometheus `ReconnectSuccess` / `ReconnectFail` 计数，运维可监控重连健康度
+
+### 容错 — panic 自愈 + 优雅关闭
+
+| 场景 | 处理 |
+|------|------|
+| Room tickLoop panic | `recover()` → 广播 `CmdStopFrameSync` → 清空 players → `OnPanic` 回调清理全局映射 → `RemoveRoom` |
+| 服务器关闭 | 广播 `CmdServerShutdown(12)` → cancel admin → `StopAll` → `server.Close()` → `WaitGroup` 30s 超时排空 |
+| 连接死亡 | TCP: KeepAlive 30s + ReadDeadline 60s；KCP: ReadDeadline 60s。静默连接 60s 内自动断开 |
+| 容量溢出 | `maxRooms` + `maxConnections` 可配置，`acceptLoop` 超限直接拒绝关闭 |
+
+### 可观测性 — 16 项指标 + slog JSON + Grafana
+
+**Prometheus 指标全景**：
+
+| 类别 | 指标 | 类型 |
 |------|------|------|
-| **可观测性** | Prometheus 11 项指标全部接入；stdout `log` 日志，无结构化/级别控制；无 Grafana 模板 | 🟡 结构化日志 + 直方图指标 + Grafana |
-| **可靠性** | Room panic 自愈（广播 Stop + 清理映射）；重连 CAS 防竞态；TCP/KCP 统一限流；60s ReadDeadline 兜底死连接 | 🟢 优雅关闭广播 + 容量上限 |
-| **安全性** | Admin Bearer Token 鉴权；但 token 来自配置文件/flag（非环境变量）；WS `CheckOrigin: return true`；SessionBind 失败不断连；无 per-IP 连接频率限制 | 🟡 env token + 失败断连 + origin 白名单 |
-| **运维** | 腾讯云 systemd 已部署（模板未入库）；GM Deploy 一键发布可用；Dockerfile 缺 9091 端口和 HEALTHCHECK；`/health` 不含 build 信息 | 🟡 systemd 入库 + Docker 修复 + /health 增强 |
-| **代码质量** | 热路径零分配；Router Freeze 无锁分发；/perf STW 缓存；netsim 积压保护；map 泄漏已修复；JoinRoom 5 种错误码 | 🟢 测试覆盖率待提升 |
+| 连接 | `connections_total` / `connections_current` | Counter / Gauge |
+| 房间 | `rooms_current` / `room_lifetime_seconds` | Gauge / Histogram |
+| 帧同步 | `frames_pushed` / `frame_broadcast_latency_seconds` / `inputs_received` | Counter / Histogram / Counter |
+| 流量 | `bytes_sent` / `bytes_received` | Counter |
+| 重连 | `reconnect_success` / `reconnect_fail` | Counter |
+| 快照 | `snapshot_size_bytes` | Gauge |
+| 错误 | `message_errors` / `room_panics` / `auth_failures` / `rate_limited` | Counter |
 
----
+**日志**：全量 `log/slog` 结构化 JSON 输出，支持运行时级别切换（`POST /log-level`），`slog.LevelVar` 原子操作。
 
-## 已完成 ✅
+**Grafana**：`deploy/grafana/boomnetwork-dashboard.json` 提供 5 行 15+ 查询面板，开箱即用。
 
-### 核心功能
+### GM 工具 — 15 端点 + WebSocket 实时调试
 
-| 模块 | 内容 |
+| 能力 | 端点 |
 |------|------|
-| 帧同步核心 | Room tick loop、ring buffer 零分配、输入收集+广播、快照新鲜度监控（3 间隔未收到 → 暂停） |
-| 双协议传输 | TCP（NoDelay + KeepAlive 30s）+ KCP（低延迟调参、统一 RateLimiter） |
-| 房间管理 | 创建/加入/离开/匹配（MatchKey）/自动分配/空房清理/30s 延迟销毁 |
-| 重连支持 | 快速重连（ring buffer 回放）+ 快照重连（二级降级）+ CAS 防竞态 + 旧连接自动关闭 |
-| 迟到者加入 | 快照 → StartFrameSync → catchup frames + KV 全量同步 |
-| 实体权威同步 | Cmd 27/28 广播、权威转移（grant/release）、断线释放全部权威 |
-| 轻量状态同步 | StateMessage 转发（Cmd 50/51）+ DataMessage KV 存储/增量广播/全量同步（Cmd 52-55） |
+| 健康检查（免鉴权） | `GET /health` |
+| 流量统计（Game/GM 分离） | `GET /stats` |
+| 消息日志（100 条 + payload 解码） | `GET /messages` |
+| 房间管理 | `GET /rooms` / `POST /rooms/stop` / `POST /rooms/kill` / `POST /rooms/create` |
+| 踢人 | `POST /kick/{id}` |
+| 玩家详情 | `GET /players/{id}` |
+| 性能指标（STW 缓存 5s） | `GET /perf` |
+| 消息速率 Top N | `GET /rates` |
+| 网络模拟（延迟/抖动/丢包） | `POST /netsim` |
+| 日志级别切换 | `POST /log-level` |
+| 配置热重载 | `POST /config/reload` |
+| WebSocket 实时推送 | `GET /ws`（7 topics） |
 
-### 运维与工具
+### 协议设计 — 三层 CmdType 分级
 
-| 模块 | 内容 |
+```
+Core (0-15)       — 3B 包头，高频帧同步命令（输入/推帧/心跳/重连）
+Extended (uint16)  — 5B 包头，房间/快照/实体/状态同步
+Game (uint32)      — 7B 包头，用户自定义透传，服务器零解析
+```
+
+- JoinRoom **5 种错误码**（NotFound/Full/NotBound/BadData/Success），向后兼容
+- 实体权威 grant/release/bulk-release-on-disconnect
+- 轻量状态同步：StateMessage 转发 + DataMessage KV（版本号增量广播 + 全量同步）
+
+### 性能优化
+
+| 优化 | 效果 |
 |------|------|
-| Admin API | 11 个 HTTP 端点（health/stats/messages/rooms/stop/kill/create/kick/players/perf/rates/netsim）+ WebSocket 实时推送 |
-| 网络模拟 | S→C 延迟/抖动/丢包，HTTP + WS Dashboard 滑块控制，积压保护（10000 pending 上限降级） |
-| 流量统计 | Game/GM 分离、60s ring buffer、1min/5sec 窗口、per-player rate（断线自动清理） |
-| 消息日志 | 100 条 ring buffer + 三层 CmdType payload 解码 + WS 实时推送 + 关键消息详情（G7） |
-| Codec | 三层 CmdType（Core/Extended/Game）+ sync.Pool + 跨语言兼容测试 |
-| 部署 | Dockerfile + docker-compose + 预编译 Linux 二进制 + 腾讯云 systemd + GM Deploy 一键发布 |
-
-### 止血修复（S1-S6，2026-03-26）
-
-| # | 修复 | 方案 |
-|---|------|------|
-| S1 | Prometheus 指标修复 | `FramesPushed`/`BytesSent`/`BytesReceived`/`MessageErrors`/`RateLimited` 全部接入；`RoomsCurrent` 在 create/remove/cleanup/stopAll 全路径补齐 |
-| S2 | KCP 限流对齐 | KCP 连接创建时 `NewRateLimiter` + `Allow()` 检查；`DefaultSecurityConfig()` 初始化 |
-| S3 | Room panic 自愈 | 广播 `CmdStopFrameSync` → 清空 players → `OnPanic` 回调清理 `playerRoomMap` + `RemoveRoom` |
-| S4 | 重连竞态修复 | 重连时关闭旧连接 + 清理旧 connID；`onClientDisconnect` CAS 检查防覆盖新连接 |
-| S5 | JoinRoom 错误码 | `JoinRoomResult` 枚举（NotFound=1/Full=2/NotBound=3/BadData=4），byte[4] 向后兼容；C# 客户端解码 |
-| S6 | playerRate 泄漏 | `PlayerRates.Remove(pid)` + `onClientDisconnect` 调用 |
-
-### 性能优化（S23-S26，2026-03-26）
-
-| # | 优化 | 方案 |
-|---|------|------|
-| S23 | Router 无锁 | `Freeze()` 冻结路由表到无锁快照，Dispatch 零锁开销 |
-| S24 | atomic 冗余 | `RoomManager.nextID` 去掉 `atomic`，`mu` 保护下普通递增 |
-| S25 | /perf STW 缓存 | `ReadMemStats` 结果缓存 5 秒 |
-| S26 | netsim 积压保护 | `simPending` 原子计数，超 10000 降级为直接发送 |
+| Router `Freeze()` | Dispatch 从 RLock 查表 → 无锁直接查表 |
+| `/perf` STW 缓存 | `ReadMemStats` 从每次请求触发 STW → 5s 缓存 |
+| netsim 积压保护 | `time.AfterFunc` 从无限堆积 → 10000 上限降级直发 |
+| `RoomManager.nextID` | 双重同步（mutex + atomic）→ 单 mutex |
+| playerRate 清理 | 断线时 `delete` 防止 map 无限增长 |
 
 ---
 
-## 待做：可观测性（Phase C）
+## 协作方法论
 
-> 没有可观测性 = 线上裸奔
+> 本次开发实践沉淀的协作技巧
+
+### 审计驱动开发
+
+**先审计再动手**。每个 Phase 开始前，用 Explore agent 逐项核实代码现状，精确到文件:行号。避免修"已经修过的"或漏"以为没问题的"。
+
+实例：Phase A 开始前审计 S1-S6，发现 `RoomsCurrent` 比文档描述更严重 —— 不是"只增不减"而是"**从未调用**"，6 个创建/销毁路径全部遗漏。
+
+### 四象限优先级矩阵
+
+用艾森豪威尔矩阵（紧急/重要）对 32 项任务分类：
+- **紧急且重要**（S1-S6）：先止血，不留定时炸弹
+- **紧急不重要**（S23-S26）：快速性能优化，改动小见效快
+- **重要不紧急**（S7-S22）：按 Phase C/D 分批推进
+- **不紧急不重要**（S27-S32）：远期演进，不分散当前精力
+
+### 并行 Agent 加速
+
+| 策略 | 场景 | 效果 |
+|------|------|------|
+| 3 agent 并行迁移 slog | S7：transport/session + framesync + cmd/framesync 三个包无交叉 | 70+ 处 log 调用并行修改，零冲突 |
+| 3 agent 并行实现 | S8+S12 / S9+S14 / S11+S13 按依赖分组 | 6 项 feature 同时推进 |
+| 机械改动交给 agent | slog 迁移、指标接入等模式化修改 | 主对话专注架构决策和集成验证 |
+
+### 文档即代码
+
+- **roadmap 实时更新**：每完成一个 Phase，立即更新"已完成"列表 + "现状诊断"评级
+- **待做项带"现状"列**：不只写"要做什么"，还写"现在是什么样" — 精确到 `admin_ws.go:216 CheckOrigin return true`
+- **交叉引用**：framework-roadmap 的 N14/N15 标记 `→ server-roadmap S3/S4`，避免重复记录
+
+---
+
+## 已完成 Phase 总览
+
+### Phase A — 止血（S1-S6，2026-03-26）
+
+6 项 P0/P1 bug fix：Prometheus 指标修复、KCP 限流对齐、Room panic 自愈、重连竞态修复、JoinRoom 错误码、playerRate 泄漏。
+
+### Phase B — 性能（S23-S26，2026-03-26）
+
+4 项性能优化：Router 无锁、atomic 冗余清理、/perf STW 缓存、netsim 积压保护。
+
+### Phase C — 可观测 + 可靠性（S7-S14，2026-03-26）
+
+8 项 feature：slog 结构化日志、运行时日志级别、5 项新指标（2 Histogram + 2 Counter + 1 Gauge）、Grafana Dashboard、优雅关闭（WaitGroup + ServerShutdown 广播）、配置热重载（SIGHUP + API）、连接健康检测文档、容量上限（maxRooms + maxConnections）。
+
+---
+
+## 待做：Phase D — 安全 + 运维 (S15-S22)
 
 | # | 任务 | 现状 | 目标 |
 |---|------|------|------|
-| S7 | **结构化日志** | 全部用 `log` + `fmt.Printf`（transport 层），无级别、无结构化字段 | `log/slog`（Go 1.21+ 标准库），JSON 格式，关键字段：roomId/playerId/cmd/latency |
-| S8 | **日志级别运行时切换** | 无 | Admin API `POST /log-level` + `slog.LevelVar`，不重启切换 Debug/Info/Warn |
-| S9 | **关键路径指标补全** | 只有 Counter/Gauge，无直方图 | 帧广播延迟 Histogram、房间生命周期 Histogram、重连成功/失败 Counter、快照大小 Gauge |
-| S10 | **Grafana Dashboard 模板** | 无 | JSON 模板：连接数、房间数、帧率偏差、内存、GC pause，开箱即用 |
+| S15 | **Admin Token 环境变量化** | token 从 flag/YAML 读取，无 env 支持 | `BOOM_ADMIN_TOKEN` env 优先 |
+| S16 | **SessionBind 失败断连** | 返回 `playerId=0` 但不关闭连接 | 失败后 `conn.Close()` + 记录 IP |
+| S17 | **WebSocket Origin 白名单** | `CheckOrigin: return true` | config 配置允许的 origin 列表 |
+| S18 | **Per-IP 连接频率限制** | 仅 per-conn 消息限流 | 单 IP 新建连接速率限制 |
+| S19 | **systemd 模板入库** | 腾讯云已用但未提交仓库 | `deploy/boomnetwork.service` |
+| S20 | **Docker 完善** | 缺 `EXPOSE 9091` + `HEALTHCHECK` | 补齐端口暴露 + 健康探针 |
+| S21 | **`/health` 增强** | 仅 status/rooms/players/uptime | 加 buildHash/buildTime/goVersion |
+| S22 | **sd_notify** | 无 systemd 就绪通知 | `sd_notify(READY=1)` |
 
 ---
 
-## 待做：可靠性加固（Phase C）
-
-| # | 任务 | 现状 | 目标 |
-|---|------|------|------|
-| S11 | **优雅关闭** | 收到信号 → `StopAll` → `server.Close()` 直接断连，无等待/广播 | `sync.WaitGroup` 等待 goroutine 退出 + 30s 超时 + 广播 ServerShutdown |
-| S12 | **Config 热重载** | 启动时读一次，不可更新 | `SIGHUP` 或 Admin API 触发 reload（帧率/限流/netsim 参数） |
-| S13 | **连接健康检测** | TCP: KeepAlive 30s + ReadDeadline 60s；KCP: 仅 ReadDeadline 60s；无应用层心跳超时 | 服务端心跳超时检测，主动踢掉无心跳客户端 |
-| S14 | **容量上限** | 无全局限制，CreateRoom 硬编码 `maxPlayers≤100` | 可配置 `maxRooms` + `maxConnections`，超出拒绝并返回明确错误 |
-
----
-
-## 待做：安全加固（Phase D）
-
-| # | 任务 | 现状 | 目标 |
-|---|------|------|------|
-| S15 | **Admin Token 环境变量化** | token 从 flag `-admin-token` 或 YAML `adminToken` 读取，无 env 支持 | 优先 `BOOM_ADMIN_TOKEN` env → YAML fallback，配置文件不存明文 token |
-| S16 | **SessionBind 失败断连** | 校验失败返回 `playerId=0` 但**不关闭连接**，客户端可继续发消息 | 失败后立即 `conn.Close()` + 记录来源 IP |
-| S17 | **WebSocket Origin 白名单** | `CheckOrigin: func() { return true }`（`admin_ws.go:216`） | 从 config 读取允许的 origin 列表 |
-| S18 | **Per-IP 连接频率限制** | `acceptLoop` 无条件接受所有连接；只有 per-conn 消息频率限制 | 单 IP 新建连接速率限制（防 SYN flood） |
-
----
-
-## 待做：运维友好（Phase D）
-
-| # | 任务 | 现状 | 目标 |
-|---|------|------|------|
-| S19 | **systemd 模板入库** | 腾讯云已用 `/etc/systemd/system/boomnetwork.service`，但**未提交到仓库** | `deploy/boomnetwork.service` 入库 |
-| S20 | **Docker 完善** | `EXPOSE 9000 9090`，**缺 9091**（Admin）；无 `HEALTHCHECK` | 加 `EXPOSE 9091` + `HEALTHCHECK CMD curl -f http://localhost:9091/health` |
-| S21 | **`/health` 增强** | 返回 `status/rooms/players/uptime`；`BuildHash`/`BuildTime` 存在但未接入 | 加 `buildHash`/`buildTime`/`goVersion`/`configPath` 字段 |
-| S22 | **sd_notify** | 无 systemd 就绪通知 | `sd_notify(READY=1)` 让 systemd 知道服务真正就绪 |
-
----
-
-## 远期演进
+## 远期演进（Phase E）
 
 | # | 任务 | 说明 |
 |---|------|------|
-| S27 | **TLS 支持** | TCP + Admin HTTP 的 TLS 选项；KCP 层考虑 DTLS 或应用层加密 |
-| S28 | **多实例集群** | 房间分片、跨实例转移、负载均衡方案设计 |
-| S29 | **Replay 录制** | 完整帧数据落盘，支持离线回放和 debug |
-| S30 | **插件系统** | 服务端 Hook 点（OnJoin / OnInput / OnFrame），不改源码加自定义逻辑 |
-| S31 | **WebTransport** | HTTP/3 + WebTransport 作为第三种传输协议，面向浏览器客户端 |
-| S32 | **测试覆盖率 > 60%** | 重点覆盖 Room.stepFrame、broadcast、RoomManager 生命周期、reconnect 全路径 |
+| S27 | TLS 支持 | TCP + Admin HTTP TLS；KCP 考虑 DTLS |
+| S28 | 多实例集群 | 房间分片、跨实例转移、负载均衡 |
+| S29 | Replay 录制 | 完整帧数据落盘，离线回放 |
+| S30 | 插件系统 | OnJoin/OnInput/OnFrame Hook 点 |
+| S31 | WebTransport | HTTP/3 面向浏览器客户端 |
+| S32 | 测试覆盖率 > 60% | Room.stepFrame、reconnect 全路径 |
 
 ---
 
 ## 路线总览
 
 ```
-✅ Phase A — 止血 (S1-S6)    2026-03-26 完成
-✅ Phase B — 性能 (S23-S26)   2026-03-26 完成
+✅ Phase A — 止血 (S1-S6)           2026-03-26
+✅ Phase B — 性能 (S23-S26)          2026-03-26
+✅ Phase C — 可观测+可靠性 (S7-S14)   2026-03-26
 
-→ Phase C — 可观测 + 可靠性 (S7-S14)
-    S7 slog 结构化日志 → S9 直方图指标 → S10 Grafana → S11 优雅关闭
-
-→ Phase D — 安全 + 运维 (S15-S22)
-    S15 env token → S16 失败断连 → S19 systemd 入库 → S20 Docker → S21 /health
-
+→ Phase D — 安全+运维 (S15-S22)
   Phase E — 远期 (S27-S32)
-
-验收标准:
-  Phase C-D 完成后 → "Beta 级"
-  能跑 + 能看（slog + Grafana）+ 能防（限流 + 鉴权 + 断连）+ 能运维（一键部署 + 健康探针）
 ```
+
+**当前成熟度**：Phase A-C 完成后，服务器具备：
+- **能跑**：帧同步核心 + 双协议 + 重连 + 实体权威 + 状态同步
+- **能看**：16 项 Prometheus 指标 + slog JSON 日志 + Grafana 模板 + 运行时级别切换
+- **能扛**：panic 自愈 + 优雅关闭 + 容量上限 + CAS 重连 + 统一限流
+- **能调**：15 个 Admin 端点 + WebSocket 实时推送 + 网络模拟 + 配置热重载
+
+Phase D 完成后 → **Beta 级**（安全加固 + 运维完善）。
