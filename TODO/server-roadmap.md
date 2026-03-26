@@ -4,7 +4,7 @@
 >
 > **核心哲学**：自权威、不回滚、冲突仲裁 — 详见 [doc/core-philosophy.md](../doc/core-philosophy.md)
 >
-> **当前阶段**：Phase A/B/C 已完成，服务器具备**生产级可观测性和可靠性**
+> **当前阶段**：Phase A-D 全部完成（26 项），服务器达到 **Beta 级** — 能跑、能看、能扛、能防、能运维
 
 ---
 
@@ -12,14 +12,16 @@
 
 | 指标 | 数据 |
 |------|------|
-| 代码规模 | **6,500 行**生产代码，44 个源文件 |
+| 代码规模 | **6,500+ 行**生产代码，44 个源文件 |
 | 测试 | **48 项**通过（帧同步集成 + Codec 跨语言 + KCP Echo + 协议兼容） |
 | 协议命令 | **12** Core + **22** Extended = **34** 条协议命令，3 层 CmdType 分级 |
 | Prometheus 指标 | **16 项**（11 Counter + 3 Gauge + 2 Histogram），零僵尸指标 |
 | Admin API | **15 个** HTTP 端点 + WebSocket 实时推送 |
-| 日志 | 全量 `log/slog` 结构化 JSON，**零残留** `log.Printf` / `fmt.Printf` |
-| 传输协议 | TCP（NoDelay + KeepAlive）+ KCP（低延迟调参），统一限流 |
-| 部署验证 | 腾讯云 124.220.6.174 生产环境运行，GM Deploy 一键发布 |
+| 日志 | 全量 `log/slog` 结构化 JSON，**零残留** `log.Printf`，运行时级别切换 |
+| 安全 | env token 覆盖 + 鉴权失败断连 + WS Origin 白名单 + per-IP 连接频率限制 |
+| 传输协议 | TCP（NoDelay + KeepAlive）+ KCP（低延迟调参），统一限流 + per-IP 限流 |
+| 部署 | systemd（Type=notify + sd_notify）+ Docker（HEALTHCHECK）+ GM Deploy 一键发布 |
+| 生产验证 | 腾讯云 124.220.6.174，`/health` 返回 buildHash/buildTime/goVersion |
 
 ---
 
@@ -104,6 +106,24 @@ Game (uint32)      — 7B 包头，用户自定义透传，服务器零解析
 - 实体权威 grant/release/bulk-release-on-disconnect
 - 轻量状态同步：StateMessage 转发 + DataMessage KV（版本号增量广播 + 全量同步）
 
+### 安全 — 四层防护
+
+| 层级 | 机制 | 实现 |
+|------|------|------|
+| **连接层** | Per-IP 频率限制 | `acceptLoop` 中 per-IP 计数，超限（10 conn/sec/IP）直接拒绝关闭 |
+| **消息层** | Per-conn 速率限制 | TCP/KCP 统一 `RateLimiter`，超限断连 |
+| **鉴权层** | Token 验证 + 失败断连 | `BOOM_ADMIN_TOKEN` env 优先覆盖；SessionBind 失败后 100ms 延迟 `conn.Close()` |
+| **WebSocket** | Origin 白名单 | `allowedOrigins` 配置项，空则允许所有（向后兼容） |
+
+### 运维 — 一键部署 + 全链路可观测
+
+| 能力 | 实现 |
+|------|------|
+| systemd | `deploy/boomnetwork.service`（Type=notify），`sd_notify(READY=1)` 就绪通知 |
+| Docker | `EXPOSE 9000/9090/9091`，`HEALTHCHECK curl /health` |
+| /health | 返回 status/rooms/players/uptime/**buildHash**/**buildTime**/**goVersion** |
+| 配置热重载 | `SIGHUP` + `POST /config/reload`，热更 LogLevel/MaxMessageSize |
+
 ### 性能优化
 
 | 优化 | 效果 |
@@ -139,7 +159,8 @@ Game (uint32)      — 7B 包头，用户自定义透传，服务器零解析
 | 策略 | 场景 | 效果 |
 |------|------|------|
 | 3 agent 并行迁移 slog | S7：transport/session + framesync + cmd/framesync 三个包无交叉 | 70+ 处 log 调用并行修改，零冲突 |
-| 3 agent 并行实现 | S8+S12 / S9+S14 / S11+S13 按依赖分组 | 6 项 feature 同时推进 |
+| 3 agent 并行实现 Phase C | S8+S12 / S9+S14 / S11+S13 按依赖分组 | 6 项 feature 同时推进 |
+| 2 agent 并行实现 Phase D | S15-S18 安全 / S19-S22 运维 按职责分组 | 8 项 feature 同时推进 |
 | 机械改动交给 agent | slog 迁移、指标接入等模式化修改 | 主对话专注架构决策和集成验证 |
 
 ### 文档即代码
@@ -166,18 +187,20 @@ Game (uint32)      — 7B 包头，用户自定义透传，服务器零解析
 
 ---
 
-## 待做：Phase D — 安全 + 运维 (S15-S22)
+### Phase D — 安全 + 运维（S15-S22，2026-03-26）
 
-| # | 任务 | 现状 | 目标 |
-|---|------|------|------|
-| S15 | **Admin Token 环境变量化** | token 从 flag/YAML 读取，无 env 支持 | `BOOM_ADMIN_TOKEN` env 优先 |
-| S16 | **SessionBind 失败断连** | 返回 `playerId=0` 但不关闭连接 | 失败后 `conn.Close()` + 记录 IP |
-| S17 | **WebSocket Origin 白名单** | `CheckOrigin: return true` | config 配置允许的 origin 列表 |
-| S18 | **Per-IP 连接频率限制** | 仅 per-conn 消息限流 | 单 IP 新建连接速率限制 |
-| S19 | **systemd 模板入库** | 腾讯云已用但未提交仓库 | `deploy/boomnetwork.service` |
-| S20 | **Docker 完善** | 缺 `EXPOSE 9091` + `HEALTHCHECK` | 补齐端口暴露 + 健康探针 |
-| S21 | **`/health` 增强** | 仅 status/rooms/players/uptime | 加 buildHash/buildTime/goVersion |
-| S22 | **sd_notify** | 无 systemd 就绪通知 | `sd_notify(READY=1)` |
+8 项安全加固 + 运维完善：
+
+| # | 任务 | 方案 |
+|---|------|------|
+| S15 | Admin Token 环境变量化 | `BOOM_ADMIN_TOKEN` / `BOOM_AUTH_TOKEN` env 优先覆盖 config/flag |
+| S16 | SessionBind 失败断连 | 返回错误响应后 100ms 延迟 `conn.Close()` + slog.Warn 记录来源 IP |
+| S17 | WebSocket Origin 白名单 | `allowedOrigins` 配置项，空=全部允许（向后兼容） |
+| S18 | Per-IP 连接频率限制 | `IPRateLimiter` 10 conn/sec/IP，`acceptLoop` 超限直接拒绝 |
+| S19 | systemd 模板入库 | `deploy/boomnetwork.service`（Type=notify + Restart=on-failure） |
+| S20 | Docker 完善 | `EXPOSE 9091` + `HEALTHCHECK curl /health` + `apk add curl` |
+| S21 | /health 增强 | 新增 `buildHash` / `buildTime` / `goVersion` 字段 |
+| S22 | sd_notify | `sdNotifyReady()` 写 `READY=1` 到 `NOTIFY_SOCKET`（非 systemd 环境自动跳过） |
 
 ---
 
@@ -197,18 +220,20 @@ Game (uint32)      — 7B 包头，用户自定义透传，服务器零解析
 ## 路线总览
 
 ```
-✅ Phase A — 止血 (S1-S6)           2026-03-26
-✅ Phase B — 性能 (S23-S26)          2026-03-26
-✅ Phase C — 可观测+可靠性 (S7-S14)   2026-03-26
+✅ Phase A — 止血 (S1-S6)            2026-03-26
+✅ Phase B — 性能 (S23-S26)           2026-03-26
+✅ Phase C — 可观测+可靠性 (S7-S14)    2026-03-26
+✅ Phase D — 安全+运维 (S15-S22)       2026-03-26
 
-→ Phase D — 安全+运维 (S15-S22)
   Phase E — 远期 (S27-S32)
 ```
 
-**当前成熟度**：Phase A-C 完成后，服务器具备：
-- **能跑**：帧同步核心 + 双协议 + 重连 + 实体权威 + 状态同步
-- **能看**：16 项 Prometheus 指标 + slog JSON 日志 + Grafana 模板 + 运行时级别切换
-- **能扛**：panic 自愈 + 优雅关闭 + 容量上限 + CAS 重连 + 统一限流
-- **能调**：15 个 Admin 端点 + WebSocket 实时推送 + 网络模拟 + 配置热重载
+**当前成熟度：Beta 级** — Phase A-D 共 26 项全部完成：
 
-Phase D 完成后 → **Beta 级**（安全加固 + 运维完善）。
+| 维度 | 能力 |
+|------|------|
+| **能跑** | 帧同步核心 + TCP/KCP 双协议 + 二级降级重连 + 实体权威 + 轻量状态同步 |
+| **能看** | 16 项 Prometheus 指标（含 2 Histogram）+ slog JSON 日志 + Grafana 模板 + 运行时级别切换 |
+| **能扛** | panic 自愈 + 优雅关闭（ServerShutdown 广播 + 30s drain）+ 容量上限 + CAS 重连 |
+| **能防** | env token + 鉴权失败断连 + WS Origin 白名单 + per-IP 连接限流 + per-conn 消息限流 |
+| **能运维** | systemd（sd_notify）+ Docker（HEALTHCHECK）+ /health（build 信息）+ 配置热重载 + GM 15 端点 |
