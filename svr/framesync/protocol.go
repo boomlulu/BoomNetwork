@@ -60,6 +60,14 @@ const (
 	ExtCmdAuthorityTransfer uint16 = 42
 	// Data[0]=0: C→S 请求 [0:1][entityId:4][release:1]
 	// Data[0]=1: S→C 结果 [1:1][entityId:4][newOwner:4]
+
+	// 轻量状态同步（帧同步未运行时的通信通道）
+	ExtCmdSendStateMsg    uint16 = 50 // C→S 状态消息（服务器转发）
+	ExtCmdPushStateMsg    uint16 = 51 // S→C 转发状态消息
+	ExtCmdSetData         uint16 = 52 // C→S 设置 KV 数据
+	ExtCmdPushData        uint16 = 53 // S→C 增量广播 KV 变更
+	ExtCmdRequestDataSync uint16 = 54 // C→S 请求全量 KV 同步
+	ExtCmdPushDataSync    uint16 = 55 // S→C 全量 KV 快照
 )
 
 
@@ -309,5 +317,88 @@ func EncodeAuthorityTransferResult(entityId int32, newOwnerPlayerId int32) []byt
 	buf := make([]byte, 8)
 	binary.LittleEndian.PutUint32(buf[0:], uint32(entityId))
 	binary.LittleEndian.PutUint32(buf[4:], uint32(newOwnerPlayerId))
+	return buf
+}
+
+// === 轻量状态同步编解码 ===
+
+// DataEntry KV 存储条目
+type DataEntry struct {
+	PlayerId int32
+	Key      int32
+	Value    []byte
+}
+
+// DataStoreKey 复合键: int64(playerId)<<32 | int64(uint32(key))
+func DataStoreKey(playerId int32, key int32) int64 {
+	return int64(playerId)<<32 | int64(uint32(key))
+}
+
+// EncodePushStateMsg 编码 PushStateMsg
+// Wire: [PlayerId:4][Data:N]
+func EncodePushStateMsg(playerId int32, data []byte) []byte {
+	buf := make([]byte, 4+len(data))
+	binary.LittleEndian.PutUint32(buf[0:], uint32(playerId))
+	copy(buf[4:], data)
+	return buf
+}
+
+// DecodeSetData 解码 SetData
+// Wire: [Key:4][ValueLen:2][Value:N]
+func DecodeSetData(data []byte) (key int32, value []byte, ok bool) {
+	if len(data) < 6 {
+		return 0, nil, false
+	}
+	key = int32(binary.LittleEndian.Uint32(data[0:4]))
+	valueLen := int(binary.LittleEndian.Uint16(data[4:6]))
+	if valueLen == 0 {
+		return key, nil, true // delete
+	}
+	if len(data) < 6+valueLen {
+		return 0, nil, false
+	}
+	value = make([]byte, valueLen)
+	copy(value, data[6:6+valueLen])
+	return key, value, true
+}
+
+// EncodePushData 编码 PushData (增量)
+// Wire: [Version:4][PlayerId:4][Key:4][ValueLen:2][Value:N]
+func EncodePushData(version uint32, playerId int32, key int32, value []byte) []byte {
+	valueLen := len(value)
+	buf := make([]byte, 14+valueLen)
+	binary.LittleEndian.PutUint32(buf[0:], version)
+	binary.LittleEndian.PutUint32(buf[4:], uint32(playerId))
+	binary.LittleEndian.PutUint32(buf[8:], uint32(key))
+	binary.LittleEndian.PutUint16(buf[12:], uint16(valueLen))
+	if valueLen > 0 {
+		copy(buf[14:], value)
+	}
+	return buf
+}
+
+// EncodePushDataSync 编码 PushDataSync (全量快照)
+// Wire: [Version:4][EntryCount:2] + N × [PlayerId:4][Key:4][ValueLen:2][Value:N]
+func EncodePushDataSync(version uint32, entries []DataEntry) []byte {
+	size := 6 // Version(4) + EntryCount(2)
+	for _, e := range entries {
+		size += 10 + len(e.Value) // PlayerId(4) + Key(4) + ValueLen(2) + Value
+	}
+	buf := make([]byte, size)
+	binary.LittleEndian.PutUint32(buf[0:], version)
+	binary.LittleEndian.PutUint16(buf[4:], uint16(len(entries)))
+	offset := 6
+	for _, e := range entries {
+		binary.LittleEndian.PutUint32(buf[offset:], uint32(e.PlayerId))
+		offset += 4
+		binary.LittleEndian.PutUint32(buf[offset:], uint32(e.Key))
+		offset += 4
+		binary.LittleEndian.PutUint16(buf[offset:], uint16(len(e.Value)))
+		offset += 2
+		if len(e.Value) > 0 {
+			copy(buf[offset:], e.Value)
+			offset += len(e.Value)
+		}
+	}
 	return buf
 }

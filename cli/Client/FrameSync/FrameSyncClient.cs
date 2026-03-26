@@ -58,6 +58,14 @@ namespace BoomNetwork.Client.FrameSync
         public event Action? OnReconnected;
         public event Action? OnDisconnected;
         public event Action<int>? OnLeftRoom;                 // oldPlayerId
+
+        // --- 轻量状态同步事件 ---
+        /// <summary>收到其他玩家的状态消息 (playerId, data)</summary>
+        public event Action<int, byte[]>? OnStateMessage;
+        /// <summary>KV 数据增量变更 (version, playerId, key, value)。value 为空表示删除</summary>
+        public event Action<uint, int, int, byte[]>? OnDataChanged;
+        /// <summary>全量 KV 同步完成 (version, entries)</summary>
+        public event Action<uint, DataEntry[]>? OnDataSynced;
         public event Action<NetworkError>? OnError;
         public event Action<string>? OnLog;
 
@@ -124,6 +132,32 @@ namespace BoomNetwork.Client.FrameSync
             _session.SendGame(gameCmd, data);
         }
 
+        // --- 轻量状态同步 API ---
+
+        /// <summary>发送状态消息（服务器转发给同房其他玩家，不存储）</summary>
+        public void SendStateMessage(byte[] data)
+        {
+            _session?.SendExt(FrameSyncExtCmd.SendStateMsg, data);
+        }
+
+        /// <summary>设置 KV 数据（服务器存储并增量广播）</summary>
+        public void SetData(int key, byte[] value)
+        {
+            _session?.SendExt(FrameSyncExtCmd.SetData, StateSyncCodec.EncodeSetData(key, value));
+        }
+
+        /// <summary>删除 KV 数据</summary>
+        public void DeleteData(int key)
+        {
+            _session?.SendExt(FrameSyncExtCmd.SetData, StateSyncCodec.EncodeDeleteData(key));
+        }
+
+        /// <summary>请求全量 KV 同步（版本间隙时自动调用，也可手动调用）</summary>
+        public void RequestDataSync()
+        {
+            _session?.SendExt(FrameSyncExtCmd.RequestDataSync, Array.Empty<byte>());
+        }
+
         // --- 内部网络栈（创建一次，不重建）---
         private TcpClientTransport? _transport;
         private NetworkSession? _session;
@@ -137,6 +171,7 @@ namespace BoomNetwork.Client.FrameSync
         private bool _frameSyncStarted;
         private uint _lastSnapshotFrame;
         private Message? _pendingStartMsg;
+        private uint _dataSyncVersion;  // 轻量状态同步版本跟踪
 
         public FrameSyncClient(float heartbeatIntervalMs = 3000, float heartbeatTimeoutMs = 10000)
         {
@@ -504,6 +539,16 @@ namespace BoomNetwork.Client.FrameSync
                     case FrameSyncExtCmd.AuthorityTransfer:
                         HandleAuthorityTransferResult(msg);
                         break;
+
+                    case FrameSyncExtCmd.PushStateMsg:
+                        HandlePushStateMsg(msg);
+                        break;
+                    case FrameSyncExtCmd.PushData:
+                        HandlePushData(msg);
+                        break;
+                    case FrameSyncExtCmd.PushDataSync:
+                        HandlePushDataSync(msg);
+                        break;
                 }
             }
             else if (msg.MsgType == CmdType.Game)
@@ -605,6 +650,42 @@ namespace BoomNetwork.Client.FrameSync
             var (entityId, newOwnerPlayerId) = AuthorityTransferCodec.DecodeResult(msg.DataSpan);
             Log($"AuthorityTransferResult entity={entityId} newOwner={newOwnerPlayerId}");
             OnAuthorityChanged?.Invoke(entityId, newOwnerPlayerId);
+        }
+
+        // ===================== 轻量状态同步 Handler =====================
+
+        private void HandlePushStateMsg(Message msg)
+        {
+            if (msg.DataLength < 4) return;
+            var (playerId, data) = StateSyncCodec.DecodePushStateMsg(msg.DataSpan);
+            OnStateMessage?.Invoke(playerId, data);
+        }
+
+        private void HandlePushData(Message msg)
+        {
+            if (msg.DataLength < 14) return;
+            var (version, playerId, key, value) = StateSyncCodec.DecodePushData(msg.DataSpan);
+
+            if (version == _dataSyncVersion + 1)
+            {
+                _dataSyncVersion = version;
+                OnDataChanged?.Invoke(version, playerId, key, value);
+            }
+            else if (version > _dataSyncVersion + 1)
+            {
+                // 版本间隙 → 请求全量同步
+                Log($"DataSync version gap: expected {_dataSyncVersion + 1}, got {version}, requesting full sync");
+                RequestDataSync();
+            }
+            // else: 旧版本消息，忽略
+        }
+
+        private void HandlePushDataSync(Message msg)
+        {
+            if (msg.DataLength < 6) return;
+            var (version, entries) = StateSyncCodec.DecodePushDataSync(msg.DataSpan);
+            _dataSyncVersion = version;
+            OnDataSynced?.Invoke(version, entries);
         }
 
         private void Log(string msg) => OnLog?.Invoke($"[FrameSyncClient] {msg}");

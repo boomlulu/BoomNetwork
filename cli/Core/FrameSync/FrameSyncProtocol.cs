@@ -61,6 +61,14 @@ namespace BoomNetwork.Core.FrameSync
 
         // 权威转移（双向，Data[0] 区分 request=0 / result=1）
         public const ushort AuthorityTransfer = 42;
+
+        // 轻量状态同步（帧同步未运行时的通信通道）
+        public const ushort SendStateMsg    = 50; // C→S 状态消息（服务器转发）
+        public const ushort PushStateMsg    = 51; // S→C 转发状态消息
+        public const ushort SetData         = 52; // C→S 设置 KV 数据
+        public const ushort PushData        = 53; // S→C 增量广播 KV 变更
+        public const ushort RequestDataSync = 54; // C→S 请求全量 KV 同步
+        public const ushort PushDataSync    = 55; // S→C 全量 KV 快照
     }
 
     /// <summary>
@@ -517,6 +525,102 @@ namespace BoomNetwork.Core.FrameSync
             int entityId = BinaryPrimitives.ReadInt32LittleEndian(buf);
             int newOwnerPlayerId = BinaryPrimitives.ReadInt32LittleEndian(buf.Slice(4));
             return (entityId, newOwnerPlayerId);
+        }
+    }
+
+    // ===================== 轻量状态同步 =====================
+
+    /// <summary>
+    /// KV 数据条目
+    /// </summary>
+    public struct DataEntry
+    {
+        public int PlayerId;
+        public int Key;
+        public byte[] Value;
+    }
+
+    /// <summary>
+    /// 轻量状态同步编解码
+    ///
+    /// StateMessage: 服务器纯转发的事件消息
+    /// DataMessage:  服务器存储 KV 并增量广播
+    /// </summary>
+    public static class StateSyncCodec
+    {
+        // === SendStateMsg (C→S) ===
+        // Wire: [Data:N] (原始 payload)
+
+        public static byte[] EncodeStateMsg(ReadOnlySpan<byte> data)
+        {
+            return data.ToArray();
+        }
+
+        // === PushStateMsg (S→C) ===
+        // Wire: [PlayerId:4][Data:N]
+
+        public static (int playerId, byte[] data) DecodePushStateMsg(ReadOnlySpan<byte> buf)
+        {
+            int playerId = BinaryPrimitives.ReadInt32LittleEndian(buf);
+            byte[] data = buf.Slice(4).ToArray();
+            return (playerId, data);
+        }
+
+        // === SetData (C→S) ===
+        // Wire: [Key:4][ValueLen:2][Value:N]
+
+        public static byte[] EncodeSetData(int key, ReadOnlySpan<byte> value)
+        {
+            var buf = new byte[6 + value.Length];
+            BinaryPrimitives.WriteInt32LittleEndian(buf, key);
+            BinaryPrimitives.WriteUInt16LittleEndian(buf.AsSpan(4), (ushort)value.Length);
+            if (value.Length > 0)
+                value.CopyTo(buf.AsSpan(6));
+            return buf;
+        }
+
+        public static byte[] EncodeDeleteData(int key)
+        {
+            var buf = new byte[6];
+            BinaryPrimitives.WriteInt32LittleEndian(buf, key);
+            // ValueLen = 0 means delete
+            return buf;
+        }
+
+        // === PushData (S→C) — 增量 ===
+        // Wire: [Version:4][PlayerId:4][Key:4][ValueLen:2][Value:N]
+
+        public static (uint version, int playerId, int key, byte[] value) DecodePushData(ReadOnlySpan<byte> buf)
+        {
+            uint version = BinaryPrimitives.ReadUInt32LittleEndian(buf);
+            int playerId = BinaryPrimitives.ReadInt32LittleEndian(buf.Slice(4));
+            int key = BinaryPrimitives.ReadInt32LittleEndian(buf.Slice(8));
+            ushort valueLen = BinaryPrimitives.ReadUInt16LittleEndian(buf.Slice(12));
+            byte[] value = valueLen > 0 ? buf.Slice(14, valueLen).ToArray() : Array.Empty<byte>();
+            return (version, playerId, key, value);
+        }
+
+        // === PushDataSync (S→C) — 全量快照 ===
+        // Wire: [Version:4][EntryCount:2] + N × [PlayerId:4][Key:4][ValueLen:2][Value:N]
+
+        public static (uint version, DataEntry[] entries) DecodePushDataSync(ReadOnlySpan<byte> buf)
+        {
+            uint version = BinaryPrimitives.ReadUInt32LittleEndian(buf);
+            ushort count = BinaryPrimitives.ReadUInt16LittleEndian(buf.Slice(4));
+            var entries = new DataEntry[count];
+            int offset = 6;
+            for (int i = 0; i < count; i++)
+            {
+                entries[i].PlayerId = BinaryPrimitives.ReadInt32LittleEndian(buf.Slice(offset));
+                offset += 4;
+                entries[i].Key = BinaryPrimitives.ReadInt32LittleEndian(buf.Slice(offset));
+                offset += 4;
+                ushort valueLen = BinaryPrimitives.ReadUInt16LittleEndian(buf.Slice(offset));
+                offset += 2;
+                entries[i].Value = valueLen > 0 ? buf.Slice(offset, valueLen).ToArray() : Array.Empty<byte>();
+                offset += valueLen;
+            }
+            return (version, entries);
         }
     }
 }

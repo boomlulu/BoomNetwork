@@ -112,6 +112,10 @@ func main() {
 	router.OnExt(framesync.ExtCmdUploadSnapshot, txStats(handleUploadSnapshot))
 	router.OnExt(framesync.ExtCmdSendEntityState, txStats(handleSendEntityState))
 	router.OnExt(framesync.ExtCmdAuthorityTransfer, txStats(handleRequestAuthorityTransfer))
+	// 轻量状态同步
+	router.OnExt(framesync.ExtCmdSendStateMsg, txStats(handleSendStateMsg))
+	router.OnExt(framesync.ExtCmdSetData, txStats(handleSetData))
+	router.OnExt(framesync.ExtCmdRequestDataSync, txStats(handleRequestDataSync))
 	// Game Cmd (uint32) — 服务器透传
 	router.OnGame(txStats(handleGameRelay))
 
@@ -520,6 +524,15 @@ func handleJoinRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 		}()
 	}
 
+	// 新加入的玩家自动收到 KV 全量同步
+	if !room.DataStoreEmpty() {
+		go func() {
+			time.Sleep(15 * time.Millisecond) // 确保 JoinRoomRsp 先到达
+			entries, version := room.GetDataSnapshot()
+			sendMsg(conn, codec.NewExtMessage(framesync.ExtCmdPushDataSync, framesync.EncodePushDataSync(version, entries)))
+		}()
+	}
+
 	return codec.NewExtMessage(framesync.ExtCmdJoinRoomRsp, framesync.EncodeJoinRoomRsp(playerId, room.ID, existingPlayers))
 }
 
@@ -539,6 +552,13 @@ func handleLeaveRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	// 注意：不删除 connPlayerMap / playerConnMap
 	// 这两个映射是 SessionBind 建立的，LeaveRoom 只清理房间关系
 	// 删了会导致 re-JoinRoom 失败（"SessionBind missing"）
+
+	// 清除该玩家的 KV 数据并广播删除
+	deleted, versions := room.ClearPlayerData(playerId)
+	for i, entry := range deleted {
+		push := framesync.EncodePushData(versions[i], playerId, entry.Key, nil)
+		broadcastToRoom(room, playerId, codec.NewExtMessage(framesync.ExtCmdPushData, push))
+	}
 
 	log.Printf("[Server] Player %d left room %d\n", playerId, room.ID)
 
@@ -626,6 +646,15 @@ func handleMatchRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 					sendMsg(conn, codec.NewCoreMessage(framesync.CmdPushFrames, cf.EncodedData))
 				}
 			}
+		}()
+	}
+
+	// 新加入的玩家自动收到 KV 全量同步
+	if !room.DataStoreEmpty() {
+		go func() {
+			time.Sleep(15 * time.Millisecond)
+			entries, version := room.GetDataSnapshot()
+			sendMsg(conn, codec.NewExtMessage(framesync.ExtCmdPushDataSync, framesync.EncodePushDataSync(version, entries)))
 		}()
 	}
 
@@ -809,6 +838,70 @@ func handleSendEntityState(conn *transport.Conn, msg *codec.Message) *codec.Mess
 		}
 	})
 	return nil
+}
+
+// ===================== 轻量状态同步 Handler =====================
+
+// handleSendStateMsg 状态消息：加上 playerId 前缀，转发给同房其他玩家
+func handleSendStateMsg(conn *transport.Conn, msg *codec.Message) *codec.Message {
+	val, ok := connPlayerMap.Load(conn.ID)
+	if !ok {
+		return nil
+	}
+	playerId := val.(int32)
+
+	roomVal, ok := playerRoomMap.Load(playerId)
+	if !ok {
+		return nil
+	}
+	room := roomVal.(*framesync.Room)
+
+	push := framesync.EncodePushStateMsg(playerId, msg.Data)
+	broadcastToRoom(room, playerId, codec.NewExtMessage(framesync.ExtCmdPushStateMsg, push))
+	return nil
+}
+
+// handleSetData KV 数据设置：存储到房间，增量广播给其他玩家
+func handleSetData(conn *transport.Conn, msg *codec.Message) *codec.Message {
+	val, ok := connPlayerMap.Load(conn.ID)
+	if !ok {
+		return nil
+	}
+	playerId := val.(int32)
+
+	roomVal, ok := playerRoomMap.Load(playerId)
+	if !ok {
+		return nil
+	}
+	room := roomVal.(*framesync.Room)
+
+	key, value, ok := framesync.DecodeSetData(msg.Data)
+	if !ok {
+		return nil
+	}
+
+	version := room.SetData(playerId, key, value)
+	push := framesync.EncodePushData(version, playerId, key, value)
+	broadcastToRoom(room, playerId, codec.NewExtMessage(framesync.ExtCmdPushData, push))
+	return nil
+}
+
+// handleRequestDataSync 全量 KV 同步请求
+func handleRequestDataSync(conn *transport.Conn, msg *codec.Message) *codec.Message {
+	val, ok := connPlayerMap.Load(conn.ID)
+	if !ok {
+		return nil
+	}
+	playerId := val.(int32)
+
+	roomVal, ok := playerRoomMap.Load(playerId)
+	if !ok {
+		return nil
+	}
+	room := roomVal.(*framesync.Room)
+
+	entries, version := room.GetDataSnapshot()
+	return codec.NewExtMessage(framesync.ExtCmdPushDataSync, framesync.EncodePushDataSync(version, entries))
 }
 
 func handleGameRelay(conn *transport.Conn, msg *codec.Message) *codec.Message {
