@@ -1,7 +1,7 @@
 package framesync
 
 import (
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -101,6 +101,9 @@ type Room struct {
 
 	// panic 恢复回调：通知外部清理 playerRoomMap 等全局状态
 	OnPanic func(room *Room, playerIds []int32)
+
+	// 指标：房间生命周期
+	startedAt time.Time
 }
 
 // NewRoom 创建帧同步房间
@@ -300,10 +303,10 @@ func (r *Room) UpdateSnapshot(frameNumber uint32, data []byte) bool {
 
 	if r.snapshotPaused {
 		r.snapshotPaused = false
-		log.Printf("[Room %d] Snapshot received, resuming frame sync\n", r.ID)
+		slog.Info("snapshot received, resuming frame sync", "roomId", r.ID)
 	}
 
-	log.Printf("[Room %d] Snapshot updated at frame %d (%d bytes)\n", r.ID, frameNumber, len(data))
+	slog.Info("snapshot updated", "roomId", r.ID, "frame", frameNumber, "bytes", len(data))
 	return true
 }
 
@@ -364,6 +367,7 @@ func (r *Room) Start() {
 	r.running = true
 	r.frameNumber = 0
 	r.startTime = time.Now().UnixMilli()
+	r.startedAt = time.Now()
 	r.frameRingPos = 0
 	r.frameRingLen = 0
 	r.snapshotStaleFrames = 0
@@ -391,9 +395,13 @@ func (r *Room) Stop() {
 		return
 	}
 	r.running = false
+	startedAt := r.startedAt
 	close(r.stopCh)
 	r.mu.Unlock()
 
+	if !startedAt.IsZero() {
+		Metrics.RoomLifetimeSeconds.Observe(time.Since(startedAt).Seconds())
+	}
 	r.broadcast(codec.NewCoreMessage(CmdStopFrameSync, nil))
 }
 
@@ -410,7 +418,7 @@ func (r *Room) OnInput(playerId int32, data []byte) {
 func (r *Room) tickLoop() {
 	defer func() {
 		if rec := recover(); rec != nil {
-			log.Printf("[Room %d] PANIC recovered: %v\n", r.ID, rec)
+			slog.Error("PANIC recovered", "roomId", r.ID, "panic", rec)
 			Metrics.RoomPanics.Inc()
 
 			// 广播 StopFrameSync 给所有在线玩家
@@ -450,7 +458,7 @@ func (r *Room) tickLoop() {
 			removed := r.CleanupDisconnected()
 			for _, id := range removed {
 				r.broadcast(codec.NewExtMessage(ExtCmdPlayerLeft, EncodePlayerId(id)))
-				log.Printf("[Room %d] Player %d removed (disconnect timeout)\n", r.ID, id)
+				slog.Info("player removed (disconnect timeout)", "roomId", r.ID, "playerId", id)
 			}
 		}
 	}
@@ -465,8 +473,7 @@ func (r *Room) stepFrame() {
 		staleLimit := uint32(r.config.SnapshotIntervalFrames * 3)
 		if r.snapshotStaleFrames >= staleLimit && !r.snapshotPaused {
 			r.snapshotPaused = true
-			log.Printf("[Room %d] WARNING: No snapshot for %d frames (limit=%d), pausing frame sync\n",
-				r.ID, r.snapshotStaleFrames, staleLimit)
+			slog.Warn("no snapshot received, pausing frame sync", "roomId", r.ID, "staleFrames", r.snapshotStaleFrames, "limit", staleLimit)
 			r.mu.Unlock()
 			return
 		}
@@ -519,10 +526,12 @@ func (r *Room) stepFrame() {
 
 	// 广播在锁外执行，不阻塞其他操作
 	Metrics.FramesPushed.Inc()
+	broadcastStart := time.Now()
 	msg := codec.NewCoreMessage(CmdPushFrames, r.frameBuf[:size])
 	for _, p := range r.broadcastSlice {
 		p.Conn.Send(msg)
 	}
+	Metrics.FrameBroadcastLatency.Observe(time.Since(broadcastStart).Seconds())
 }
 
 // CleanupDisconnected 清理超时断线玩家，返回被移除的玩家 ID

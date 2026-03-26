@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"net/http"
 	"runtime"
 	"sync"
@@ -42,14 +42,14 @@ func (h *GMHub) addConn(c *GMConn) {
 	h.mu.Lock()
 	h.conns[c] = struct{}{}
 	h.mu.Unlock()
-	log.Printf("[GM-WS] Client connected (%d total)\n", h.connCount())
+	slog.Info("gm-ws client connected", "total", h.connCount())
 }
 
 func (h *GMHub) removeConn(c *GMConn) {
 	h.mu.Lock()
 	delete(h.conns, c)
 	h.mu.Unlock()
-	log.Printf("[GM-WS] Client disconnected (%d total)\n", h.connCount())
+	slog.Info("gm-ws client disconnected", "total", h.connCount())
 }
 
 func (h *GMHub) connCount() int {
@@ -220,7 +220,7 @@ func (h *GMHub) HandleUpgrade(token string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ws, err := wsUpgrader.Upgrade(w, r, nil)
 		if err != nil {
-			log.Printf("[GM-WS] Upgrade failed: %v\n", err)
+			slog.Error("gm-ws upgrade failed", "error", err)
 			return
 		}
 
@@ -419,7 +419,7 @@ func (c *GMConn) rpcKick(env *GMEnvelope) {
 	}
 	broadcastToRoom(room, p.Pid, codec.NewExtMessage(framesync.ExtCmdPlayerLeft, framesync.EncodePlayerId(p.Pid)))
 
-	log.Printf("[GM-WS] Kicked player %d from room %d\n", p.Pid, room.ID)
+	slog.Info("gm-ws kicked player", "player_id", p.Pid, "room_id", room.ID)
 	c.sendRsp(env.ID, "kick", KickResult{Ok: true, Kicked: p.Pid, Room: room.ID})
 }
 
@@ -442,7 +442,7 @@ func (c *GMConn) rpcStopRoom(env *GMEnvelope) {
 	})
 	roomMgr.RemoveRoom(p.RoomID)
 
-	log.Printf("[GM-WS] Stopped room %d\n", p.RoomID)
+	slog.Info("gm-ws stopped room", "room_id", p.RoomID)
 	c.sendRsp(env.ID, "stop_room", StopRoomResult{Ok: true, Stopped: p.RoomID})
 }
 
@@ -469,7 +469,7 @@ func (c *GMConn) rpcKillRoom(env *GMEnvelope) {
 	room.Stop()
 	roomMgr.RemoveRoom(p.RoomID)
 
-	log.Printf("[GM-WS] Killed room %d (force)\n", p.RoomID)
+	slog.Info("gm-ws killed room", "room_id", p.RoomID)
 	c.sendRsp(env.ID, "kill_room", KillRoomResult{Ok: true, Killed: p.RoomID})
 }
 
@@ -486,7 +486,7 @@ func (c *GMConn) rpcCreateRoom(env *GMEnvelope) {
 	room := roomMgr.CreateRoomWithMaxPlayers(p.MaxPlayers)
 	room.MatchKey = p.MatchKey
 
-	log.Printf("[GM-WS] Created room %d (max=%d, key=%q)\n", room.ID, p.MaxPlayers, p.MatchKey)
+	slog.Info("gm-ws created room", "room_id", room.ID, "max_players", p.MaxPlayers, "match_key", p.MatchKey)
 	c.sendRsp(env.ID, "create_room", CreateRoomResult{Ok: true, RoomID: room.ID})
 }
 
@@ -508,7 +508,7 @@ func (c *GMConn) rpcNetsim(env *GMEnvelope) {
 	if p.LossPercent != nil {
 		atomic.StoreInt32(&GlobalNetSim.LossPercent, int32(*p.LossPercent))
 	}
-	log.Printf("[GM-WS] NetSim updated\n")
+	slog.Info("gm-ws netsim updated")
 	c.sendRsp(env.ID, "netsim", map[string]bool{"ok": true})
 }
 
