@@ -315,6 +315,18 @@ func (c *GMConn) readPump(token string) {
 		case "sub":
 			if bit, ok := topicToBit[env.Topic]; ok {
 				atomic.OrUint32(&c.topics, bit)
+				// 回填历史消息，让 Messages Tab 订阅后立即有数据
+				if env.Topic == TopicMessages {
+					recent := MsgLog.Recent(100)
+					// Recent 返回逆序（最新在前），反转为时间正序推送
+					for i := len(recent) - 1; i >= 0; i-- {
+						data := makePushEnvelope(TopicMessages, MsgEntryToWire(recent[i]))
+						select {
+						case c.sendCh <- data:
+						default:
+						}
+					}
+				}
 			}
 		case "unsub":
 			if bit, ok := topicToBit[env.Topic]; ok {
@@ -375,6 +387,10 @@ func (c *GMConn) handleRPC(env *GMEnvelope) {
 		c.rpcKick(env)
 	case "stop_room":
 		c.rpcStopRoom(env)
+	case "kill_room":
+		c.rpcKillRoom(env)
+	case "create_room":
+		c.rpcCreateRoom(env)
 	case "netsim":
 		c.rpcNetsim(env)
 	default:
@@ -428,6 +444,50 @@ func (c *GMConn) rpcStopRoom(env *GMEnvelope) {
 
 	log.Printf("[GM-WS] Stopped room %d\n", p.RoomID)
 	c.sendRsp(env.ID, "stop_room", StopRoomResult{Ok: true, Stopped: p.RoomID})
+}
+
+func (c *GMConn) rpcKillRoom(env *GMEnvelope) {
+	var p KillRoomPayload
+	if err := msgpack.Unmarshal(env.Payload, &p); err != nil || p.RoomID <= 0 {
+		c.sendError(env.ID, "kill_room", "invalid room id")
+		return
+	}
+
+	room := roomMgr.GetRoom(p.RoomID)
+	if room == nil {
+		c.sendError(env.ID, "kill_room", "room not found")
+		return
+	}
+
+	// 强制销毁：关闭所有玩家连接，跳过优雅广播
+	room.ForEachPlayer(func(pi framesync.PlayerInfo) {
+		playerRoomMap.Delete(pi.ID)
+		if connVal, ok := playerConnMap.LoadAndDelete(pi.ID); ok {
+			connVal.(*transport.Conn).Close()
+		}
+	})
+	room.Stop()
+	roomMgr.RemoveRoom(p.RoomID)
+
+	log.Printf("[GM-WS] Killed room %d (force)\n", p.RoomID)
+	c.sendRsp(env.ID, "kill_room", KillRoomResult{Ok: true, Killed: p.RoomID})
+}
+
+func (c *GMConn) rpcCreateRoom(env *GMEnvelope) {
+	var p CreateRoomPayload
+	if err := msgpack.Unmarshal(env.Payload, &p); err != nil {
+		c.sendError(env.ID, "create_room", "invalid payload")
+		return
+	}
+	if p.MaxPlayers <= 0 {
+		p.MaxPlayers = 2
+	}
+
+	room := roomMgr.CreateRoomWithMaxPlayers(p.MaxPlayers)
+	room.MatchKey = p.MatchKey
+
+	log.Printf("[GM-WS] Created room %d (max=%d, key=%q)\n", room.ID, p.MaxPlayers, p.MatchKey)
+	c.sendRsp(env.ID, "create_room", CreateRoomResult{Ok: true, RoomID: room.ID})
 }
 
 func (c *GMConn) rpcNetsim(env *GMEnvelope) {

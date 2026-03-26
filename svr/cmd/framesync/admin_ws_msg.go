@@ -67,6 +67,15 @@ type StopRoomPayload struct {
 	RoomID int32 `msgpack:"room_id"`
 }
 
+type KillRoomPayload struct {
+	RoomID int32 `msgpack:"room_id"`
+}
+
+type CreateRoomPayload struct {
+	MaxPlayers int    `msgpack:"max_players"`
+	MatchKey   string `msgpack:"match_key,omitempty"`
+}
+
 type NetsimPayload struct {
 	Enabled     *bool `msgpack:"enabled,omitempty"`
 	LatencyMs   *int  `msgpack:"latency_ms,omitempty"`
@@ -182,6 +191,16 @@ type KickResult struct {
 type StopRoomResult struct {
 	Ok      bool  `msgpack:"ok"`
 	Stopped int32 `msgpack:"stopped"`
+}
+
+type KillRoomResult struct {
+	Ok     bool  `msgpack:"ok"`
+	Killed int32 `msgpack:"killed"`
+}
+
+type CreateRoomResult struct {
+	Ok     bool  `msgpack:"ok"`
+	RoomID int32 `msgpack:"room_id"`
 }
 
 type ErrorResult struct {

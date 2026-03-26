@@ -125,6 +125,15 @@ namespace BoomNetwork.GM.Editor
 
         public ActionResult StopRoom(int roomId) => Post($"/rooms/stop/{roomId}");
 
+        public ActionResult KillRoom(int roomId) => Post($"/rooms/kill/{roomId}");
+
+        public ActionResult CreateRoom(int maxPlayers = 2, string matchKey = "")
+        {
+            var query = $"/rooms/create?max_players={maxPlayers}";
+            if (!string.IsNullOrEmpty(matchKey)) query += $"&match_key={Uri.EscapeDataString(matchKey)}";
+            return Post(query);
+        }
+
         // ===================== GET/POST /netsim =====================
 
         public struct NetSimResult

@@ -42,6 +42,8 @@ func startAdminServer(ctx context.Context, addr, token string) {
 	mux.HandleFunc("/messages", withAuth(token, handleMessages))
 	mux.HandleFunc("/rooms", withAuth(token, handleRooms))
 	mux.HandleFunc("/rooms/stop/", withAuth(token, handleStopRoom))
+	mux.HandleFunc("/rooms/kill/", withAuth(token, handleAdminKillRoom))
+	mux.HandleFunc("/rooms/create", withAuth(token, handleAdminCreateRoom))
 	mux.HandleFunc("/kick/", withAuth(token, handleKick))
 	mux.HandleFunc("/players/", withAuth(token, handlePlayerDetail))
 	mux.HandleFunc("/perf", withAuth(token, handlePerf))
@@ -303,6 +305,69 @@ func handleStopRoom(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"ok":true,"stopped":%d}`, roomId)
+}
+
+// ===================== POST /rooms/kill/{id} =====================
+
+func handleAdminKillRoom(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	idStr := strings.TrimPrefix(r.URL.Path, "/rooms/kill/")
+	id, err := strconv.Atoi(idStr)
+	if err != nil || id <= 0 {
+		jsonError(w, http.StatusBadRequest, "invalid room id")
+		return
+	}
+	roomId := int32(id)
+
+	room := roomMgr.GetRoom(roomId)
+	if room == nil {
+		jsonError(w, http.StatusNotFound, fmt.Sprintf("room %d not found", roomId))
+		return
+	}
+
+	// 强制销毁：关闭所有玩家连接，跳过优雅广播
+	room.ForEachPlayer(func(p framesync.PlayerInfo) {
+		playerRoomMap.Delete(p.ID)
+		if connVal, ok := playerConnMap.LoadAndDelete(p.ID); ok {
+			connVal.(*transport.Conn).Close()
+		}
+	})
+	room.Stop()
+	roomMgr.RemoveRoom(roomId)
+
+	log.Printf("[Admin] Killed room %d (force)\n", roomId)
+
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{"ok":true,"killed":%d}`, roomId)
+}
+
+// ===================== POST /rooms/create =====================
+
+func handleAdminCreateRoom(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	maxPlayers := 2
+	if v := r.URL.Query().Get("max_players"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			maxPlayers = n
+		}
+	}
+	matchKey := r.URL.Query().Get("match_key")
+
+	room := roomMgr.CreateRoomWithMaxPlayers(maxPlayers)
+	room.MatchKey = matchKey
+
+	log.Printf("[Admin] Created room %d (max=%d, key=%q)\n", room.ID, maxPlayers, matchKey)
+
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{"ok":true,"room_id":%d}`, room.ID)
 }
 
 // ===================== Helpers =====================

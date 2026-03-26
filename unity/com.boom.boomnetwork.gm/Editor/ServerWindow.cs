@@ -633,9 +633,28 @@ namespace BoomNetwork.GM.Editor
 
         // ===================== Tab 2: Rooms =====================
 
+        private int _createRoomMaxPlayers = 2;
+        private string _createRoomMatchKey = "";
+
         void DrawRooms()
         {
             if (!_lastAlive) { EditorGUILayout.HelpBox("Server offline", MessageType.Warning); return; }
+
+            // Create room toolbar
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField("Max:", GUILayout.Width(30));
+            _createRoomMaxPlayers = EditorGUILayout.IntField(_createRoomMaxPlayers, GUILayout.Width(30));
+            EditorGUILayout.LabelField("Key:", GUILayout.Width(26));
+            _createRoomMatchKey = EditorGUILayout.TextField(_createRoomMatchKey, GUILayout.Width(80));
+            GUI.backgroundColor = new Color(0.4f, 0.9f, 0.4f);
+            if (GUILayout.Button("Create Room", GUILayout.Width(90)))
+                DoCreateRoom(_createRoomMaxPlayers, _createRoomMatchKey);
+            GUI.backgroundColor = Color.white;
+            GUILayout.FlexibleSpace();
+            EditorGUILayout.LabelField($"{_rooms.Length} rooms", GUILayout.Width(60));
+            EditorGUILayout.EndHorizontal();
+
+            EditorGUILayout.Space(2);
 
             if (_rooms.Length == 0)
             {
@@ -663,6 +682,11 @@ namespace BoomNetwork.GM.Editor
                 if (GUILayout.Button("Stop", GUILayout.Width(45)))
                     DoStopRoom(room.Id);
                 GUI.enabled = true;
+
+                // Kill room button (force destroy)
+                GUI.backgroundColor = new Color(0.8f, 0.1f, 0.1f);
+                if (GUILayout.Button("Kill", GUILayout.Width(40)))
+                    DoKillRoom(room.Id);
                 GUI.backgroundColor = Color.white;
                 EditorGUILayout.EndHorizontal();
 
@@ -722,6 +746,34 @@ namespace BoomNetwork.GM.Editor
             {
                 var r = _client.StopRoom(roomId);
                 ShowNotification(new GUIContent(r.Ok ? $"Room {roomId} stopped" : r.Error));
+            }
+        }
+
+        void DoKillRoom(int roomId)
+        {
+            if (_wsClient != null && _wsClient.IsConnected)
+            {
+                _wsClient.SendRpc("kill_room", new Dictionary<string, object> { ["room_id"] = roomId });
+            }
+            else
+            {
+                var r = _client.KillRoom(roomId);
+                ShowNotification(new GUIContent(r.Ok ? $"Room {roomId} killed" : r.Error));
+            }
+        }
+
+        void DoCreateRoom(int maxPlayers, string matchKey)
+        {
+            if (_wsClient != null && _wsClient.IsConnected)
+            {
+                var payload = new Dictionary<string, object> { ["max_players"] = maxPlayers };
+                if (!string.IsNullOrEmpty(matchKey)) payload["match_key"] = matchKey;
+                _wsClient.SendRpc("create_room", payload);
+            }
+            else
+            {
+                var r = _client.CreateRoom(maxPlayers, matchKey);
+                ShowNotification(new GUIContent(r.Ok ? "Room created" : r.Error));
             }
         }
 
