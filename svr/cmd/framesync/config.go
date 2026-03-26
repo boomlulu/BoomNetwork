@@ -50,6 +50,10 @@ type ServerConfig struct {
 	// 空房间清理延迟（秒）
 	RoomCleanupSec int `yaml:"roomCleanupSec"`
 
+	// 容量限制
+	MaxRooms       int `yaml:"maxRooms"`       // 0 = unlimited
+	MaxConnections int `yaml:"maxConnections"`  // 0 = unlimited
+
 	// 安全限流
 	MaxMessageSize    int `yaml:"maxMessageSize"`
 	MaxMessagesPerSec int `yaml:"maxMessagesPerSec"`

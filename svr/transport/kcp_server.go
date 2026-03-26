@@ -20,9 +20,17 @@ type KcpServer struct {
 	nextID        int
 	mu            sync.Mutex
 	conns         map[int]*Conn
+	maxConns      int // 0 = unlimited
 	onDisconnect  func(*Conn)
 	onRateLimited func()
 	wg            sync.WaitGroup
+}
+
+// SetMaxConns 设置最大连接数（0 = 不限制）
+func (s *KcpServer) SetMaxConns(n int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.maxConns = n
 }
 
 // SetOnDisconnect 设置断开连接回调
@@ -107,6 +115,12 @@ func (s *KcpServer) acceptLoop() {
 		raw.SetMtu(1400)
 
 		s.mu.Lock()
+		if s.maxConns > 0 && len(s.conns) >= s.maxConns {
+			s.mu.Unlock()
+			slog.Warn("connection rejected: max connections reached", "component", "kcp", "maxConns", s.maxConns)
+			raw.Close()
+			continue
+		}
 		s.nextID++
 		c := &Conn{
 			ID:          s.nextID,
@@ -176,6 +190,7 @@ type Server interface {
 	SetOnDisconnect(fn func(*Conn))
 	SetOnRateLimited(fn func())
 	SetSecurity(cfg SecurityConfig)
+	SetMaxConns(n int)
 }
 
 // 确保 TcpServer 和 KcpServer 都实现 Server 接口

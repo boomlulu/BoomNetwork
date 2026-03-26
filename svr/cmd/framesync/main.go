@@ -96,6 +96,7 @@ func main() {
 		SnapshotIntervalFrames: int32(cfg.SnapshotIntervalFrames),
 		QuickReconnectMaxMs:    int32(cfg.QuickReconnectMaxMs),
 	})
+	roomMgr.SetMaxRooms(cfg.MaxRooms)
 
 	router := session.NewRouter()
 	// Core Cmd (0-15) — 高频
@@ -152,6 +153,7 @@ func main() {
 	server := transport.NewServer(*proto, rxHandler)
 	server.SetOnDisconnect(onClientDisconnect)
 	server.SetOnRateLimited(func() { framesync.Metrics.RateLimited.Inc() })
+	server.SetMaxConns(cfg.MaxConnections)
 
 	// 安全配置
 	secCfg := transport.DefaultSecurityConfig()
@@ -508,6 +510,10 @@ func handleCreateRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	}
 
 	room := roomMgr.CreateRoomWithMaxPlayers(maxPlayers)
+	if room == nil {
+		slog.Warn("create room rejected: server at capacity", "maxPlayers", maxPlayers)
+		return codec.NewExtMessage(framesync.ExtCmdCreateRoomRsp, make([]byte, 4)) // roomId=0 signals failure
+	}
 	rsp := make([]byte, 4)
 	binary.LittleEndian.PutUint32(rsp, uint32(room.ID))
 
@@ -676,6 +682,10 @@ func handleMatchRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	playerId := val.(int32)
 
 	room := roomMgr.MatchRoom(maxPlayers, matchKey)
+	if room == nil {
+		slog.Warn("match room rejected: server at capacity", "playerId", playerId, "maxPlayers", maxPlayers)
+		return codec.NewExtMessage(framesync.ExtCmdMatchRoomRsp, framesync.EncodeJoinRoomError(framesync.JoinRoomNotFound))
+	}
 	existingPlayers := room.GetPlayerIds()
 	bindPlayerToRoom(playerId, conn, room)
 

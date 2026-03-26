@@ -1,16 +1,17 @@
 package framesync
 
 import (
-	"log"
+	"log/slog"
 	"sync"
 )
 
 // RoomManager 房间管理器
 type RoomManager struct {
-	mu     sync.Mutex
-	rooms  map[int32]*Room
-	nextID int32
-	config RoomConfig
+	mu       sync.Mutex
+	rooms    map[int32]*Room
+	nextID   int32
+	config   RoomConfig
+	maxRooms int // 0 = unlimited
 }
 
 // NewRoomManager 创建房间管理器
@@ -25,15 +26,26 @@ func NewRoomManager(config ...RoomConfig) *RoomManager {
 	}
 }
 
-// CreateRoom 创建新房间（不加锁，调用方负责）
+// SetMaxRooms 设置最大房间数（0 = 不限制）
+func (rm *RoomManager) SetMaxRooms(n int) {
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
+	rm.maxRooms = n
+}
+
+// createRoomLocked 创建新房间（不加锁，调用方负责）
 func (rm *RoomManager) createRoomLocked() *Room {
+	if rm.maxRooms > 0 && len(rm.rooms) >= rm.maxRooms {
+		slog.Warn("room creation rejected: max rooms reached", "maxRooms", rm.maxRooms)
+		return nil
+	}
 	rm.nextID++
 	id := rm.nextID
 	room := NewRoomWithConfig(rm.config)
 	room.ID = id
 	rm.rooms[id] = room
 	Metrics.RoomsCurrent.Inc()
-	log.Printf("[RoomManager] Room %d created\n", id)
+	slog.Info("room created", "roomId", id)
 	return room
 }
 
@@ -63,7 +75,7 @@ func (rm *RoomManager) RemoveRoom(id int32) {
 	if ok {
 		room.Stop()
 		Metrics.RoomsCurrent.Dec()
-		log.Printf("[RoomManager] Room %d removed\n", id)
+		slog.Info("room removed", "roomId", id)
 	}
 }
 
@@ -96,13 +108,17 @@ func (rm *RoomManager) CreateRoomWithMaxPlayers(maxPlayers int) *Room {
 	cfg.MaxPlayers = maxPlayers
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
+	if rm.maxRooms > 0 && len(rm.rooms) >= rm.maxRooms {
+		slog.Warn("room creation rejected: max rooms reached", "maxRooms", rm.maxRooms)
+		return nil
+	}
 	rm.nextID++
 	id := rm.nextID
 	room := NewRoomWithConfig(cfg)
 	room.ID = id
 	rm.rooms[id] = room
 	Metrics.RoomsCurrent.Inc()
-	log.Printf("[RoomManager] Room %d created (max=%d)\n", id, maxPlayers)
+	slog.Info("room created", "roomId", id, "maxPlayers", maxPlayers)
 	return room
 }
 
@@ -122,7 +138,7 @@ func (rm *RoomManager) CleanupEmptyRooms() int {
 
 	if len(toRemove) > 0 {
 		Metrics.RoomsCurrent.Sub(float64(len(toRemove)))
-		log.Printf("[RoomManager] Cleaned up %d empty room(s): %v\n", len(toRemove), toRemove)
+		slog.Info("cleaned up empty rooms", "count", len(toRemove), "roomIds", toRemove)
 	}
 	return len(toRemove)
 }
@@ -141,7 +157,7 @@ func (rm *RoomManager) StopAll() {
 		r.Stop()
 	}
 	Metrics.RoomsCurrent.Sub(float64(len(rooms)))
-	log.Printf("[RoomManager] All %d rooms stopped\n", len(rooms))
+	slog.Info("all rooms stopped", "count", len(rooms))
 }
 
 // MatchRoom 匹配房间：找一个未满且 maxPlayers + matchKey 都匹配的房间，找不到就创建（原子操作）
@@ -156,6 +172,10 @@ func (rm *RoomManager) MatchRoom(maxPlayers int, matchKey string) *Room {
 	}
 
 	// 没有匹配的房间，创建新的
+	if rm.maxRooms > 0 && len(rm.rooms) >= rm.maxRooms {
+		slog.Warn("room creation rejected: max rooms reached", "maxRooms", rm.maxRooms)
+		return nil
+	}
 	cfg := rm.config
 	cfg.MaxPlayers = maxPlayers
 	rm.nextID++
@@ -165,7 +185,7 @@ func (rm *RoomManager) MatchRoom(maxPlayers int, matchKey string) *Room {
 	room.MatchKey = matchKey
 	rm.rooms[id] = room
 	Metrics.RoomsCurrent.Inc()
-	log.Printf("[RoomManager] Room %d created by match (max=%d, key=%q)\n", id, maxPlayers, matchKey)
+	slog.Info("room created by match", "roomId", id, "maxPlayers", maxPlayers, "matchKey", matchKey)
 	return room
 }
 

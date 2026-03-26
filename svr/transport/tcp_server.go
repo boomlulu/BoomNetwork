@@ -58,16 +58,24 @@ func DefaultServerConfig() ServerConfig {
 
 // TcpServer TCP 服务器
 type TcpServer struct {
-	listener     net.Listener
-	handler      Handler
-	config       ServerConfig
-	security     SecurityConfig
-	nextID       int
-	mu           sync.Mutex
-	conns        map[int]*Conn
-	onDisconnect func(*Conn)
+	listener      net.Listener
+	handler       Handler
+	config        ServerConfig
+	security      SecurityConfig
+	nextID        int
+	mu            sync.Mutex
+	conns         map[int]*Conn
+	maxConns      int // 0 = unlimited
+	onDisconnect  func(*Conn)
 	onRateLimited func() // 触发限流时回调（用于指标统计）
-	wg           sync.WaitGroup
+	wg            sync.WaitGroup
+}
+
+// SetMaxConns 设置最大连接数（0 = 不限制）
+func (s *TcpServer) SetMaxConns(n int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.maxConns = n
 }
 
 // SetOnRateLimited 设置限流回调
@@ -152,6 +160,12 @@ func (s *TcpServer) acceptLoop() {
 		}
 
 		s.mu.Lock()
+		if s.maxConns > 0 && len(s.conns) >= s.maxConns {
+			s.mu.Unlock()
+			slog.Warn("connection rejected: max connections reached", "component", "tcp", "maxConns", s.maxConns)
+			raw.Close()
+			continue
+		}
 		s.nextID++
 		c := &Conn{
 			ID:          s.nextID,
