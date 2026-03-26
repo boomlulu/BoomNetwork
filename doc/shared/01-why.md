@@ -2,7 +2,7 @@
 
 ## 它是什么
 
-BoomNetwork 是一个**自权威帧同步网络库**，让多个玩家通过网络实时同步游戏状态。核心哲学：每个玩家是自己角色的权威，操作零延迟，不做预测回滚，冲突交给仲裁者（详见 [core-philosophy.md](core-philosophy.md)）。客户端用 C#（适配 Unity），服务器用 Go。
+BoomNetwork 是一个**自权威帧同步网络库**，让多个玩家通过网络实时同步游戏状态。核心哲学：每个玩家是自己角色的权威，操作零延迟，不做预测回滚，冲突交给仲裁者（详见 [core-philosophy.md](04-core-philosophy.md)）。客户端用 C#（适配 Unity），服务器用 Go。
 
 ## 它解决什么问题
 

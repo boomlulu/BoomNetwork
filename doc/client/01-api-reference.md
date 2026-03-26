@@ -1,7 +1,7 @@
 # API Reference
 
 > 本文档覆盖 **客户端 API**（Person / FrameSyncClient / ConnectionManager）。
-> **服务器 Admin API**（/health /rooms /kick 等 9 个 GM 端点）见 → [gm-tools.md](gm-tools.md)
+> **服务器 Admin API**（/health /rooms /kick 等 9 个 GM 端点）见 → [gm-tools.md](../server/02-gm-tools.md)
 
 ## Person（推荐入口）
 
@@ -303,4 +303,4 @@ public interface IEntitySync
 使用方式：
 - 权威实体：`person.RegisterAuthorityEntity(entity)` → 每帧自动 WriteState 发给服务器
 - 远端实体：`person.OnEntityState` → 框架自动解码 → 调用 `entity.OnRemoteState`
-- 详细设计：[design-entity-authority-sync.md](design-entity-authority-sync.md)
+- 详细设计：[design-entity-authority-sync.md](../design/entity-authority-sync.md)

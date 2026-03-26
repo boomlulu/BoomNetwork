@@ -2,7 +2,7 @@
 
 > **定位**：BoomNetwork 帧同步框架的官方 Go 服务器实现
 >
-> **核心哲学**：自权威、不回滚、冲突仲裁 — 详见 [doc/core-philosophy.md](../doc/core-philosophy.md)
+> **核心哲学**：自权威、不回滚、冲突仲裁 — 详见 [doc/shared/04-core-philosophy.md](../doc/shared/04-core-philosophy.md)
 >
 > **当前阶段**：Phase A-D 全部完成（26 项），服务器达到 **Beta 级** — 能跑、能看、能扛、能防、能运维
 

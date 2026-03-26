@@ -4,15 +4,17 @@
 
 | 顺序 | 文档 | 内容 | 适合谁 |
 |------|------|------|--------|
-| 1 | [why.md](why.md) | 这是什么、解决什么问题、何时该用 | 所有人 |
-| 2 | [concepts.md](concepts.md) | 帧同步、粘包、Seq、心跳、重连等核心概念 | 不熟悉游戏网络的人 |
-| 3 | **quickstart.md (本文)** | 架构总览、模块说明、如何跑起来 | 所有人 |
-| 4 | [sequence-diagrams.md](sequence-diagrams.md) | 6 张时序图：游戏流程、心跳、重连、Tick 内部 | 想理解运行流程的人 |
-| 5 | [configuration.md](configuration.md) | 所有可配参数、默认值、调参建议 | 接入项目时查阅 |
-| 6 | [architecture.md](architecture.md) | 设计原则、分层架构、数据流、线格式、内存策略 | 想深入理解或贡献代码的人 |
-| 7 | [gm-tools.md](gm-tools.md) | Admin API + Unity ServerWindow 全部 GM 能力 | 运维 / 开发调试 |
-| 8 | [benchmark-report.md](benchmark-report.md) | Codec 基准、TCP/KCP 压测、包头优化效果 | 关心性能的人 |
-| 9 | [roadmap.md](roadmap.md) | 未来规划 v0.1 → v1.0 | 想了解方向的人 |
+| 1 | [01-why.md](01-why.md) | 这是什么、解决什么问题、何时该用 | 所有人 |
+| 2 | [02-concepts.md](02-concepts.md) | 帧同步、粘包、Seq、心跳、重连等核心概念 | 不熟悉游戏网络的人 |
+| 3 | **03-quickstart.md (本文)** | 架构总览、模块说明、如何跑起来 | 所有人 |
+| 4 | [04-core-philosophy.md](04-core-philosophy.md) | 自权威、不回滚、冲突仲裁的设计哲学 | 想理解设计决策的人 |
+| 5 | [05-sequence-diagrams.md](05-sequence-diagrams.md) | 6 张时序图：游戏流程、心跳、重连、Tick 内部 | 想理解运行流程的人 |
+| 6 | [06-protocol-cmd-tiers.md](06-protocol-cmd-tiers.md) | 三层协议线格式详解 | 接入时查阅 |
+| 7 | [07-architecture.md](07-architecture.md) | 设计原则、分层架构、数据流、内存策略 | 想深入理解或贡献代码的人 |
+| 8 | [client/](../client/) | C# API / 配置参考 / Unity 集成 | 客户端开发者 |
+| 9 | [server/](../server/) | 部署指南 / GM 工具 | 服务端运维 |
+| 10 | [benchmark-report.md](../benchmark-report.md) | Codec 基准、TCP/KCP 压测、包头优化效果 | 关心性能的人 |
+| 11 | [roadmap.md](../roadmap.md) | 未来规划 | 想了解方向的人 |
 
 ---
 
@@ -66,7 +68,7 @@ Message 和字节之间的无状态转换。动态包头，FlagsCmd 第一个字
 FlagsCmd: bit0=LenSize, bit1=HasSeq, bit2-3=CmdType(00=Core/01=Ext/10=Game), bit4-7=CoreCmd
 ```
 
-详细协议分层说明见 [protocol-cmd-tiers.md](protocol-cmd-tiers.md)。
+详细协议分层说明见 [06-protocol-cmd-tiers.md](06-protocol-cmd-tiers.md)。
 
 - C#: `MessageCodec.Encode()` / `Decode()` — 支持 ArrayPool 零分配
 - Go: `codec.EncodeTo()` / `Decode()` — 支持 sync.Pool 和零拷贝
@@ -193,13 +195,13 @@ person.OnEntityState += (senderPid, entityId, data, offset, len) => {
 };
 ```
 
-详细设计：[design-entity-authority-sync.md](design-entity-authority-sync.md)
+详细设计：[design-entity-authority-sync.md](../design/entity-authority-sync.md)
 
 ---
 
 ## 协议 Cmd 定义
 
-完整命令表见 [api-reference.md — 协议命令表](api-reference.md#协议命令表)。常用核心命令速查：
+完整命令表见 [api-reference.md — 协议命令表](../client/01-api-reference.md#协议命令表)。常用核心命令速查：
 
 **Core Cmd（包头 3B，最高频）**
 

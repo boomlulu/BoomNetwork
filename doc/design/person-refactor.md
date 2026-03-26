@@ -7,7 +7,7 @@
 > - Person 瘦身为纯适配器（~80 行）→ `BoomNetworkUnity/Assets/Scripts/Demo/Network/Person.cs`
 > - 集成测试 7/7 通过，FrameSync 15/15
 >
-> 如需了解当前 API，请查阅 [api-reference.md](api-reference.md)
+> 如需了解当前 API，请查阅 [api-reference.md](../client/01-api-reference.md)
 
 ---
 

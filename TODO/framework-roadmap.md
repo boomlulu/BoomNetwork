@@ -6,7 +6,7 @@
 >
 > **第一性原理**：框架的价值 = 用户能多快跑通第一个多人游戏
 >
-> **核心哲学**：自权威、不回滚、冲突仲裁 — 详见 [doc/core-philosophy.md](../doc/core-philosophy.md)
+> **核心哲学**：自权威、不回滚、冲突仲裁 — 详见 [doc/shared/04-core-philosophy.md](../doc/shared/04-core-philosophy.md)
 
 ---
 

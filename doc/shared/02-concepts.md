@@ -1,6 +1,6 @@
 # 核心概念
 
-> 框架核心哲学见 [core-philosophy.md](core-philosophy.md) — 自权威、不回滚、冲突仲裁。
+> 框架核心哲学见 [core-philosophy.md](04-core-philosophy.md) — 自权威、不回滚、冲突仲裁。
 
 ## 帧驱动状态同步 (Frame-Driven State Sync)
 

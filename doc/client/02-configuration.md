@@ -164,7 +164,7 @@ adminAddr: ":9091"
 adminToken: "your-secret"  # 生产环境必须设置
 ```
 
-9 个端点（监控 / 控制 / 诊断），完整文档见 → [gm-tools.md](gm-tools.md)
+9 个端点（监控 / 控制 / 诊断），完整文档见 → [gm-tools.md](../server/02-gm-tools.md)
 
 ---
 
