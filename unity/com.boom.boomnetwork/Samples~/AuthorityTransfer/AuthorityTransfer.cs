@@ -215,20 +215,43 @@ public class AuthorityTransfer : MonoBehaviour
 
     BallEntity CreateBall()
     {
-        var go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+        // 用 Quad + 圆形纹理模拟 2D 圆球
+        var go = GameObject.CreatePrimitive(PrimitiveType.Quad);
         go.name = "Ball";
-        go.transform.localScale = Vector3.one * 1.2f;
-        go.GetComponent<Renderer>().material.color = Color.white;
+        go.transform.localScale = Vector3.one * 1.0f;
         go.transform.position = Vector3.zero;
+
+        // 生成圆形纹理
+        var renderer = go.GetComponent<Renderer>();
+        renderer.material = new Material(Shader.Find("Sprites/Default"));
+        renderer.material.mainTexture = CreateCircleTexture(64, Color.white);
+        renderer.material.color = Color.white;
 
         var ball = go.AddComponent<BallEntity>();
         ball.EntityId = BallEntityId;
         return ball;
     }
 
+    static Texture2D CreateCircleTexture(int size, Color color)
+    {
+        var tex = new Texture2D(size, size, TextureFormat.RGBA32, false);
+        float radius = size * 0.5f;
+        for (int y = 0; y < size; y++)
+            for (int x = 0; x < size; x++)
+            {
+                float dist = Vector2.Distance(new Vector2(x, y), new Vector2(radius, radius));
+                tex.SetPixel(x, y, dist < radius - 1f ? color : Color.clear);
+            }
+        tex.Apply();
+        return tex;
+    }
+
     void SetBallColor(Color c)
     {
-        if (_ball) _ball.GetComponent<Renderer>().material.color = c;
+        if (!_ball) return;
+        var mat = _ball.GetComponent<Renderer>().material;
+        mat.color = c;
+        mat.mainTexture = CreateCircleTexture(64, c);
     }
 
     // --- Snapshot ---
