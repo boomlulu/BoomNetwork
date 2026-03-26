@@ -62,30 +62,6 @@ const (
 	// Data[0]=1: S→C 结果 [1:1][entityId:4][newOwner:4]
 )
 
-// === 旧常量别名（过渡期，上层适配后删除）===
-const (
-	CmdGetRooms                 = CmdSessionBind // placeholder, will be replaced by ExtCmd routing
-	CmdGetRoomsRsp              = CmdSessionBind
-	CmdCreateRoom               = CmdSessionBind
-	CmdCreateRoomRsp            = CmdSessionBind
-	CmdJoinRoom                 = CmdSessionBind
-	CmdJoinRoomRsp              = CmdSessionBind
-	CmdLeaveRoom                = CmdSessionBind
-	CmdLeaveRoomRsp             = CmdSessionBind
-	CmdMatchRoom                = CmdSessionBind
-	CmdMatchRoomRsp             = CmdSessionBind
-	CmdPlayerJoined             = CmdSessionBind
-	CmdPlayerLeft               = CmdSessionBind
-	CmdPlayerOffline            = CmdSessionBind
-	CmdPlayerOnline             = CmdSessionBind
-	CmdRoomSnapshot             = CmdSessionBind
-	CmdUploadSnapshot           = CmdSessionBind
-	CmdUploadSnapshotRsp        = CmdSessionBind
-	CmdSendEntityState          = CmdSessionBind
-	CmdPushEntityState          = CmdSessionBind
-	CmdRequestAuthorityTransfer = CmdSessionBind
-	CmdAuthorityTransferResult  = CmdSessionBind
-)
 
 // InitData 帧同步初始化数据
 // Wire: [FrameRate:4][FrameInterval:4][StartTime:8][SnapshotInterval:4][QuickReconnectMaxMs:4]
