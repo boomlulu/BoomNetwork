@@ -51,6 +51,11 @@
       "displayName": "State Sync Move",
       "description": "状态同步移动 — 纯 SendStateMessage 广播位置，无需帧同步",
       "path": "Samples~/StateSyncMove"
+    },
+    {
+      "displayName": "Minecraft Demo",
+      "description": "多人方块世界 — 混合同步（Entity Sync + Frame Sync + Snapshot）",
+      "path": "Samples~/MinecraftDemo"
     }
   ],
   "repository": {
