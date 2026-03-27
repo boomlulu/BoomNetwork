@@ -95,6 +95,7 @@ namespace BoomNetwork.GM.Editor
             public bool Running, Paused;
             public uint FrameNumber;
             public int FrameRate, MaxPlayers, OnlineCount, TotalPlayers;
+            public string MatchKey;
             public PlayerInfo[] Players;
         }
 
@@ -163,6 +164,100 @@ namespace BoomNetwork.GM.Editor
         {
             return PostJson("/netsim",
                 $"{{\"enabled\":{(enabled ? "true" : "false")},\"latency_ms\":{latencyMs},\"jitter_ms\":{jitterMs},\"loss_percent\":{lossPercent}}}");
+        }
+
+        // ===================== GET/POST /log-level =====================
+
+        public struct LogLevelResult
+        {
+            public bool HasData;
+            public string Level;
+        }
+
+        public LogLevelResult GetLogLevel()
+        {
+            var r = new LogLevelResult();
+            var j = Get("/log-level");
+            if (j == null) return r;
+            r.HasData = true;
+            r.Level = ParseStr(j, "level");
+            return r;
+        }
+
+        public ActionResult SetLogLevel(string level)
+        {
+            return PostJson("/log-level", $"{{\"level\":\"{level}\"}}");
+        }
+
+        // ===================== POST /config/reload =====================
+
+        public ActionResult ReloadConfig()
+        {
+            return Post("/config/reload");
+        }
+
+        // ===================== GET /perf (HTTP fallback) =====================
+
+        public struct PerfResult
+        {
+            public bool HasData;
+            public int Goroutines;
+            public double HeapMB, SysMB;
+            public uint GCCount;
+            public long GCPauseUs;
+            public int Rooms, Players;
+        }
+
+        public PerfResult FetchPerf()
+        {
+            var r = new PerfResult();
+            var j = Get("/perf");
+            if (j == null) return r;
+            r.HasData    = true;
+            r.Goroutines = ParseInt(j, "goroutines");
+            r.HeapMB     = ParseDouble(j, "heap_mb");
+            r.SysMB      = ParseDouble(j, "sys_mb");
+            r.GCCount    = (uint)ParseLong(j, "gc_count");
+            r.GCPauseUs  = ParseLong(j, "gc_pause_us");
+            r.Rooms      = ParseInt(j, "rooms");
+            r.Players    = ParseInt(j, "players");
+            return r;
+        }
+
+        // ===================== GET /rates (HTTP fallback) =====================
+
+        public struct RatesResult
+        {
+            public bool HasData;
+            public List<GmPlayerRate> Top;
+        }
+
+        public RatesResult FetchRates()
+        {
+            var r = new RatesResult { Top = new List<GmPlayerRate>() };
+            var j = Get("/rates");
+            if (j == null) return r;
+            r.HasData = true;
+            int depth = 0, start = -1;
+            for (int i = 0; i < j.Length; i++)
+            {
+                if (j[i] == '{') { if (depth == 0) start = i; depth++; }
+                else if (j[i] == '}')
+                {
+                    depth--;
+                    if (depth == 0 && start >= 0)
+                    {
+                        var obj = j.Substring(start, i - start + 1);
+                        r.Top.Add(new GmPlayerRate
+                        {
+                            Pid        = ParseInt(obj, "pid"),
+                            MsgPer5Sec = ParseInt(obj, "msg_5sec"),
+                        });
+                        start = -1;
+                    }
+                }
+            }
+            return r;
         }
 
         // ===================== HTTP Core =====================
@@ -252,6 +347,14 @@ namespace BoomNetwork.GM.Editor
             return j.Contains($"\"{k}\":true");
         }
 
+        public static double ParseDouble(string j, string k)
+        {
+            var m = Regex.Match(j, $@"""{k}""\s*:\s*([0-9.eE+-]+)");
+            return m.Success && double.TryParse(m.Groups[1].Value,
+                System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : 0;
+        }
+
         public static string FmtBytes(long b)
         {
             if (b < 0)       return "—";
@@ -312,6 +415,7 @@ namespace BoomNetwork.GM.Editor
                 MaxPlayers   = ParseInt(obj, "max_players"),
                 OnlineCount  = ParseInt(obj, "online_count"),
                 TotalPlayers = ParseInt(obj, "total_players"),
+                MatchKey     = ParseStr(obj, "match_key"),
             };
 
             // Parse players array

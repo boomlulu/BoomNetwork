@@ -32,13 +32,27 @@ namespace BoomNetwork.GM.Editor
         private string _lastAdminUrl, _lastAdminToken; // 检测配置变更
         private double _stopCooldownUntil; // Stop 后抑制重连的截止时间
 
+        // Perf (Monitor tab)
+        private GmPerfPush _perf, _prevPerf;
+        private bool _perfHasData;
+        private bool _perfFoldout = true;
+
+        // Hot Players / Rates (Monitor tab)
+        private List<GmPlayerRate> _hotPlayers = new List<GmPlayerRate>();
+        private bool _hotPlayersFoldout = true;
+
+        // Log Level (Control tab)
+        private string _logLevel = "";
+        private string _logLevelPending = "";
+        private static readonly string[] LogLevelOptions = { "DEBUG", "INFO", "WARN", "ERROR" };
+
         // WS 消息缓冲（追加模式，最多保留 200 条）
         private readonly List<AdminClient.MsgEntry> _wsMsgBuffer = new List<AdminClient.MsgEntry>();
         private const int WS_MSG_BUFFER_MAX = 200;
 
         // ===== Tab =====
         private int _tab;
-        private static readonly string[] TabNames = { "Dashboard", "Messages", "Rooms", "Deploy" };
+        private static readonly string[] TabNames = { "Monitor", "Messages", "Rooms", "Control", "Deploy" };
 
         // ===== Deploy =====
         private DeployTool _deployTool;
@@ -159,6 +173,29 @@ namespace BoomNetwork.GM.Editor
                             _messages = _client.FetchMessages(100);
                         if (_tab == 2)
                             _rooms = _client.FetchRooms();
+                        if (_tab == 0)
+                        {
+                            var pr = _client.FetchPerf();
+                            if (pr.HasData)
+                            {
+                                _prevPerf = _perf;
+                                _perfHasData = true;
+                                _perf = new GmPerfPush
+                                {
+                                    Goroutines = pr.Goroutines, HeapMB = pr.HeapMB, SysMB = pr.SysMB,
+                                    GCCount = pr.GCCount, GCPauseUs = pr.GCPauseUs,
+                                    Rooms = pr.Rooms, Players = pr.Players,
+                                };
+                            }
+                            var rr = _client.FetchRates();
+                            if (rr.HasData)
+                                _hotPlayers = rr.Top;
+                        }
+                        if (string.IsNullOrEmpty(_logLevel))
+                        {
+                            var lr = _client.GetLogLevel();
+                            if (lr.HasData) { _logLevel = lr.Level; _logLevelPending = lr.Level; }
+                        }
                     }
                     else
                     {
@@ -166,6 +203,9 @@ namespace BoomNetwork.GM.Editor
                         _messages = Array.Empty<AdminClient.MsgEntry>();
                         _rooms = Array.Empty<AdminClient.RoomDetail>();
                         _wsMsgBuffer.Clear();
+                        _perfHasData = false; _perf = default; _prevPerf = default;
+                        _hotPlayers.Clear();
+                        _logLevel = ""; _logLevelPending = "";
                     }
                     skipReconnect:
                     dirty = true;
@@ -252,7 +292,7 @@ namespace BoomNetwork.GM.Editor
                                         Id = grd.Id, Running = grd.Running, Paused = grd.Paused,
                                         FrameNumber = grd.FrameNumber, FrameRate = grd.FrameRate,
                                         MaxPlayers = grd.MaxPlayers, OnlineCount = grd.OnlineCount,
-                                        TotalPlayers = grd.TotalPlayers,
+                                        TotalPlayers = grd.TotalPlayers, MatchKey = grd.MatchKey ?? "",
                                     };
                                     if (grd.Players != null)
                                     {
@@ -289,6 +329,17 @@ namespace BoomNetwork.GM.Editor
                             _netSimLoss    = _netSim.LossPercent;
                         }
                         break;
+
+                    case GmTopics.Perf:
+                        _prevPerf = _perf;
+                        _perf = GmPerfPush.From(payload);
+                        _perfHasData = true;
+                        break;
+
+                    case GmTopics.Rates:
+                        var rp = GmRatesPush.From(payload);
+                        _hotPlayers = rp.Top ?? new List<GmPlayerRate>();
+                        break;
                 }
             }
             else if (env.Type == "rsp")
@@ -315,10 +366,11 @@ namespace BoomNetwork.GM.Editor
             EditorGUILayout.Space(2);
             switch (_tab)
             {
-                case 0: DrawDashboard(); break;
+                case 0: DrawMonitor(); break;
                 case 1: DrawMessages(); break;
                 case 2: DrawRooms(); break;
-                case 3: DrawDeploy(); break;
+                case 3: DrawControl(); break;
+                case 4: DrawDeploy(); break;
             }
         }
 
@@ -361,10 +413,11 @@ namespace BoomNetwork.GM.Editor
             EditorGUILayout.EndHorizontal();
         }
 
-        // ===================== Tab 0: Dashboard =====================
+        // ===================== Tab 0: Monitor =====================
 
-        void DrawDashboard()
+        void DrawMonitor()
         {
+            // ===== Traffic =====
             if (_lastAlive && _stats.HasData)
             {
                 EditorGUILayout.LabelField("Game Traffic", EditorStyles.boldLabel);
@@ -379,25 +432,93 @@ namespace BoomNetwork.GM.Editor
                 TrafficRow("5 sec", _stats.GmTx5Sec / 5, _stats.GmRx5Sec / 5, true);
             }
 
-            // ===== Network Simulation =====
-            if (_lastAlive)
-                DrawNetSim();
-
-            EditorGUILayout.Space(6);
-            DrawConfig();
-            EditorGUILayout.Space(6);
-            DrawActions();
-
-            // 手动命令区
-            EditorGUILayout.Space(6);
-            EditorGUILayout.LabelField("Manual Command", EditorStyles.boldLabel);
-            var cmd = BuildCommand();
-            EditorGUILayout.SelectableLabel(cmd, EditorStyles.textField, GUILayout.Height(20));
-            if (GUILayout.Button("Copy Command"))
+            // ===== Runtime Performance =====
+            if (_lastAlive && _perfHasData)
             {
-                GUIUtility.systemCopyBuffer = cmd;
-                ShowNotification(new GUIContent("Copied!"));
+                EditorGUILayout.Space(6);
+                _perfFoldout = EditorGUILayout.Foldout(_perfFoldout, "Runtime Performance", true);
+                if (_perfFoldout)
+                {
+                    EditorGUI.indentLevel++;
+                    PerfRow("Goroutines", _perf.Goroutines, _prevPerf.Goroutines);
+                    PerfRowDouble("Heap", $"{_perf.HeapMB:F1} MB", _perf.HeapMB, _prevPerf.HeapMB);
+                    PerfRowDouble("Sys", $"{_perf.SysMB:F1} MB", _perf.SysMB, _prevPerf.SysMB);
+                    PerfRow("GC Count", (int)_perf.GCCount, (int)_prevPerf.GCCount);
+                    PerfRow("GC Pause", (int)(_perf.GCPauseUs / 1000), (int)(_prevPerf.GCPauseUs / 1000), " ms");
+                    EditorGUI.indentLevel--;
+                }
             }
+
+            // ===== Hot Players =====
+            if (_lastAlive && _hotPlayers.Count > 0)
+            {
+                EditorGUILayout.Space(6);
+                _hotPlayersFoldout = EditorGUILayout.Foldout(_hotPlayersFoldout,
+                    $"Hot Players (top {_hotPlayers.Count})", true);
+                if (_hotPlayersFoldout)
+                {
+                    EditorGUILayout.BeginHorizontal(EditorStyles.toolbar);
+                    EditorGUILayout.LabelField("PID", EditorStyles.miniLabel, GUILayout.Width(50));
+                    EditorGUILayout.LabelField("Msg/5s", EditorStyles.miniLabel, GUILayout.Width(60));
+                    EditorGUILayout.LabelField("", GUILayout.ExpandWidth(true));
+                    EditorGUILayout.EndHorizontal();
+
+                    foreach (var hp in _hotPlayers)
+                    {
+                        EditorGUILayout.BeginHorizontal();
+                        EditorGUILayout.LabelField($"P{hp.Pid}", GUILayout.Width(50));
+
+                        var prev = GUI.contentColor;
+                        GUI.contentColor = hp.MsgPer5Sec > 20 ? Color.red
+                                         : hp.MsgPer5Sec > 10 ? Color.yellow
+                                         : Color.white;
+                        EditorGUILayout.LabelField($"{hp.MsgPer5Sec}", GUILayout.Width(60));
+                        GUI.contentColor = prev;
+
+                        GUI.backgroundColor = new Color(1f, 0.6f, 0.3f);
+                        if (GUILayout.Button("Kick", GUILayout.Width(40)))
+                            DoKickPlayer(hp.Pid);
+                        GUI.backgroundColor = Color.white;
+                        EditorGUILayout.EndHorizontal();
+                    }
+                }
+            }
+            else if (_lastAlive && _perfHasData)
+            {
+                EditorGUILayout.Space(4);
+                var prev = GUI.contentColor;
+                GUI.contentColor = Color.gray;
+                EditorGUILayout.LabelField("No hot players", EditorStyles.miniLabel);
+                GUI.contentColor = prev;
+            }
+        }
+
+        static void PerfRow(string label, int current, int prev, string suffix = "")
+        {
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField(label, GUILayout.Width(90));
+            string trend = current > prev ? " ▲" : current < prev ? " ▼" : "";
+            var tc = GUI.contentColor;
+            GUI.contentColor = current > prev ? new Color(1f, 0.6f, 0.4f)
+                             : current < prev ? new Color(0.6f, 1f, 0.6f)
+                             : Color.white;
+            EditorGUILayout.LabelField($"{current}{suffix}{trend}");
+            GUI.contentColor = tc;
+            EditorGUILayout.EndHorizontal();
+        }
+
+        static void PerfRowDouble(string label, string display, double current, double prev)
+        {
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField(label, GUILayout.Width(90));
+            string trend = current > prev + 0.01 ? " ▲" : current < prev - 0.01 ? " ▼" : "";
+            var tc = GUI.contentColor;
+            GUI.contentColor = current > prev + 0.01 ? new Color(1f, 0.6f, 0.4f)
+                             : current < prev - 0.01 ? new Color(0.6f, 1f, 0.6f)
+                             : Color.white;
+            EditorGUILayout.LabelField($"{display}{trend}");
+            GUI.contentColor = tc;
+            EditorGUILayout.EndHorizontal();
         }
 
         static void TrafficRow(string label, long tx, long rx, bool perSec = false)
@@ -500,6 +621,76 @@ namespace BoomNetwork.GM.Editor
                 _netSimDirty = true;
             }
             EditorGUILayout.EndHorizontal();
+        }
+
+        // ===================== Tab 3: Control =====================
+
+        void DrawControl()
+        {
+            // ===== Network Simulation =====
+            if (_lastAlive)
+                DrawNetSim();
+
+            // ===== Log Level =====
+            EditorGUILayout.Space(6);
+            EditorGUILayout.LabelField("Log Level", EditorStyles.boldLabel);
+            EditorGUILayout.BeginHorizontal();
+
+            int curIdx = Array.IndexOf(LogLevelOptions, _logLevelPending.ToUpperInvariant());
+            if (curIdx < 0) curIdx = 1; // default INFO
+            int newLvlIdx = EditorGUILayout.Popup(curIdx, LogLevelOptions, GUILayout.Width(80));
+            _logLevelPending = LogLevelOptions[newLvlIdx];
+
+            bool lvlDirty = !string.Equals(_logLevelPending, _logLevel, StringComparison.OrdinalIgnoreCase);
+            GUI.enabled = lvlDirty && _lastAlive;
+            GUI.backgroundColor = lvlDirty ? Color.yellow : Color.gray;
+            if (GUILayout.Button("Apply", GUILayout.Width(50)))
+            {
+                var r = _client.SetLogLevel(_logLevelPending.ToLowerInvariant());
+                if (r.Ok) { _logLevel = _logLevelPending; ShowNotification(new GUIContent("Log level set")); }
+                else ShowNotification(new GUIContent($"Error: {r.Error}"));
+            }
+            GUI.backgroundColor = Color.white;
+            GUI.enabled = true;
+
+            if (!string.IsNullOrEmpty(_logLevel))
+            {
+                var prev = GUI.contentColor;
+                GUI.contentColor = Color.gray;
+                EditorGUILayout.LabelField($"(server: {_logLevel})", EditorStyles.miniLabel);
+                GUI.contentColor = prev;
+            }
+            EditorGUILayout.EndHorizontal();
+
+            // ===== Config Reload =====
+            EditorGUILayout.Space(4);
+            EditorGUILayout.BeginHorizontal();
+            GUI.enabled = _lastAlive;
+            GUI.backgroundColor = new Color(0.6f, 0.8f, 1f);
+            if (GUILayout.Button("Reload Config", GUILayout.Width(110)))
+            {
+                var r = _client.ReloadConfig();
+                ShowNotification(new GUIContent(r.Ok ? "Config reloaded" : $"Error: {r.Error}"));
+            }
+            GUI.backgroundColor = Color.white;
+            GUI.enabled = true;
+            EditorGUILayout.EndHorizontal();
+
+            // ===== Config + Actions + Manual Command =====
+            EditorGUILayout.Space(6);
+            DrawConfig();
+            EditorGUILayout.Space(6);
+            DrawActions();
+
+            EditorGUILayout.Space(6);
+            EditorGUILayout.LabelField("Manual Command", EditorStyles.boldLabel);
+            var cmd = BuildCommand();
+            EditorGUILayout.SelectableLabel(cmd, EditorStyles.textField, GUILayout.Height(20));
+            if (GUILayout.Button("Copy Command"))
+            {
+                GUIUtility.systemCopyBuffer = cmd;
+                ShowNotification(new GUIContent("Copied!"));
+            }
         }
 
         // ===================== Tab 1: Messages =====================
@@ -672,7 +863,8 @@ namespace BoomNetwork.GM.Editor
                 var prev = GUI.contentColor;
                 GUI.contentColor = statusColor;
                 string status = room.Running ? (room.Paused ? "PAUSED" : "RUNNING") : "WAITING";
-                EditorGUILayout.LabelField($"Room {room.Id}  [{status}]  F#{room.FrameNumber}  {room.OnlineCount}/{room.MaxPlayers}",
+                EditorGUILayout.LabelField(
+                    $"Room {room.Id}  [{status}]  F#{room.FrameNumber}  {room.OnlineCount}/{room.MaxPlayers}p  {room.FrameRate}fps",
                     EditorStyles.boldLabel);
                 GUI.contentColor = prev;
 
@@ -688,6 +880,32 @@ namespace BoomNetwork.GM.Editor
                 if (GUILayout.Button("Kill", GUILayout.Width(40)))
                     DoKillRoom(room.Id);
                 GUI.backgroundColor = Color.white;
+                EditorGUILayout.EndHorizontal();
+
+                // Sub-row: Total players + MatchKey + Paused warning
+                EditorGUILayout.BeginHorizontal();
+                EditorGUI.indentLevel++;
+                var subPrev = GUI.contentColor;
+                GUI.contentColor = Color.gray;
+                EditorGUILayout.LabelField($"Total: {room.TotalPlayers}", EditorStyles.miniLabel, GUILayout.Width(70));
+                GUI.contentColor = subPrev;
+
+                if (!string.IsNullOrEmpty(room.MatchKey))
+                {
+                    subPrev = GUI.contentColor;
+                    GUI.contentColor = new Color(0.6f, 0.8f, 1f);
+                    EditorGUILayout.LabelField($"[{room.MatchKey}]", EditorStyles.miniLabel, GUILayout.Width(100));
+                    GUI.contentColor = subPrev;
+                }
+
+                if (room.Paused)
+                {
+                    subPrev = GUI.contentColor;
+                    GUI.contentColor = Color.yellow;
+                    EditorGUILayout.LabelField("SNAPSHOT PAUSED", EditorStyles.miniLabel);
+                    GUI.contentColor = subPrev;
+                }
+                EditorGUI.indentLevel--;
                 EditorGUILayout.EndHorizontal();
 
                 // Player list
@@ -874,6 +1092,9 @@ namespace BoomNetwork.GM.Editor
                 _messages = Array.Empty<AdminClient.MsgEntry>();
                 _rooms = Array.Empty<AdminClient.RoomDetail>();
                 _wsMsgBuffer.Clear();
+                _perfHasData = false; _perf = default; _prevPerf = default;
+                _hotPlayers.Clear();
+                _logLevel = ""; _logLevelPending = "";
                 Repaint();
                 ShowNotification(new GUIContent($"Stopping remote... ({profile.SshHost})"));
             }

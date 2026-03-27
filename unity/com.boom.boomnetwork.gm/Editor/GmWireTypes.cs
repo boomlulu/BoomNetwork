@@ -140,6 +140,7 @@ namespace BoomNetwork.GM.Editor
         public bool Running, Paused;
         public uint FrameNumber;
         public int FrameRate, MaxPlayers, OnlineCount, TotalPlayers;
+        public string MatchKey;
         public GmPlayerInfo[] Players;
 
         public static GmRoomDetail From(Dictionary<string, object> m)
@@ -154,6 +155,7 @@ namespace BoomNetwork.GM.Editor
                 MaxPlayers   = MsgPackLite.GetInt(m, "max_players"),
                 OnlineCount  = MsgPackLite.GetInt(m, "online_count"),
                 TotalPlayers = MsgPackLite.GetInt(m, "total_players"),
+                MatchKey     = MsgPackLite.GetString(m, "match_key"),
             };
             var players = MsgPackLite.GetArray(m, "players");
             if (players != null)
@@ -219,6 +221,26 @@ namespace BoomNetwork.GM.Editor
                 Pid        = MsgPackLite.GetInt(m, "pid"),
                 MsgPer5Sec = MsgPackLite.GetInt(m, "msg_5sec"),
             };
+        }
+    }
+
+    public struct GmRatesPush
+    {
+        public List<GmPlayerRate> Top;
+
+        public static GmRatesPush From(Dictionary<string, object> m)
+        {
+            var push = new GmRatesPush { Top = new List<GmPlayerRate>() };
+            var arr = MsgPackLite.GetArray(m, "top");
+            if (arr != null)
+            {
+                foreach (var item in arr)
+                {
+                    if (item is Dictionary<string, object> pm)
+                        push.Top.Add(GmPlayerRate.From(pm));
+                }
+            }
+            return push;
         }
     }
 }
