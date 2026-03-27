@@ -166,6 +166,38 @@ namespace BoomNetwork.GM.Editor
                 $"{{\"enabled\":{(enabled ? "true" : "false")},\"latency_ms\":{latencyMs},\"jitter_ms\":{jitterMs},\"loss_percent\":{lossPercent}}}");
         }
 
+        // ===================== GET /rooms/inspect/{id} =====================
+
+        public struct RoomInspectResult
+        {
+            public bool HasData;
+            public int FrameBufferLen, FrameBufferCap;
+            public uint OldestBufferedFrame, SnapshotFrame, SnapshotStaleFrames, DataVersion;
+            public int SnapshotSizeBytes;
+            public GmEntityAuth[] EntityAuthority;
+            public GmKVEntry[] KVEntries;
+        }
+
+        public RoomInspectResult FetchRoomInspect(int roomId)
+        {
+            var r = new RoomInspectResult();
+            var j = Get($"/rooms/inspect/{roomId}");
+            if (j == null) return r;
+            r.HasData             = true;
+            r.FrameBufferLen      = ParseInt(j, "frame_buffer_len");
+            r.FrameBufferCap      = ParseInt(j, "frame_buffer_cap");
+            r.OldestBufferedFrame = (uint)ParseLong(j, "oldest_buffered_frame");
+            r.SnapshotFrame       = (uint)ParseLong(j, "snapshot_frame");
+            r.SnapshotSizeBytes   = ParseInt(j, "snapshot_size_bytes");
+            r.SnapshotStaleFrames = (uint)ParseLong(j, "snapshot_stale_frames");
+            r.DataVersion         = (uint)ParseLong(j, "data_version");
+            // Entity authority and KV are complex nested arrays; use WS RPC for full data.
+            // HTTP fallback provides numeric fields only.
+            r.EntityAuthority = Array.Empty<GmEntityAuth>();
+            r.KVEntries = Array.Empty<GmKVEntry>();
+            return r;
+        }
+
         // ===================== GET/POST /log-level =====================
 
         public struct LogLevelResult

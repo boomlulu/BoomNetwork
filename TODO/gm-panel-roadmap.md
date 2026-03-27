@@ -102,61 +102,55 @@
 
 ---
 
-### Phase 3 — 房间深度检视（工作量：中）
+### Phase 3 — 房间深度检视 ✅（2026-03-27 完成）
 
-> 从「列表管理」升级到「单房间深度调试」。
+> 点击房间 Foldout 展开，查看帧缓冲/快照/权威表/KV 全量数据。
 
-#### 3.1 房间详情面板
+#### 3.1 服务器端
 
-- [ ] 点击房间 → 展开详情视图，包含：
-  - **基础信息**：Room ID · MatchKey · 帧率 · 当前帧号 · 创建时间 · 运行时长
-  - **帧缓冲**：最老帧号 · 缓冲容量 · 快照帧号 · 快照大小（bytes）
-  - **玩家表格**：PID · 状态 · 权威实体数 · 最后输入帧号
-  - **实体权威表**：EntityID → Owner PID · 可手动 Release
+- [x] `room.go` 新增 accessor：GetEntityAuthority / FrameBufferLen/Cap / SnapshotFrame/Size/StaleFrames / GetDataStoreEntries / GetConfig
+- [x] `admin_ws_msg.go` 新增 `RoomInspectWire` / `EntityAuthWire` / `KVEntryWire` 结构体
+- [x] `admin_ws.go` 新增 `inspect_room` WS RPC handler + `buildRoomInspect()` 组装函数
+- [x] `admin.go` 新增 `GET /rooms/inspect/{id}` HTTP 端点
+- [x] `GET /rooms` 和 WS `rooms` push 补全 `match_key` 字段
 
-#### 3.2 KV Data Store 浏览器
+#### 3.2 客户端
 
-- [ ] 房间详情内嵌 KV 面板
-  - 显示所有 KV entries：Player · Key · Value（hex + 尝试解码） · Version
-  - 支持：删除单条 · 清空某玩家所有 KV
+- [x] `GmWireTypes.cs` 新增 `GmRoomInspect` / `GmEntityAuth` / `GmKVEntry`
+- [x] `AdminClient.cs` 新增 `FetchRoomInspect(roomId)` HTTP fallback
+- [x] `ServerWindow.cs` Rooms Tab Foldout 详情面板：
+  - 帧缓冲进度条（颜色阈值：绿<70%/黄<90%/红）
+  - 快照状态（帧号+大小+陈旧帧数，颜色阈值）
+  - 实体权威表（E{id}→P{owner} 紧凑排列）
+  - KV Store 浏览器（P{id}:K{key}=[size] 紧凑排列）
+  - Refresh 按钮手动刷新
 
-#### 3.3 服务器端新增
+#### 3.3 待做（后续迭代）
 
-- [ ] `GET /rooms/{id}` — 单房间详情端点（含 entity authority + frame buffer stats + KV 摘要）
 - [ ] WS RPC `release_authority` — GM 强制释放实体权威
 - [ ] WS RPC `delete_kv` — GM 删除 KV 条目
 
 ---
 
-### Phase 4 — 可视化与监控（工作量：中-大）
+### Phase 4 — 可视化与监控 ✅（2026-03-27 完成基础图表）
 
-> 从「数字」升级到「图表」，让趋势一目了然。
+> 客户端 ring buffer + Handles.DrawAAPolyLine sparkline。
 
-#### 4.1 实时图表（Dashboard）
+#### 4.1 实时 Sparkline（Monitor Tab）
 
-- [ ] **流量曲线**：Game TX/RX 60 秒滑动窗口折线图
-- [ ] **连接数曲线**：在线玩家数 + 房间数 60 秒趋势
-- [ ] **帧广播延迟**：P50 / P95 / P99（需服务器新增推送）
-- [ ] 使用 Unity `GL.Begin` / IMGUI 或 UIElements 绘制，不依赖第三方图表库
+- [x] **Game TX/RX 流量曲线**：60 采样点 ring buffer，2s 推送间隔 = ~2 分钟窗口
+- [x] **Players 连接数曲线**
+- [x] **Heap MB 内存曲线**
+- [x] `Handles.DrawAAPolyLine` + `DrawAAConvexPolygon` 填充面积
+- [x] 自动 Y 轴缩放 + label 显示当前值和 max
+- [x] Charts Foldout 可折叠
+- [x] Monitor Tab 包裹 ScrollView 防溢出
 
-#### 4.2 事件时间线（Messages Tab 增强）
+#### 4.2 待做（后续迭代）
 
-- [ ] **Timeline 视图**（可选切换）：横轴时间，纵轴玩家
-  - 每个消息画为一个点/线段，颜色 = Cmd 类型
-  - 鼠标悬停显示详情
-  - 帮助可视化「谁在什么时候发了什么」
-
-#### 4.3 Prometheus 指标聚合
-
-- [ ] Dashboard 新增 **Metrics 折叠区**
-  - 展示关键 Prometheus 计数器的增量：`reconnect_success/fail`、`auth_failures`、`rate_limited`、`room_panics`
-  - 定期 GET `:9090/metrics`，解析 Prometheus text format
-  - 或新增服务器端 `/metrics/summary` JSON 端点避免解析
-
-#### 4.4 服务器端新增
-
-- [ ] WS `broadcast_latency` topic — 推送帧广播延迟分位数
-- [ ] `GET /metrics/summary` — JSON 格式的关键指标摘要
+- [ ] **帧广播延迟**：P50/P95/P99（需服务器新增 `broadcast_latency` topic）
+- [ ] **事件时间线**（Messages Tab）：横轴时间，纵轴玩家，颜色=Cmd
+- [ ] Prometheus 指标聚合 (`/metrics/summary`)
 
 ---
 
@@ -199,8 +193,8 @@
 |-------|------|--------|-----------|
 | **Phase 1** — 补全 UI + Tab 重组 | ⭐⭐⭐⭐ 低垂果实 | 🔧 小（纯 UI） | **✅ 已完成 2026-03-27** |
 | **Phase 2** — Players Tab | ⭐⭐⭐⭐ 调试必备 | 🔧🔧 中 | **P1 — 下一个** |
-| **Phase 3** — 房间深度 | ⭐⭐⭐ 深度调试 | 🔧🔧 中 | **P1** |
-| **Phase 4** — 可视化 | ⭐⭐⭐ 体验提升 | 🔧🔧🔧 中大 | **P2** |
+| **Phase 3** — 房间深度检视 | ⭐⭐⭐ 深度调试 | 🔧🔧 中 | **✅ 已完成 2026-03-27** |
+| **Phase 4** — 可视化图表 | ⭐⭐⭐ 体验提升 | 🔧🔧🔧 中大 | **✅ 基础完成 2026-03-27** |
 | **Phase 5** — 高级运维 | ⭐⭐ 生产加固 | 🔧🔧🔧🔧 大 | **P3 — 按需** |
 
 ---

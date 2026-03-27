@@ -243,4 +243,103 @@ namespace BoomNetwork.GM.Editor
             return push;
         }
     }
+
+    // ===================== Room Inspect (Phase 3) =====================
+
+    public struct GmEntityAuth
+    {
+        public int EntityId, OwnerId;
+
+        public static GmEntityAuth From(Dictionary<string, object> m)
+        {
+            return new GmEntityAuth
+            {
+                EntityId = MsgPackLite.GetInt(m, "entity_id"),
+                OwnerId  = MsgPackLite.GetInt(m, "owner_id"),
+            };
+        }
+    }
+
+    public struct GmKVEntry
+    {
+        public int PlayerId, Key;
+        public byte[] Value;
+
+        public static GmKVEntry From(Dictionary<string, object> m)
+        {
+            return new GmKVEntry
+            {
+                PlayerId = MsgPackLite.GetInt(m, "player_id"),
+                Key      = MsgPackLite.GetInt(m, "key"),
+                Value    = MsgPackLite.GetBytes(m, "value"),
+            };
+        }
+    }
+
+    public struct GmRoomInspect
+    {
+        public bool Ok;
+        public int Id;
+        public bool Running, Paused;
+        public uint FrameNumber;
+        public int FrameRate, MaxPlayers, OnlineCount, TotalPlayers;
+        public string MatchKey;
+        public int FrameBufferLen, FrameBufferCap;
+        public uint OldestBufferedFrame;
+        public uint SnapshotFrame;
+        public int SnapshotSizeBytes;
+        public uint SnapshotStaleFrames;
+        public uint DataVersion;
+        public GmEntityAuth[] EntityAuthority;
+        public GmKVEntry[] KVEntries;
+
+        public bool HasData;
+
+        public static GmRoomInspect From(Dictionary<string, object> m)
+        {
+            var r = new GmRoomInspect
+            {
+                HasData             = true,
+                Ok                  = MsgPackLite.GetBool(m, "ok"),
+                Id                  = MsgPackLite.GetInt(m, "id"),
+                Running             = MsgPackLite.GetBool(m, "running"),
+                Paused              = MsgPackLite.GetBool(m, "paused"),
+                FrameNumber         = (uint)MsgPackLite.GetLong(m, "frame_number"),
+                FrameRate           = MsgPackLite.GetInt(m, "frame_rate"),
+                MaxPlayers          = MsgPackLite.GetInt(m, "max_players"),
+                OnlineCount         = MsgPackLite.GetInt(m, "online_count"),
+                TotalPlayers        = MsgPackLite.GetInt(m, "total_players"),
+                MatchKey            = MsgPackLite.GetString(m, "match_key"),
+                FrameBufferLen      = MsgPackLite.GetInt(m, "frame_buffer_len"),
+                FrameBufferCap      = MsgPackLite.GetInt(m, "frame_buffer_cap"),
+                OldestBufferedFrame = (uint)MsgPackLite.GetLong(m, "oldest_buffered_frame"),
+                SnapshotFrame       = (uint)MsgPackLite.GetLong(m, "snapshot_frame"),
+                SnapshotSizeBytes   = MsgPackLite.GetInt(m, "snapshot_size_bytes"),
+                SnapshotStaleFrames = (uint)MsgPackLite.GetLong(m, "snapshot_stale_frames"),
+                DataVersion         = (uint)MsgPackLite.GetLong(m, "data_version"),
+            };
+
+            var eaArr = MsgPackLite.GetArray(m, "entity_authority");
+            if (eaArr != null)
+            {
+                r.EntityAuthority = new GmEntityAuth[eaArr.Count];
+                for (int i = 0; i < eaArr.Count; i++)
+                    if (eaArr[i] is Dictionary<string, object> em)
+                        r.EntityAuthority[i] = GmEntityAuth.From(em);
+            }
+            else r.EntityAuthority = System.Array.Empty<GmEntityAuth>();
+
+            var kvArr = MsgPackLite.GetArray(m, "kv_entries");
+            if (kvArr != null)
+            {
+                r.KVEntries = new GmKVEntry[kvArr.Count];
+                for (int i = 0; i < kvArr.Count; i++)
+                    if (kvArr[i] is Dictionary<string, object> km)
+                        r.KVEntries[i] = GmKVEntry.From(km);
+            }
+            else r.KVEntries = System.Array.Empty<GmKVEntry>();
+
+            return r;
+        }
+    }
 }

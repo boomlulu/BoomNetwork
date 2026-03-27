@@ -161,6 +161,7 @@ func (h *GMHub) pushRooms() {
 			MaxPlayers:   room.MaxPlayers(),
 			OnlineCount:  room.PlayerCount(),
 			TotalPlayers: room.TotalPlayerCount(),
+			MatchKey:     room.MatchKey,
 		}
 		room.ForEachPlayer(func(p framesync.PlayerInfo) {
 			detail.Players = append(detail.Players, PlayerInfoWire{ID: p.ID, State: int(p.State)})
@@ -410,6 +411,8 @@ func (c *GMConn) handleRPC(env *GMEnvelope) {
 		c.rpcCreateRoom(env)
 	case "netsim":
 		c.rpcNetsim(env)
+	case "inspect_room":
+		c.rpcInspectRoom(env)
 	default:
 		c.sendError(env.ID, env.Topic, "unknown rpc topic")
 	}
@@ -527,6 +530,68 @@ func (c *GMConn) rpcNetsim(env *GMEnvelope) {
 	}
 	slog.Info("gm-ws netsim updated")
 	c.sendRsp(env.ID, "netsim", map[string]bool{"ok": true})
+}
+
+func (c *GMConn) rpcInspectRoom(env *GMEnvelope) {
+	var p InspectRoomPayload
+	if err := msgpack.Unmarshal(env.Payload, &p); err != nil || p.RoomID <= 0 {
+		c.sendError(env.ID, "inspect_room", "invalid room_id")
+		return
+	}
+
+	room := roomMgr.GetRoom(p.RoomID)
+	if room == nil {
+		c.sendError(env.ID, "inspect_room", "room not found")
+		return
+	}
+
+	c.sendRsp(env.ID, "inspect_room", buildRoomInspect(room))
+}
+
+func buildRoomInspect(room *framesync.Room) RoomInspectWire {
+	result := RoomInspectWire{
+		Ok:                  true,
+		ID:                  room.ID,
+		Running:             room.IsRunning(),
+		Paused:              room.IsSnapshotPaused(),
+		FrameNumber:         room.CurrentFrameNumber(),
+		FrameRate:           room.FrameRate(),
+		MaxPlayers:          room.MaxPlayers(),
+		OnlineCount:         room.PlayerCount(),
+		TotalPlayers:        room.TotalPlayerCount(),
+		MatchKey:            room.MatchKey,
+		FrameBufferLen:      room.FrameBufferLen(),
+		FrameBufferCap:      room.FrameBufferCap(),
+		OldestBufferedFrame: room.OldestBufferedFrame(),
+		SnapshotFrame:       room.SnapshotFrame(),
+		SnapshotSizeBytes:   room.SnapshotSize(),
+		SnapshotStaleFrames: room.SnapshotStaleFrames(),
+		DataVersion:         room.DataVersion(),
+	}
+
+	// Players
+	room.ForEachPlayer(func(pi framesync.PlayerInfo) {
+		result.Players = append(result.Players, PlayerInfoWire{ID: pi.ID, State: int(pi.State)})
+	})
+
+	// Entity authority
+	for _, ea := range room.GetEntityAuthority() {
+		result.EntityAuthority = append(result.EntityAuthority, EntityAuthWire{
+			EntityId: ea.EntityId,
+			OwnerId:  ea.OwnerId,
+		})
+	}
+
+	// KV store
+	for _, de := range room.GetDataStoreEntries() {
+		result.KVEntries = append(result.KVEntries, KVEntryWire{
+			PlayerId: de.PlayerId,
+			Key:      de.Key,
+			Value:    de.Value,
+		})
+	}
+
+	return result
 }
 
 // ===================== 发送辅助 =====================

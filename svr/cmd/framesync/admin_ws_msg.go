@@ -141,6 +141,7 @@ type RoomDetailWire struct {
 	MaxPlayers   int              `msgpack:"max_players"`
 	OnlineCount  int              `msgpack:"online_count"`
 	TotalPlayers int              `msgpack:"total_players"`
+	MatchKey     string           `msgpack:"match_key,omitempty"`
 	Players      []PlayerInfoWire `msgpack:"players"`
 }
 
@@ -205,6 +206,47 @@ type CreateRoomResult struct {
 
 type ErrorResult struct {
 	Error string `msgpack:"error"`
+}
+
+// ===================== RPC: inspect_room =====================
+
+type InspectRoomPayload struct {
+	RoomID int32 `msgpack:"room_id"`
+}
+
+// RoomInspectWire — 房间深度检视响应
+type RoomInspectWire struct {
+	Ok                  bool               `msgpack:"ok" json:"ok"`
+	ID                  int32              `msgpack:"id" json:"id"`
+	Running             bool               `msgpack:"running" json:"running"`
+	Paused              bool               `msgpack:"paused" json:"paused"`
+	FrameNumber         uint32             `msgpack:"frame_number" json:"frame_number"`
+	FrameRate           int32              `msgpack:"frame_rate" json:"frame_rate"`
+	MaxPlayers          int                `msgpack:"max_players" json:"max_players"`
+	OnlineCount         int                `msgpack:"online_count" json:"online_count"`
+	TotalPlayers        int                `msgpack:"total_players" json:"total_players"`
+	MatchKey            string             `msgpack:"match_key" json:"match_key"`
+	Players             []PlayerInfoWire   `msgpack:"players" json:"players"`
+	FrameBufferLen      int                `msgpack:"frame_buffer_len" json:"frame_buffer_len"`
+	FrameBufferCap      int                `msgpack:"frame_buffer_cap" json:"frame_buffer_cap"`
+	OldestBufferedFrame uint32             `msgpack:"oldest_buffered_frame" json:"oldest_buffered_frame"`
+	SnapshotFrame       uint32             `msgpack:"snapshot_frame" json:"snapshot_frame"`
+	SnapshotSizeBytes   int                `msgpack:"snapshot_size_bytes" json:"snapshot_size_bytes"`
+	SnapshotStaleFrames uint32             `msgpack:"snapshot_stale_frames" json:"snapshot_stale_frames"`
+	DataVersion         uint32             `msgpack:"data_version" json:"data_version"`
+	EntityAuthority     []EntityAuthWire   `msgpack:"entity_authority" json:"entity_authority"`
+	KVEntries           []KVEntryWire      `msgpack:"kv_entries" json:"kv_entries"`
+}
+
+type EntityAuthWire struct {
+	EntityId int32 `msgpack:"entity_id" json:"entity_id"`
+	OwnerId  int32 `msgpack:"owner_id" json:"owner_id"`
+}
+
+type KVEntryWire struct {
+	PlayerId int32  `msgpack:"player_id" json:"player_id"`
+	Key      int32  `msgpack:"key" json:"key"`
+	Value    []byte `msgpack:"value" json:"value"`
 }
 
 // ===================== 编码辅助 =====================

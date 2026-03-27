@@ -665,3 +665,82 @@ func (r *Room) DataStoreEmpty() bool {
 	defer r.mu.Unlock()
 	return len(r.dataStore) == 0
 }
+
+// ===================== GM Inspect Accessors =====================
+
+// EntityAuthorityEntry 实体权威条目（GM 检视用）
+type EntityAuthorityEntry struct {
+	EntityId int32
+	OwnerId  int32
+}
+
+// DataStoreEntry KV 数据条目（GM 检视用）
+type DataStoreEntry struct {
+	PlayerId int32
+	Key      int32
+	Value    []byte
+}
+
+// GetEntityAuthority 获取当前实体权威表快照
+func (r *Room) GetEntityAuthority() []EntityAuthorityEntry {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	entries := make([]EntityAuthorityEntry, 0, len(r.entityAuthority))
+	for eid, owner := range r.entityAuthority {
+		entries = append(entries, EntityAuthorityEntry{EntityId: eid, OwnerId: owner})
+	}
+	return entries
+}
+
+// FrameBufferLen 当前帧缓冲中有效帧数
+func (r *Room) FrameBufferLen() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.frameRingLen
+}
+
+// FrameBufferCap 帧缓冲区总容量
+func (r *Room) FrameBufferCap() int {
+	return len(r.frameRing) // 固定大小，无需锁
+}
+
+// SnapshotFrame 最新快照对应的帧号
+func (r *Room) SnapshotFrame() uint32 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.snapshotFrame
+}
+
+// SnapshotSize 最新快照数据大小（字节）
+func (r *Room) SnapshotSize() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.snapshotData)
+}
+
+// SnapshotStaleFrames 自上次快照以来经过的帧数
+func (r *Room) SnapshotStaleFrames() uint32 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.snapshotStaleFrames
+}
+
+// GetDataStoreEntries 获取 KV 数据仓全量快照
+func (r *Room) GetDataStoreEntries() []DataStoreEntry {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	entries := make([]DataStoreEntry, 0, len(r.dataStore))
+	for _, de := range r.dataStore {
+		entries = append(entries, DataStoreEntry{
+			PlayerId: de.PlayerId,
+			Key:      de.Key,
+			Value:    de.Value,
+		})
+	}
+	return entries
+}
+
+// GetConfig 获取房间配置（只读）
+func (r *Room) GetConfig() RoomConfig {
+	return r.config
+}

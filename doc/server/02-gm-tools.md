@@ -48,7 +48,8 @@ go run ./cmd/framesync/ -admin=:9091 -admin-token=your-secret
 | | 配置热重载 | `POST /config/reload` | 需鉴权 |
 | | 创建房间 | `POST /rooms/create` | 需鉴权 |
 | | 强制销毁房间 | `POST /rooms/kill/{id}` | 需鉴权 |
-| **诊断** | 单玩家详情 + 最近消息 | `GET /players/{pid}` | 需鉴权 |
+| **诊断** | 房间深度检视 | `GET /rooms/inspect/{id}` | 需鉴权 |
+| | 单玩家详情 + 最近消息 | `GET /players/{pid}` | 需鉴权 |
 | | 服务器性能（内存/GC/goroutine） | `GET /perf` | 需鉴权 |
 | | 玩家消息速率 Top 20 | `GET /rates` | 需鉴权 |
 
@@ -235,6 +236,30 @@ curl -X POST http://127.0.0.1:9091/rooms/kill/1
 ---
 
 ### 诊断
+
+#### GET /rooms/inspect/{id}
+
+单房间深度检视。返回帧缓冲、快照、实体权威、KV 数据仓全量信息。
+
+```bash
+curl http://127.0.0.1:9091/rooms/inspect/1
+```
+
+```json
+{
+  "ok": true, "id": 1, "running": true, "paused": false,
+  "frame_number": 1234, "frame_rate": 20,
+  "frame_buffer_len": 800, "frame_buffer_cap": 2400,
+  "oldest_buffered_frame": 200,
+  "snapshot_frame": 1100, "snapshot_size_bytes": 2345,
+  "snapshot_stale_frames": 34,
+  "data_version": 12,
+  "entity_authority": [{"entity_id":1,"owner_id":2}],
+  "kv_entries": [{"player_id":1,"key":0,"value":"AQID"}]
+}
+```
+
+也可通过 WS RPC `inspect_room` (`{room_id: 1}`) 获取 MessagePack 版本。
 
 #### GET /players/{pid}
 

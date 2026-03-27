@@ -40,6 +40,7 @@ func startAdminServer(ctx context.Context, addr, token string) {
 	// 其余端点走鉴权
 	mux.HandleFunc("/stats", withAuth(token, handleStats))
 	mux.HandleFunc("/messages", withAuth(token, handleMessages))
+	mux.HandleFunc("/rooms/inspect/", withAuth(token, handleRoomInspect))
 	mux.HandleFunc("/rooms", withAuth(token, handleRooms))
 	mux.HandleFunc("/rooms/stop/", withAuth(token, handleStopRoom))
 	mux.HandleFunc("/rooms/kill/", withAuth(token, handleAdminKillRoom))
@@ -189,6 +190,7 @@ type roomDetail struct {
 	MaxPlayers   int                    `json:"max_players"`
 	OnlineCount  int                    `json:"online_count"`
 	TotalPlayers int                    `json:"total_players"`
+	MatchKey     string                 `json:"match_key,omitempty"`
 	Players      []framesync.PlayerInfo `json:"players"`
 }
 
@@ -215,6 +217,7 @@ func handleRooms(w http.ResponseWriter, r *http.Request) {
 			MaxPlayers:   room.MaxPlayers(),
 			OnlineCount:  room.PlayerCount(),
 			TotalPlayers: room.TotalPlayerCount(),
+			MatchKey:     room.MatchKey,
 		}
 		room.ForEachPlayer(func(p framesync.PlayerInfo) {
 			detail.Players = append(detail.Players, p)
@@ -224,6 +227,32 @@ func handleRooms(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(rooms)
+}
+
+// ===================== GET /rooms/inspect/{id} =====================
+
+func handleRoomInspect(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	idStr := strings.TrimPrefix(r.URL.Path, "/rooms/inspect/")
+	id, err := strconv.Atoi(idStr)
+	if err != nil || id <= 0 {
+		jsonError(w, http.StatusBadRequest, "invalid room id")
+		return
+	}
+
+	room := roomMgr.GetRoom(int32(id))
+	if room == nil {
+		jsonError(w, http.StatusNotFound, fmt.Sprintf("room %d not found", id))
+		return
+	}
+
+	result := buildRoomInspect(room)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
 }
 
 // ===================== POST /kick/{pid} (G2) =====================

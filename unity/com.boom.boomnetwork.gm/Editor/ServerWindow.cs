@@ -46,6 +46,22 @@ namespace BoomNetwork.GM.Editor
         private string _logLevelPending = "";
         private static readonly string[] LogLevelOptions = { "DEBUG", "INFO", "WARN", "ERROR" };
 
+        // Room Inspect (Rooms tab, Phase 3)
+        private readonly HashSet<int> _expandedRooms = new HashSet<int>();
+        private readonly Dictionary<int, GmRoomInspect> _roomInspectCache = new Dictionary<int, GmRoomInspect>();
+
+        // Monitor scroll
+        private Vector2 _monitorScroll;
+
+        // Charts (Monitor tab, Phase 4)
+        private const int CHART_SAMPLES = 60;
+        private readonly float[] _chartGameTx = new float[CHART_SAMPLES];
+        private readonly float[] _chartGameRx = new float[CHART_SAMPLES];
+        private readonly float[] _chartPlayers = new float[CHART_SAMPLES];
+        private readonly float[] _chartHeap = new float[CHART_SAMPLES];
+        private int _chartHead;
+        private bool _chartFoldout = true;
+
         // WS 消息缓冲（追加模式，最多保留 200 条）
         private readonly List<AdminClient.MsgEntry> _wsMsgBuffer = new List<AdminClient.MsgEntry>();
         private const int WS_MSG_BUFFER_MAX = 200;
@@ -206,6 +222,10 @@ namespace BoomNetwork.GM.Editor
                         _perfHasData = false; _perf = default; _prevPerf = default;
                         _hotPlayers.Clear();
                         _logLevel = ""; _logLevelPending = "";
+                        _expandedRooms.Clear(); _roomInspectCache.Clear();
+                        Array.Clear(_chartGameTx, 0, CHART_SAMPLES); Array.Clear(_chartGameRx, 0, CHART_SAMPLES);
+                        Array.Clear(_chartPlayers, 0, CHART_SAMPLES); Array.Clear(_chartHeap, 0, CHART_SAMPLES);
+                        _chartHead = 0;
                     }
                     skipReconnect:
                     dirty = true;
@@ -244,6 +264,7 @@ namespace BoomNetwork.GM.Editor
                             Players = hp.Players,
                             Uptime = hp.Uptime,
                         };
+                        _chartPlayers[_chartHead] = hp.Players;
                         break;
 
                     case GmTopics.Stats:
@@ -258,6 +279,7 @@ namespace BoomNetwork.GM.Editor
                             GmRx1Min = sp.GmRx1Min, GmTx1Min = sp.GmTx1Min,
                             GmRx5Sec = sp.GmRx5Sec, GmTx5Sec = sp.GmTx5Sec,
                         };
+                        ChartPush(sp.GameTx5Sec / 5f, sp.GameRx5Sec / 5f);
                         break;
 
                     case GmTopics.Messages:
@@ -334,6 +356,7 @@ namespace BoomNetwork.GM.Editor
                         _prevPerf = _perf;
                         _perf = GmPerfPush.From(payload);
                         _perfHasData = true;
+                        _chartHeap[_chartHead] = (float)_perf.HeapMB;
                         break;
 
                     case GmTopics.Rates:
@@ -344,9 +367,16 @@ namespace BoomNetwork.GM.Editor
             }
             else if (env.Type == "rsp")
             {
-                // RPC 响应
                 var payload = env.DecodePayload();
-                if (payload != null && MsgPackLite.GetBool(payload, "ok"))
+                if (payload == null) return;
+
+                if (env.Topic == "inspect_room")
+                {
+                    var inspect = GmRoomInspect.From(payload);
+                    if (inspect.HasData)
+                        _roomInspectCache[inspect.Id] = inspect;
+                }
+                else if (MsgPackLite.GetBool(payload, "ok"))
                     ShowNotification(new GUIContent($"{env.Topic}: OK"));
             }
             else if (env.Type == "err")
@@ -417,6 +447,8 @@ namespace BoomNetwork.GM.Editor
 
         void DrawMonitor()
         {
+            _monitorScroll = EditorGUILayout.BeginScrollView(_monitorScroll);
+
             // ===== Traffic =====
             if (_lastAlive && _stats.HasData)
             {
@@ -430,6 +462,41 @@ namespace BoomNetwork.GM.Editor
                 TrafficRow("Total", _stats.GmTxTotal, _stats.GmRxTotal);
                 TrafficRow("1 min", _stats.GmTx1Min,  _stats.GmRx1Min);
                 TrafficRow("5 sec", _stats.GmTx5Sec / 5, _stats.GmRx5Sec / 5, true);
+            }
+
+            // ===== Charts =====
+            if (_lastAlive && _stats.HasData)
+            {
+                EditorGUILayout.Space(6);
+                _chartFoldout = EditorGUILayout.Foldout(_chartFoldout, "Charts", true);
+                if (_chartFoldout)
+                {
+                    var txRect = GUILayoutUtility.GetRect(GUIContent.none, GUIStyle.none,
+                        GUILayout.Height(50), GUILayout.ExpandWidth(true));
+                    DrawSparkline(txRect, _chartGameTx, _chartHead, CHART_SAMPLES,
+                        new Color(0.4f, 0.8f, 1f), new Color(0.2f, 0.4f, 0.6f, 0.3f), "TX B/s");
+
+                    EditorGUILayout.Space(2);
+                    var rxRect = GUILayoutUtility.GetRect(GUIContent.none, GUIStyle.none,
+                        GUILayout.Height(50), GUILayout.ExpandWidth(true));
+                    DrawSparkline(rxRect, _chartGameRx, _chartHead, CHART_SAMPLES,
+                        new Color(0.5f, 1f, 0.5f), new Color(0.25f, 0.5f, 0.25f, 0.3f), "RX B/s");
+
+                    EditorGUILayout.Space(2);
+                    var pRect = GUILayoutUtility.GetRect(GUIContent.none, GUIStyle.none,
+                        GUILayout.Height(50), GUILayout.ExpandWidth(true));
+                    DrawSparkline(pRect, _chartPlayers, _chartHead, CHART_SAMPLES,
+                        Color.yellow, new Color(0.5f, 0.5f, 0f, 0.2f), "Players");
+
+                    if (_perfHasData)
+                    {
+                        EditorGUILayout.Space(2);
+                        var hRect = GUILayoutUtility.GetRect(GUIContent.none, GUIStyle.none,
+                            GUILayout.Height(50), GUILayout.ExpandWidth(true));
+                        DrawSparkline(hRect, _chartHeap, _chartHead, CHART_SAMPLES,
+                            new Color(1f, 0.6f, 0.4f), new Color(0.5f, 0.3f, 0.2f, 0.3f), "Heap MB");
+                    }
+                }
             }
 
             // ===== Runtime Performance =====
@@ -491,6 +558,8 @@ namespace BoomNetwork.GM.Editor
                 EditorGUILayout.LabelField("No hot players", EditorStyles.miniLabel);
                 GUI.contentColor = prev;
             }
+
+            EditorGUILayout.EndScrollView();
         }
 
         static void PerfRow(string label, int current, int prev, string suffix = "")
@@ -519,6 +588,65 @@ namespace BoomNetwork.GM.Editor
             EditorGUILayout.LabelField($"{display}{trend}");
             GUI.contentColor = tc;
             EditorGUILayout.EndHorizontal();
+        }
+
+        // ===================== Chart Helpers (Phase 4) =====================
+
+        void ChartPush(float tx, float rx)
+        {
+            _chartGameTx[_chartHead] = tx;
+            _chartGameRx[_chartHead] = rx;
+            _chartHead = (_chartHead + 1) % CHART_SAMPLES;
+        }
+
+        static void DrawSparkline(Rect rect, float[] ring, int head, int count, Color lineColor, Color fillColor, string label)
+        {
+            if (Event.current.type != EventType.Repaint) return;
+
+            // Find max for Y-axis scaling
+            float max = 1f;
+            for (int i = 0; i < count; i++)
+                if (ring[i] > max) max = ring[i];
+
+            // Background
+            EditorGUI.DrawRect(rect, new Color(0.15f, 0.15f, 0.15f, 0.8f));
+
+            // Draw polyline
+            var points = new Vector3[count];
+            for (int i = 0; i < count; i++)
+            {
+                int idx = (head + i) % count;
+                float x = rect.x + (float)i / (count - 1) * rect.width;
+                float y = rect.yMax - (ring[idx] / max) * (rect.height - 4) - 2;
+                points[i] = new Vector3(x, y, 0);
+            }
+
+            // Fill area
+            GUI.BeginClip(rect);
+            UnityEditor.Handles.color = fillColor;
+            for (int i = 0; i < count - 1; i++)
+            {
+                var p1 = points[i] - new Vector3(rect.x, rect.y, 0);
+                var p2 = points[i + 1] - new Vector3(rect.x, rect.y, 0);
+                var b1 = new Vector3(p1.x, rect.height, 0);
+                var b2 = new Vector3(p2.x, rect.height, 0);
+                UnityEditor.Handles.DrawAAConvexPolygon(p1, p2, b2, b1);
+            }
+            GUI.EndClip();
+
+            // Line on top
+            UnityEditor.Handles.color = lineColor;
+            UnityEditor.Handles.DrawAAPolyLine(2f, points);
+
+            // Label + current value
+            int lastIdx = (head - 1 + count) % count;
+            float current = ring[lastIdx];
+            var labelStyle = EditorStyles.miniLabel;
+            var prev = GUI.contentColor;
+            GUI.contentColor = Color.white;
+            GUI.Label(new Rect(rect.x + 4, rect.y + 1, rect.width, 14), $"{label}: {current:F0}", labelStyle);
+            GUI.Label(new Rect(rect.x + 4, rect.yMax - 14, rect.width, 14), $"max: {max:F0}", labelStyle);
+            GUI.contentColor = prev;
         }
 
         static void TrafficRow(string label, long tx, long rx, bool perSec = false)
@@ -908,6 +1036,73 @@ namespace BoomNetwork.GM.Editor
                 EditorGUI.indentLevel--;
                 EditorGUILayout.EndHorizontal();
 
+                // Detail foldout (Phase 3)
+                bool wasExpanded = _expandedRooms.Contains(room.Id);
+                EditorGUI.indentLevel++;
+                bool isExpanded = EditorGUILayout.Foldout(wasExpanded, "Detail", true);
+                EditorGUI.indentLevel--;
+
+                if (isExpanded != wasExpanded)
+                {
+                    if (isExpanded)
+                    {
+                        _expandedRooms.Add(room.Id);
+                        // Request inspect data
+                        if (_wsClient != null && _wsClient.IsConnected)
+                            _wsClient.SendRpc("inspect_room", new Dictionary<string, object> { ["room_id"] = room.Id });
+                        else
+                        {
+                            var ir = _client.FetchRoomInspect(room.Id);
+                            if (ir.HasData)
+                                _roomInspectCache[room.Id] = new GmRoomInspect
+                                {
+                                    HasData = true, Id = room.Id,
+                                    FrameBufferLen = ir.FrameBufferLen, FrameBufferCap = ir.FrameBufferCap,
+                                    OldestBufferedFrame = ir.OldestBufferedFrame,
+                                    SnapshotFrame = ir.SnapshotFrame, SnapshotSizeBytes = ir.SnapshotSizeBytes,
+                                    SnapshotStaleFrames = ir.SnapshotStaleFrames, DataVersion = ir.DataVersion,
+                                    EntityAuthority = ir.EntityAuthority, KVEntries = ir.KVEntries,
+                                };
+                        }
+                    }
+                    else _expandedRooms.Remove(room.Id);
+                }
+
+                if (isExpanded && _roomInspectCache.TryGetValue(room.Id, out var insp))
+                {
+                    DrawRoomInspectDetail(insp);
+
+                    // Refresh button
+                    EditorGUILayout.BeginHorizontal();
+                    GUILayout.Space(20);
+                    if (GUILayout.Button("Refresh", GUILayout.Width(60)))
+                    {
+                        if (_wsClient != null && _wsClient.IsConnected)
+                            _wsClient.SendRpc("inspect_room", new Dictionary<string, object> { ["room_id"] = room.Id });
+                        else
+                        {
+                            var ir2 = _client.FetchRoomInspect(room.Id);
+                            if (ir2.HasData)
+                                _roomInspectCache[room.Id] = new GmRoomInspect
+                                {
+                                    HasData = true, Id = room.Id,
+                                    FrameBufferLen = ir2.FrameBufferLen, FrameBufferCap = ir2.FrameBufferCap,
+                                    OldestBufferedFrame = ir2.OldestBufferedFrame,
+                                    SnapshotFrame = ir2.SnapshotFrame, SnapshotSizeBytes = ir2.SnapshotSizeBytes,
+                                    SnapshotStaleFrames = ir2.SnapshotStaleFrames, DataVersion = ir2.DataVersion,
+                                    EntityAuthority = ir2.EntityAuthority, KVEntries = ir2.KVEntries,
+                                };
+                        }
+                    }
+                    EditorGUILayout.EndHorizontal();
+                }
+                else if (isExpanded)
+                {
+                    EditorGUI.indentLevel++;
+                    EditorGUILayout.LabelField("Loading...", EditorStyles.miniLabel);
+                    EditorGUI.indentLevel--;
+                }
+
                 // Player list
                 if (room.Players != null)
                 {
@@ -937,6 +1132,82 @@ namespace BoomNetwork.GM.Editor
             }
 
             EditorGUILayout.EndScrollView();
+        }
+
+        void DrawRoomInspectDetail(GmRoomInspect insp)
+        {
+            EditorGUI.indentLevel += 2;
+
+            // Frame Buffer — progress bar style
+            float bufPct = insp.FrameBufferCap > 0 ? (float)insp.FrameBufferLen / insp.FrameBufferCap : 0;
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField("Frame Buffer:", GUILayout.Width(90));
+            var barRect = GUILayoutUtility.GetRect(GUIContent.none, GUIStyle.none, GUILayout.Height(14), GUILayout.ExpandWidth(true));
+            if (Event.current.type == EventType.Repaint)
+            {
+                EditorGUI.DrawRect(barRect, new Color(0.2f, 0.2f, 0.2f));
+                var fillColor = bufPct > 0.9f ? Color.red : bufPct > 0.7f ? Color.yellow : Color.green;
+                EditorGUI.DrawRect(new Rect(barRect.x, barRect.y, barRect.width * bufPct, barRect.height), fillColor);
+            }
+            EditorGUILayout.LabelField($"{insp.FrameBufferLen}/{insp.FrameBufferCap} ({bufPct:P0})", EditorStyles.miniLabel, GUILayout.Width(100));
+            EditorGUILayout.EndHorizontal();
+
+            EditorGUILayout.LabelField($"Oldest Frame: F#{insp.OldestBufferedFrame}", EditorStyles.miniLabel);
+
+            // Snapshot
+            var snapColor = insp.SnapshotStaleFrames > 200 ? Color.red : insp.SnapshotStaleFrames > 50 ? Color.yellow : Color.white;
+            var prevC = GUI.contentColor;
+            GUI.contentColor = snapColor;
+            EditorGUILayout.LabelField(
+                $"Snapshot: F#{insp.SnapshotFrame}  {AdminClient.FmtBytes(insp.SnapshotSizeBytes)}  Stale: {insp.SnapshotStaleFrames} frames",
+                EditorStyles.miniLabel);
+            GUI.contentColor = prevC;
+
+            // Entity Authority
+            if (insp.EntityAuthority != null && insp.EntityAuthority.Length > 0)
+            {
+                EditorGUILayout.LabelField($"Entity Authority ({insp.EntityAuthority.Length}):", EditorStyles.miniLabel);
+                EditorGUI.indentLevel++;
+                var sb = new System.Text.StringBuilder();
+                foreach (var ea in insp.EntityAuthority)
+                {
+                    if (sb.Length > 0) sb.Append("  ");
+                    sb.Append($"E{ea.EntityId}→{(ea.OwnerId > 0 ? $"P{ea.OwnerId}" : "none")}");
+                }
+                EditorGUILayout.LabelField(sb.ToString(), EditorStyles.miniLabel);
+                EditorGUI.indentLevel--;
+            }
+            else
+            {
+                prevC = GUI.contentColor;
+                GUI.contentColor = Color.gray;
+                EditorGUILayout.LabelField("No entities", EditorStyles.miniLabel);
+                GUI.contentColor = prevC;
+            }
+
+            // KV Store
+            if (insp.KVEntries != null && insp.KVEntries.Length > 0)
+            {
+                EditorGUILayout.LabelField($"KV Store (v{insp.DataVersion}, {insp.KVEntries.Length} entries):", EditorStyles.miniLabel);
+                EditorGUI.indentLevel++;
+                var sb = new System.Text.StringBuilder();
+                foreach (var kv in insp.KVEntries)
+                {
+                    if (sb.Length > 0) sb.Append("  ");
+                    sb.Append($"P{kv.PlayerId}:K{kv.Key}=[{(kv.Value != null ? kv.Value.Length : 0)}B]");
+                }
+                EditorGUILayout.LabelField(sb.ToString(), EditorStyles.miniLabel);
+                EditorGUI.indentLevel--;
+            }
+            else
+            {
+                prevC = GUI.contentColor;
+                GUI.contentColor = Color.gray;
+                EditorGUILayout.LabelField($"KV Store (v{insp.DataVersion}): Empty", EditorStyles.miniLabel);
+                GUI.contentColor = prevC;
+            }
+
+            EditorGUI.indentLevel -= 2;
         }
 
         // ===================== RPC: WS 优先，HTTP 降级 =====================
@@ -1095,6 +1366,10 @@ namespace BoomNetwork.GM.Editor
                 _perfHasData = false; _perf = default; _prevPerf = default;
                 _hotPlayers.Clear();
                 _logLevel = ""; _logLevelPending = "";
+                _expandedRooms.Clear(); _roomInspectCache.Clear();
+                Array.Clear(_chartGameTx, 0, CHART_SAMPLES); Array.Clear(_chartGameRx, 0, CHART_SAMPLES);
+                Array.Clear(_chartPlayers, 0, CHART_SAMPLES); Array.Clear(_chartHeap, 0, CHART_SAMPLES);
+                _chartHead = 0;
                 Repaint();
                 ShowNotification(new GUIContent($"Stopping remote... ({profile.SshHost})"));
             }
