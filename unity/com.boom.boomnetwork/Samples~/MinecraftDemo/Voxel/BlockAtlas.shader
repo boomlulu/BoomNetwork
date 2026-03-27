@@ -1,4 +1,4 @@
-// BoomNetwork MinecraftDemo — Block Atlas Shader
+// BoomNetwork MinecraftDemo — Block Atlas Shader (URP)
 // Reads atlas tile coordinates from vertex color (R=col, G=row)
 // UVs are tiled across greedy-merged quads using frac()
 
@@ -12,51 +12,65 @@ Shader "BoomNetwork/BlockAtlas"
 
     SubShader
     {
-        Tags { "RenderType"="Opaque" "Queue"="Geometry" }
+        Tags
+        {
+            "RenderType" = "Opaque"
+            "Queue" = "Geometry"
+            "RenderPipeline" = "UniversalPipeline"
+        }
         LOD 100
 
         Pass
         {
-            CGPROGRAM
+            Name "ForwardLit"
+            Tags { "LightMode" = "UniversalForward" }
+
+            HLSLPROGRAM
             #pragma vertex vert
             #pragma fragment frag
             #pragma multi_compile_fog
 
-            #include "UnityCG.cginc"
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
 
-            struct appdata
+            struct Attributes
             {
-                float4 vertex : POSITION;
-                float2 uv : TEXCOORD0;
-                float4 color : COLOR;
-                float3 normal : NORMAL;
+                float4 positionOS : POSITION;
+                float2 uv         : TEXCOORD0;
+                float4 color      : COLOR;
+                float3 normalOS   : NORMAL;
             };
 
-            struct v2f
+            struct Varyings
             {
-                float2 uv : TEXCOORD0;
-                float4 vertex : SV_POSITION;
-                float4 color : COLOR;
+                float4 positionCS  : SV_POSITION;
+                float2 uv          : TEXCOORD0;
+                float4 color       : COLOR;
                 float3 worldNormal : TEXCOORD1;
-                UNITY_FOG_COORDS(2)
+                float  fogFactor   : TEXCOORD2;
             };
 
-            sampler2D _MainTex;
-            float4 _MainTex_ST;
-            float4 _AtlasSize;
+            TEXTURE2D(_MainTex);
+            SAMPLER(sampler_MainTex);
 
-            v2f vert (appdata v)
+            CBUFFER_START(UnityPerMaterial)
+                float4 _MainTex_ST;
+                float4 _AtlasSize;
+            CBUFFER_END
+
+            Varyings vert(Attributes v)
             {
-                v2f o;
-                o.vertex = UnityObjectToClipPos(v.vertex);
-                o.uv = v.uv; // tiled UVs from mesh builder
-                o.color = v.color;
-                o.worldNormal = UnityObjectToWorldNormal(v.normal);
-                UNITY_TRANSFER_FOG(o, o.vertex);
+                Varyings o;
+                VertexPositionInputs posInputs = GetVertexPositionInputs(v.positionOS.xyz);
+                o.positionCS  = posInputs.positionCS;
+                o.uv          = v.uv; // tiled UVs from mesh builder
+                o.color       = v.color;
+                o.worldNormal = TransformObjectToWorldNormal(v.normalOS);
+                o.fogFactor   = ComputeFogFactor(posInputs.positionCS.z);
                 return o;
             }
 
-            fixed4 frag (v2f i) : SV_Target
+            half4 frag(Varyings i) : SV_Target
             {
                 float cols = _AtlasSize.x;
                 float rows = _AtlasSize.y;
@@ -75,23 +89,120 @@ Shader "BoomNetwork/BlockAtlas"
                 // Offset into atlas
                 float2 atlasUV = float2(
                     (atlasCol + tiledUV.x) * tileW,
-                    1.0 - (atlasRow + 1.0 - tiledUV.y) * tileH  // flip Y for top-left origin
+                    1.0 - (atlasRow + 1.0 - tiledUV.y) * tileH
                 );
 
-                fixed4 col = tex2D(_MainTex, atlasUV);
+                half4 col = SAMPLE_TEXTURE2D(_MainTex, sampler_MainTex, atlasUV);
 
-                // Simple directional lighting
-                float3 lightDir = normalize(float3(0.3, 1.0, 0.2));
-                float ndl = saturate(dot(i.worldNormal, lightDir));
-                float lighting = 0.55 + 0.45 * ndl; // ambient + directional
+                // Simple directional lighting (matches URP main light)
+                Light mainLight = GetMainLight();
+                float ndl = saturate(dot(normalize(i.worldNormal), mainLight.direction));
+                float lighting = 0.55 + 0.45 * ndl;
 
-                col.rgb *= lighting;
+                col.rgb *= lighting * mainLight.color;
 
-                UNITY_APPLY_FOG(i.fogCoord, col);
+                // Apply fog
+                col.rgb = MixFog(col.rgb, i.fogFactor);
+
                 return col;
             }
-            ENDCG
+            ENDHLSL
+        }
+
+        // Shadow caster pass for receiving shadows
+        Pass
+        {
+            Name "ShadowCaster"
+            Tags { "LightMode" = "ShadowCaster" }
+
+            ZWrite On
+            ZTest LEqual
+            ColorMask 0
+
+            HLSLPROGRAM
+            #pragma vertex ShadowVert
+            #pragma fragment ShadowFrag
+
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Shadows.hlsl"
+
+            struct Attributes
+            {
+                float4 positionOS : POSITION;
+                float3 normalOS   : NORMAL;
+            };
+
+            struct Varyings
+            {
+                float4 positionCS : SV_POSITION;
+            };
+
+            float3 _LightDirection;
+
+            Varyings ShadowVert(Attributes v)
+            {
+                Varyings o;
+                float3 worldPos = TransformObjectToWorld(v.positionOS.xyz);
+                float3 worldNormal = TransformObjectToWorldNormal(v.normalOS);
+                float4 clipPos = TransformWorldToHClip(ApplyShadowBias(worldPos, worldNormal, _LightDirection));
+
+                #if UNITY_REVERSED_Z
+                    clipPos.z = min(clipPos.z, UNITY_NEAR_CLIP_VALUE);
+                #else
+                    clipPos.z = max(clipPos.z, UNITY_NEAR_CLIP_VALUE);
+                #endif
+
+                o.positionCS = clipPos;
+                return o;
+            }
+
+            half4 ShadowFrag(Varyings i) : SV_Target
+            {
+                return 0;
+            }
+            ENDHLSL
+        }
+
+        // Depth only pass (for depth prepass)
+        Pass
+        {
+            Name "DepthOnly"
+            Tags { "LightMode" = "DepthOnly" }
+
+            ZWrite On
+            ColorMask R
+
+            HLSLPROGRAM
+            #pragma vertex DepthVert
+            #pragma fragment DepthFrag
+
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+
+            struct Attributes
+            {
+                float4 positionOS : POSITION;
+            };
+
+            struct Varyings
+            {
+                float4 positionCS : SV_POSITION;
+            };
+
+            Varyings DepthVert(Attributes v)
+            {
+                Varyings o;
+                o.positionCS = TransformObjectToHClip(v.positionOS.xyz);
+                return o;
+            }
+
+            half4 DepthFrag(Varyings i) : SV_Target
+            {
+                return 0;
+            }
+            ENDHLSL
         }
     }
-    FallBack "Diffuse"
+
+    // Fallback for Built-in RP (in case someone uses it without URP)
+    FallBack "Universal Render Pipeline/Lit"
 }

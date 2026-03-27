@@ -129,14 +129,22 @@ namespace BoomNetwork.Samples.MinecraftDemo
             var shader = Shader.Find("BoomNetwork/BlockAtlas");
             if (shader == null)
             {
-                Debug.LogWarning("BlockAtlas shader not found, falling back to Standard");
-                shader = Shader.Find("Standard");
+                // Fallback chain: URP Lit → Built-in Standard
+                Debug.LogWarning("BlockAtlas shader not found, trying URP fallback");
+                shader = Shader.Find("Universal Render Pipeline/Lit");
+                if (shader == null)
+                    shader = Shader.Find("Standard");
             }
 
             var mat = new Material(shader);
             var tex = Generate();
             mat.mainTexture = tex;
             mat.SetVector("_AtlasSize", new Vector4(AtlasCols, AtlasRows, 0, 0));
+
+            // For URP Lit fallback: set _BaseMap (URP uses _BaseMap not _MainTex)
+            if (mat.HasProperty("_BaseMap"))
+                mat.SetTexture("_BaseMap", tex);
+
             return mat;
         }
     }
