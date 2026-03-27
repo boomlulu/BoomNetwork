@@ -105,7 +105,6 @@ type Room struct {
 	// 房间生命周期
 	createdAt time.Time // 创建时间
 	hadPlayer bool      // 是否有过玩家加入
-	Pinned    bool      // GM 创建的房间，不被自动清理（只能手动 Stop/Kill）
 	startedAt time.Time // 指标：Start 时间
 }
 

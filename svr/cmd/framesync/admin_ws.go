@@ -547,7 +547,6 @@ func (c *GMConn) rpcCreateRoom(env *GMEnvelope) {
 		return
 	}
 	room.MatchKey = p.MatchKey
-	room.Pinned = true // GM 创建的房间不被自动清理
 
 	slog.Info("gm-ws created room", "room_id", room.ID, "max_players", p.MaxPlayers, "match_key", p.MatchKey)
 	c.sendRsp(env.ID, "create_room", CreateRoomResult{Ok: true, RoomID: room.ID})

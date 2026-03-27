@@ -343,6 +343,7 @@ namespace BoomNetwork.GM.Editor
                                     rooms.Add(rd);
                                 }
                             }
+                            rooms.Sort((a, b) => a.Id.CompareTo(b.Id));
                             _rooms = rooms.ToArray();
                         }
                         break;
