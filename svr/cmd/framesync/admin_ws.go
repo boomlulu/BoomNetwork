@@ -512,7 +512,12 @@ func (c *GMConn) rpcCreateRoom(env *GMEnvelope) {
 	}
 
 	room := roomMgr.CreateRoomWithMaxPlayers(p.MaxPlayers)
+	if room == nil {
+		c.sendError(env.ID, "create_room", "max rooms reached")
+		return
+	}
 	room.MatchKey = p.MatchKey
+	room.Start()
 
 	slog.Info("gm-ws created room", "room_id", room.ID, "max_players", p.MaxPlayers, "match_key", p.MatchKey)
 	c.sendRsp(env.ID, "create_room", CreateRoomResult{Ok: true, RoomID: room.ID})

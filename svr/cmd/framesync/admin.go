@@ -393,7 +393,12 @@ func handleAdminCreateRoom(w http.ResponseWriter, r *http.Request) {
 	matchKey := r.URL.Query().Get("match_key")
 
 	room := roomMgr.CreateRoomWithMaxPlayers(maxPlayers)
+	if room == nil {
+		jsonError(w, http.StatusConflict, "max rooms reached")
+		return
+	}
 	room.MatchKey = matchKey
+	room.Start()
 
 	slog.Info("admin created room", "room_id", room.ID, "max_players", maxPlayers, "match_key", matchKey)
 
