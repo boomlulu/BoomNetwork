@@ -36,7 +36,8 @@ namespace BoomNetwork.GM.Editor
                 ["id"] = ID ?? "",
                 ["tp"] = Topic ?? "",
             };
-            if (Payload != null) map["p"] = Payload;
+            // Payload 是已序列化的 msgpack，用 RawMsgPack 直接嵌入而非包 bin 壳
+            if (Payload != null) map["p"] = new RawMsgPack(Payload);
             else map["p"] = null;
             return MsgPackLite.EncodeMap(map);
         }

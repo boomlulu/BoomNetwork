@@ -8,6 +8,13 @@ using System.Text;
 
 namespace BoomNetwork.GM.Editor
 {
+    /// <summary>包装已序列化的 msgpack 字节，WriteValue 时直接嵌入而非包 bin 壳</summary>
+    public readonly struct RawMsgPack
+    {
+        public readonly byte[] Data;
+        public RawMsgPack(byte[] data) => Data = data;
+    }
+
     public static class MsgPackLite
     {
         // ===================== 编码 =====================
@@ -50,6 +57,10 @@ namespace BoomNetwork.GM.Editor
                     break;
                 case string s:
                     WriteString(buf, s);
+                    break;
+                case RawMsgPack raw:
+                    if (raw.Data != null) buf.AddRange(raw.Data);
+                    else buf.Add(0xc0); // nil
                     break;
                 case byte[] bin:
                     WriteBin(buf, bin);
