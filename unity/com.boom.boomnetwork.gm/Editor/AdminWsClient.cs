@@ -128,7 +128,9 @@ namespace BoomNetwork.GM.Editor
             var authEnvRsp = GmEnvelope.Decode(authRsp);
             if (authEnvRsp.Type == "auth_err")
             {
-                UnityEngine.Debug.LogError("[GM-WS] Auth failed");
+                var errDetail = authEnvRsp.DecodePayload();
+                var errMsg = errDetail != null ? MsgPackLite.GetString(errDetail, "error") : "unknown";
+                UnityEngine.Debug.LogError($"[GM-WS] Auth failed: {errMsg} (check Admin Token in Deploy Profile)");
                 return;
             }
             if (authEnvRsp.Type != "auth_ok")

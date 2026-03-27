@@ -114,6 +114,8 @@ namespace BoomNetwork.GM.Editor
             _deployTool = new DeployTool(() => Repaint());
             LoadDeployProfiles();
             BuildServerSwitcher();
+            // 启动时同步当前 profile 的 token（EditorPrefs 可能是旧值）
+            ApplyServerProfile(_serverSwitcherIdx);
             BuildCmdFilter();
             EditorApplication.update += OnEditorUpdate;
         }
