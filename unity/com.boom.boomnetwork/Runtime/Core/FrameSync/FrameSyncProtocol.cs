@@ -75,6 +75,10 @@ namespace BoomNetwork.Core.FrameSync
         // 帧同步暂停/恢复
         public const ushort FrameSyncPaused  = 56; // S→C [Reason:1]
         public const ushort FrameSyncResumed = 57; // S→C (empty)
+
+        // 不同步检测
+        public const ushort FrameHash         = 60; // C→S [FrameNumber:4][Hash:4]
+        public const ushort FrameHashMismatch = 61; // S→C [FrameNumber:4][PlayerCount:1][PlayerId:4+Hash:4]...
     }
 
     /// <summary>帧内事件类型（嵌入 FrameData，确保所有客户端在同一帧处理）</summary>
@@ -91,6 +95,31 @@ namespace BoomNetwork.Core.FrameSync
     public enum FrameSyncPauseReason : byte
     {
         SnapshotStale = 1,  // 快照过期
+        Desync        = 2,  // 帧 hash 不匹配（不同步）
+    }
+
+    /// <summary>帧 hash 不匹配详情</summary>
+    public struct FrameHashMismatch
+    {
+        public uint FrameNumber;
+        public (int PlayerId, uint Hash)[] PlayerHashes;
+
+        public static FrameHashMismatch Decode(ReadOnlySpan<byte> buf)
+        {
+            var result = new FrameHashMismatch();
+            result.FrameNumber = BinaryPrimitives.ReadUInt32LittleEndian(buf);
+            int count = buf[4];
+            result.PlayerHashes = new (int, uint)[count];
+            int offset = 5;
+            for (int i = 0; i < count; i++)
+            {
+                int pid = BinaryPrimitives.ReadInt32LittleEndian(buf.Slice(offset));
+                uint hash = BinaryPrimitives.ReadUInt32LittleEndian(buf.Slice(offset + 4));
+                result.PlayerHashes[i] = (pid, hash);
+                offset += 8;
+            }
+            return result;
+        }
     }
 
     /// <summary>

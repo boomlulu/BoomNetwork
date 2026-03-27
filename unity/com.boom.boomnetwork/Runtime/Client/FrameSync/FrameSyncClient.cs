@@ -78,6 +78,9 @@ namespace BoomNetwork.Client.FrameSync
         /// <summary>服务器帧同步恢复</summary>
         public event Action? OnFrameSyncResumed;
 
+        /// <summary>帧 hash 不匹配（不同步检测）</summary>
+        public event Action<FrameHashMismatch>? OnDesyncDetected;
+
         // --- 快照回调 ---
         public Func<byte[]?>? OnTakeSnapshot;
         public Action<byte[]>? OnLoadSnapshot;
@@ -403,6 +406,20 @@ namespace BoomNetwork.Client.FrameSync
             _session.SendExt(FrameSyncExtCmd.SendEntityState, _entityStateBuf, written);
         }
 
+        /// <summary>
+        /// Send frame state hash for desync detection.
+        /// Call after each OnFrame with a hash of your game state.
+        /// Server compares hashes from all clients; mismatch triggers OnDesyncDetected.
+        /// </summary>
+        public void SendFrameHash(uint frameNumber, uint hash)
+        {
+            if (CurrentState != State.Syncing) return;
+            var buf = new byte[8];
+            BinaryPrimitives.WriteUInt32LittleEndian(buf, frameNumber);
+            BinaryPrimitives.WriteUInt32LittleEndian(buf.AsSpan(4), hash);
+            _session?.SendExt(FrameSyncExtCmd.FrameHash, buf);
+        }
+
         // ===================== Network Stack =====================
 
         private void CreateNetworkStack()
@@ -604,6 +621,11 @@ namespace BoomNetwork.Client.FrameSync
                     case FrameSyncExtCmd.FrameSyncResumed:
                         Log("FrameSync resumed by server");
                         OnFrameSyncResumed?.Invoke();
+                        break;
+
+                    case FrameSyncExtCmd.FrameHashMismatch:
+                        if (msg.DataLength >= 5)
+                            OnDesyncDetected?.Invoke(FrameHashMismatch.Decode(msg.DataSpan));
                         break;
                 }
             }
