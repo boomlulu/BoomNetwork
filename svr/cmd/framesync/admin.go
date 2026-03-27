@@ -291,7 +291,11 @@ func handleKick(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 通知同房其他玩家
-	broadcastToRoom(room, playerId, codec.NewExtMessage(framesync.ExtCmdPlayerLeft, framesync.EncodePlayerId(playerId)))
+	if room.IsRunning() {
+		room.EnqueueEvent(framesync.FrameEventPlayerLeft, playerId)
+	} else {
+		broadcastToRoom(room, playerId, codec.NewExtMessage(framesync.ExtCmdPlayerLeft, framesync.EncodePlayerId(playerId)))
+	}
 
 	slog.Info("admin kicked player", "player_id", playerId, "room_id", room.ID)
 

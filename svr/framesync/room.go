@@ -74,6 +74,8 @@ type Room struct {
 	stopCh        chan struct{}
 
 	pendingInputs []PlayerInput
+	pendingEvents []FrameEvent // 帧内事件队列（同步中使用）
+	hostPlayerId  int32        // 房主 ID（0 = 无房主）
 
 	// 环形帧缓冲区：固定大小，不会增长
 	frameRing    []CachedFrame
@@ -143,6 +145,10 @@ func (r *Room) AddPlayer(id int32, conn PlayerConn) {
 		r.players[id] = &Player{ID: id, Conn: conn, State: PlayerOnline}
 	}
 	r.hadPlayer = true
+	// 如果尚无房主，设置此玩家为房主（不入队事件，由加入流程负责通知）
+	if r.hostPlayerId == 0 {
+		r.hostPlayerId = id
+	}
 	r.mu.Unlock()
 }
 
@@ -154,6 +160,10 @@ func (r *Room) DisconnectPlayer(id int32) {
 		p.DisconnectTime = time.Now()
 		p.Conn = nil
 	}
+	// 房主断线时选举新房主（仅在同步中入队事件）
+	if r.hostPlayerId == id && r.running {
+		r.electHost()
+	}
 	r.mu.Unlock()
 }
 
@@ -161,7 +171,42 @@ func (r *Room) DisconnectPlayer(id int32) {
 func (r *Room) RemovePlayer(id int32) {
 	r.mu.Lock()
 	delete(r.players, id)
+	// 房主被移除时选举新房主（仅在同步中入队事件）
+	if r.hostPlayerId == id && r.running {
+		r.electHost()
+	}
 	r.mu.Unlock()
+}
+
+// EnqueueEvent 添加帧内事件（在同步中调用，事件随下一帧广播）
+func (r *Room) EnqueueEvent(eventType byte, playerId int32) {
+	r.mu.Lock()
+	r.pendingEvents = append(r.pendingEvents, FrameEvent{EventType: eventType, PlayerId: playerId})
+	r.mu.Unlock()
+}
+
+// HostPlayerId 获取当前房主
+func (r *Room) HostPlayerId() int32 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.hostPlayerId
+}
+
+// setHost 设置房主并入队 HostChanged 事件（需在锁内调用）
+func (r *Room) setHost(id int32) {
+	r.hostPlayerId = id
+	r.pendingEvents = append(r.pendingEvents, FrameEvent{EventType: FrameEventHostChanged, PlayerId: id})
+}
+
+// electHost 选举新房主：选第一个在线玩家（需在锁内调用）
+func (r *Room) electHost() {
+	for _, p := range r.players {
+		if p.State == PlayerOnline {
+			r.setHost(p.ID)
+			return
+		}
+	}
+	r.hostPlayerId = 0 // 无在线玩家
 }
 
 // PlayerCount 在线玩家数
@@ -477,7 +522,11 @@ func (r *Room) tickLoop() {
 		case <-cleanupTicker.C:
 			removed := r.CleanupDisconnected()
 			for _, id := range removed {
-				r.broadcast(codec.NewExtMessage(ExtCmdPlayerLeft, EncodePlayerId(id)))
+				if r.running {
+					r.EnqueueEvent(FrameEventPlayerLeft, id)
+				} else {
+					r.broadcast(codec.NewExtMessage(ExtCmdPlayerLeft, EncodePlayerId(id)))
+				}
 				slog.Info("player removed (disconnect timeout)", "roomId", r.ID, "playerId", id)
 			}
 		}
@@ -507,12 +556,14 @@ func (r *Room) stepFrame() {
 	r.frameNumber++
 	frameNum := r.frameNumber
 
-	// 取走输入
+	// 取走输入和事件
 	inputs := r.pendingInputs
 	r.pendingInputs = nil
+	events := r.pendingEvents
+	r.pendingEvents = nil
 
 	// 组帧 + 编码（在锁内复用 frameBuf）
-	frame := &FrameData{FrameNumber: frameNum, Inputs: inputs}
+	frame := &FrameData{FrameNumber: frameNum, Inputs: inputs, Events: events}
 	size := FrameDataSize(frame)
 	if cap(r.frameBuf) < size {
 		r.frameBuf = make([]byte, size)

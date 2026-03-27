@@ -346,8 +346,12 @@ func onClientDisconnect(conn *transport.Conn) {
 	room.DisconnectPlayer(playerId)
 	slog.Info("player disconnected from room (kept for reconnect)", "playerId", playerId, "roomId", room.ID)
 
-	// 广播 PlayerOffline：通知其他客户端该玩家临时掉线（非永久离开）
-	broadcastToRoom(room, playerId, codec.NewExtMessage(framesync.ExtCmdPlayerOffline, framesync.EncodePlayerId(playerId)))
+	// 通知其他客户端该玩家临时掉线（非永久离开）
+	if room.IsRunning() {
+		room.EnqueueEvent(framesync.FrameEventPlayerOffline, playerId)
+	} else {
+		broadcastToRoom(room, playerId, codec.NewExtMessage(framesync.ExtCmdPlayerOffline, framesync.EncodePlayerId(playerId)))
+	}
 
 	// 释放断线玩家持有的所有实体权威
 	releasedEntities := room.ReleaseAllAuthority(playerId)
@@ -523,7 +527,11 @@ func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	rsp := framesync.EncodeReconnectRsp(framesync.ReconnectSuccess, room.ID, currentFrame, snapshotFrame, snapshotData)
 
 	// 通知同房其他玩家：恢复在线（非新加入）
-	broadcastToRoom(room, playerId, codec.NewExtMessage(framesync.ExtCmdPlayerOnline, framesync.EncodePlayerId(playerId)))
+	if room.IsRunning() {
+		room.EnqueueEvent(framesync.FrameEventPlayerOnline, playerId)
+	} else {
+		broadcastToRoom(room, playerId, codec.NewExtMessage(framesync.ExtCmdPlayerOnline, framesync.EncodePlayerId(playerId)))
+	}
 
 	// 异步补帧
 	if replayFrom > 0 && replayFrom < currentFrame {
@@ -604,7 +612,11 @@ func handleJoinRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	slog.Info("player joined room", "playerId", playerId, "roomId", room.ID, "online", room.PlayerCount(), "maxPlayers", room.MaxPlayers(), "existingPlayers", existingPlayers)
 
 	// 通知同房其他玩家
-	broadcastToRoom(room, playerId, codec.NewExtMessage(framesync.ExtCmdPlayerJoined, framesync.EncodePlayerId(playerId)))
+	if room.IsRunning() {
+		room.EnqueueEvent(framesync.FrameEventPlayerJoined, playerId)
+	} else {
+		broadcastToRoom(room, playerId, codec.NewExtMessage(framesync.ExtCmdPlayerJoined, framesync.EncodePlayerId(playerId)))
+	}
 
 	// 如果房间已在运行，给迟到者：快照 → StartFrameSync → 补帧
 	if room.IsRunning() {
@@ -691,7 +703,11 @@ func handleLeaveRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 
 	slog.Info("player left room", "playerId", playerId, "roomId", room.ID)
 
-	broadcastToRoom(room, playerId, codec.NewExtMessage(framesync.ExtCmdPlayerLeft, framesync.EncodePlayerId(playerId)))
+	if room.IsRunning() {
+		room.EnqueueEvent(framesync.FrameEventPlayerLeft, playerId)
+	} else {
+		broadcastToRoom(room, playerId, codec.NewExtMessage(framesync.ExtCmdPlayerLeft, framesync.EncodePlayerId(playerId)))
+	}
 
 	// 空房间立即清理
 	if room.TotalPlayerCount() == 0 {
@@ -741,7 +757,11 @@ func handleMatchRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 
 	slog.Info("player matched to room", "playerId", playerId, "roomId", room.ID, "online", room.PlayerCount(), "maxPlayers", room.MaxPlayers(), "matchKey", matchKey)
 
-	broadcastToRoom(room, playerId, codec.NewExtMessage(framesync.ExtCmdPlayerJoined, framesync.EncodePlayerId(playerId)))
+	if room.IsRunning() {
+		room.EnqueueEvent(framesync.FrameEventPlayerJoined, playerId)
+	} else {
+		broadcastToRoom(room, playerId, codec.NewExtMessage(framesync.ExtCmdPlayerJoined, framesync.EncodePlayerId(playerId)))
+	}
 
 	// 迟到加入（房间已在运行）
 	if room.IsRunning() {

@@ -132,15 +132,32 @@ type PlayerInput struct {
 	Data     []byte
 }
 
+// FrameEvent 帧内事件（嵌入 FrameData，确保所有客户端在同一帧处理）
+type FrameEvent struct {
+	EventType byte
+	PlayerId  int32
+}
+
+// Frame event types
+const (
+	FrameEventPlayerJoined  byte = 1
+	FrameEventPlayerLeft    byte = 2
+	FrameEventPlayerOffline byte = 3
+	FrameEventPlayerOnline  byte = 4
+	FrameEventHostChanged   byte = 5
+)
+
 // FrameData 一帧数据
 type FrameData struct {
 	FrameNumber uint32
 	Inputs      []PlayerInput
+	Events      []FrameEvent // 帧内事件
 }
 
 // EncodeFrameData 编码帧数据
-// Wire: [FrameNumber:4][InputCount:2][Inputs...]
+// Wire: [FrameNumber:4][InputCount:2][Inputs...][EventCount:1][Events...]
 // 每个 Input: [PlayerId:4][DataLen:2][Data:N]
+// 每个 Event: [EventType:1][PlayerId:4]
 func EncodeFrameData(f *FrameData, buf []byte) int {
 	offset := 0
 
@@ -163,6 +180,16 @@ func EncodeFrameData(f *FrameData, buf []byte) int {
 			copy(buf[offset:], input.Data)
 			offset += dataLen
 		}
+	}
+
+	// Events
+	buf[offset] = byte(len(f.Events))
+	offset++
+	for _, evt := range f.Events {
+		buf[offset] = evt.EventType
+		offset++
+		binary.LittleEndian.PutUint32(buf[offset:], uint32(evt.PlayerId))
+		offset += 4
 	}
 
 	return offset
@@ -194,6 +221,19 @@ func DecodeFrameData(buf []byte) *FrameData {
 		}
 	}
 
+	// Events（向后兼容：旧格式无此字段）
+	if offset < len(buf) {
+		eventCount := int(buf[offset])
+		offset++
+		f.Events = make([]FrameEvent, eventCount)
+		for i := 0; i < eventCount; i++ {
+			f.Events[i].EventType = buf[offset]
+			offset++
+			f.Events[i].PlayerId = int32(binary.LittleEndian.Uint32(buf[offset:]))
+			offset += 4
+		}
+	}
+
 	return f
 }
 
@@ -203,6 +243,7 @@ func FrameDataSize(f *FrameData) int {
 	for _, input := range f.Inputs {
 		size += 6 + len(input.Data) // PlayerId(4) + DataLen(2) + Data
 	}
+	size += 1 + len(f.Events)*5 // EventCount(1) + N × (EventType(1) + PlayerId(4))
 	return size
 }
 

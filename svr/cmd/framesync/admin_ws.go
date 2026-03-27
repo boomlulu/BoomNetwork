@@ -475,7 +475,11 @@ func (c *GMConn) rpcKick(env *GMEnvelope) {
 	if connVal, ok := playerConnMap.LoadAndDelete(p.Pid); ok {
 		connVal.(*transport.Conn).Close()
 	}
-	broadcastToRoom(room, p.Pid, codec.NewExtMessage(framesync.ExtCmdPlayerLeft, framesync.EncodePlayerId(p.Pid)))
+	if room.IsRunning() {
+		room.EnqueueEvent(framesync.FrameEventPlayerLeft, p.Pid)
+	} else {
+		broadcastToRoom(room, p.Pid, codec.NewExtMessage(framesync.ExtCmdPlayerLeft, framesync.EncodePlayerId(p.Pid)))
+	}
 
 	slog.Info("gm-ws kicked player", "player_id", p.Pid, "room_id", room.ID)
 	c.sendRsp(env.ID, "kick", KickResult{Ok: true, Kicked: p.Pid, Room: room.ID})
