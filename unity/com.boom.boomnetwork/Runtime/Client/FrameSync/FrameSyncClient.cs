@@ -360,7 +360,11 @@ namespace BoomNetwork.Client.FrameSync
             SendAuthorityEntityStates();
         }
 
-        private void SendAuthorityEntityStates()
+        /// <summary>
+        /// Manually send authority entity states without sending a frame input.
+        /// Use this when the player's position changed but there is no game input to send.
+        /// </summary>
+        public void SendAuthorityEntityStates()
         {
             if (_authorityEntities.Count == 0 || _session == null) return;
             // 确保 buffer 够大
