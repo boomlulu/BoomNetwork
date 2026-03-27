@@ -40,7 +40,7 @@ namespace BoomNetwork.Unity
         public int PlayerId => Client?.PlayerId ?? 0;
 
         /// <summary>匹配 key（Inspector 配置）</summary>
-        public string MatchKey => matchKey;
+        public string MatchKey { get => matchKey; set => matchKey = value; }
 
         /// <summary>
         /// 帧同步客户端（注册 OnConnected / OnFrame / OnReconnected 等事件）
