@@ -136,6 +136,8 @@ func main() {
 	router.OnExt(framesync.ExtCmdSendStateMsg, txStats(handleSendStateMsg))
 	router.OnExt(framesync.ExtCmdSetData, txStats(handleSetData))
 	router.OnExt(framesync.ExtCmdRequestDataSync, txStats(handleRequestDataSync))
+	// 帧 hash 校验
+	router.OnExt(framesync.ExtCmdFrameHash, txStats(handleFrameHash))
 	// Game Cmd (uint32) — 服务器透传
 	router.OnGame(txStats(handleGameRelay))
 
@@ -1068,6 +1070,40 @@ func handleRequestDataSync(conn *transport.Conn, msg *codec.Message) *codec.Mess
 
 	entries, version := room.GetDataSnapshot()
 	return codec.NewExtMessage(framesync.ExtCmdPushDataSync, framesync.EncodePushDataSync(version, entries))
+}
+
+// handleFrameHash 帧 hash 上报：收集并检测 desync
+func handleFrameHash(conn *transport.Conn, msg *codec.Message) *codec.Message {
+	val, ok := connPlayerMap.Load(conn.ID)
+	if !ok {
+		return nil
+	}
+	playerId := val.(int32)
+
+	frameNum, hash, ok := framesync.DecodeFrameHash(msg.Data)
+	if !ok {
+		return nil
+	}
+
+	roomVal, ok := playerRoomMap.Load(playerId)
+	if !ok {
+		return nil
+	}
+	room := roomVal.(*framesync.Room)
+
+	if room.ReportFrameHash(playerId, frameNum, hash) {
+		// Desync detected
+		hashes := room.GetFrameHashes(frameNum)
+		slog.Error("DESYNC DETECTED",
+			"roomId", room.ID,
+			"frame", frameNum,
+			"hashes", hashes,
+		)
+		mismatchData := framesync.EncodeFrameHashMismatch(frameNum, hashes)
+		broadcastToRoom(room, -1, codec.NewExtMessage(framesync.ExtCmdFrameHashMismatch, mismatchData))
+		broadcastToRoom(room, -1, codec.NewExtMessage(framesync.ExtCmdFrameSyncPaused, []byte{byte(framesync.PauseReasonDesync)}))
+	}
+	return nil
 }
 
 func handleGameRelay(conn *transport.Conn, msg *codec.Message) *codec.Message {

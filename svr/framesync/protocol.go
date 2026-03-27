@@ -74,6 +74,10 @@ const (
 	// 帧同步暂停/恢复
 	ExtCmdFrameSyncPaused  uint16 = 56 // S→C [Reason:1]
 	ExtCmdFrameSyncResumed uint16 = 57 // S→C (empty body)
+
+	// 帧 hash 校验
+	ExtCmdFrameHash        uint16 = 60 // C→S [FrameNumber:4][Hash:4]
+	ExtCmdFrameHashMismatch uint16 = 61 // S→C [FrameNumber:4][PlayerCount:1][PlayerId:4 + Hash:4]...
 )
 
 // FrameSyncPauseReason 帧同步暂停原因
@@ -81,6 +85,7 @@ type FrameSyncPauseReason byte
 
 const (
 	PauseReasonSnapshotStale FrameSyncPauseReason = 1 // 快照过期
+	PauseReasonDesync        FrameSyncPauseReason = 2 // 帧 hash 不匹配
 )
 
 
@@ -368,6 +373,33 @@ func EncodeReconnectRsp(result byte, roomId int32, serverFrame uint32, snapshotF
 
 	if len(snapshotData) > 0 {
 		copy(buf[13:], snapshotData)
+	}
+	return buf
+}
+
+// DecodeFrameHash 解码客户端上报的帧 hash
+// Wire: [FrameNumber:4][Hash:4]
+func DecodeFrameHash(data []byte) (frameNumber uint32, hash uint32, ok bool) {
+	if len(data) < 8 {
+		return 0, 0, false
+	}
+	frameNumber = binary.LittleEndian.Uint32(data[0:4])
+	hash = binary.LittleEndian.Uint32(data[4:8])
+	return frameNumber, hash, true
+}
+
+// EncodeFrameHashMismatch 编码 hash 不匹配详情
+// Wire: [FrameNumber:4][PlayerCount:1][PlayerId:4 + Hash:4]...
+func EncodeFrameHashMismatch(frameNumber uint32, playerHashes map[int32]uint32) []byte {
+	buf := make([]byte, 5+len(playerHashes)*8)
+	binary.LittleEndian.PutUint32(buf[0:], frameNumber)
+	buf[4] = byte(len(playerHashes))
+	offset := 5
+	for pid, hash := range playerHashes {
+		binary.LittleEndian.PutUint32(buf[offset:], uint32(pid))
+		offset += 4
+		binary.LittleEndian.PutUint32(buf[offset:], hash)
+		offset += 4
 	}
 	return buf
 }
