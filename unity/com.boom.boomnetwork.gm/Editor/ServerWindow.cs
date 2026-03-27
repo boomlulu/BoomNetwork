@@ -1283,11 +1283,12 @@ namespace BoomNetwork.GM.Editor
                 var payload = new Dictionary<string, object> { ["max_players"] = maxPlayers };
                 if (!string.IsNullOrEmpty(matchKey)) payload["match_key"] = matchKey;
                 _wsClient.SendRpc("create_room", payload);
+                ShowNotification(new GUIContent($"[WS] Create room sent (max={maxPlayers})"));
             }
             else
             {
                 var r = _client.CreateRoom(maxPlayers, matchKey);
-                ShowNotification(new GUIContent(r.Ok ? "Room created" : r.Error));
+                ShowNotification(new GUIContent(r.Ok ? $"[HTTP] Room created" : $"[HTTP] {r.Error}"));
             }
         }
 

@@ -74,7 +74,9 @@ namespace BoomNetwork.GM.Editor
                 Topic = topic,
                 Payload = MsgPackLite.EncodeMap(payload),
             };
-            _outbound.Enqueue(env.Encode());
+            var encoded = env.Encode();
+            _outbound.Enqueue(encoded);
+            UnityEngine.Debug.Log($"[GM-WS] SendRpc enqueued: topic={topic} id={env.ID} bytes={encoded.Length} queueSize={_outbound.Count}");
         }
 
         /// <summary>发送 Ping 心跳</summary>
@@ -201,10 +203,14 @@ namespace BoomNetwork.GM.Editor
 
         private async Task FlushOutbound(CancellationToken ct)
         {
+            int count = 0;
             while (_outbound.TryDequeue(out var frame))
             {
                 await SendFrame(frame, ct);
+                count++;
             }
+            if (count > 0)
+                UnityEngine.Debug.Log($"[GM-WS] FlushOutbound sent {count} frame(s)");
         }
 
         private void ProcessInboundFrame(byte[] data)
