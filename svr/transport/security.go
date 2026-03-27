@@ -27,24 +27,41 @@ func DefaultSecurityConfig() SecurityConfig {
 	}
 }
 
+// RateLevel 速率检查结果
+type RateLevel int
+
+const (
+	RateLevelOK   RateLevel = 0 // 正常
+	RateLevelWarn RateLevel = 1 // 接近上限（80%），应发送警告
+	RateLevelDeny RateLevel = 2 // 超限，应断开
+)
+
 // RateLimiter 每连接速率限制器
 type RateLimiter struct {
-	mu        sync.Mutex
-	count     int
-	lastReset time.Time
-	limit     int
+	mu           sync.Mutex
+	count        int
+	lastReset    time.Time
+	limit        int
+	warnAt       int       // 80% 软限阈值
+	lastWarnTime time.Time // 限制警告频率：每秒最多 1 次
 }
 
 // NewRateLimiter 创建速率限制器
 func NewRateLimiter(messagesPerSec int) *RateLimiter {
 	return &RateLimiter{
 		limit:     messagesPerSec,
+		warnAt:    messagesPerSec * 8 / 10, // 80%
 		lastReset: time.Now(),
 	}
 }
 
 // Allow 检查是否允许（返回 false 表示超限）
 func (rl *RateLimiter) Allow() bool {
+	return rl.AllowLevel() != RateLevelDeny
+}
+
+// AllowLevel 检查速率等级（OK / Warn / Deny）
+func (rl *RateLimiter) AllowLevel() RateLevel {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
@@ -55,7 +72,15 @@ func (rl *RateLimiter) Allow() bool {
 	}
 
 	rl.count++
-	return rl.count <= rl.limit
+
+	if rl.count > rl.limit {
+		return RateLevelDeny
+	}
+	if rl.count > rl.warnAt && now.Sub(rl.lastWarnTime) >= time.Second {
+		rl.lastWarnTime = now
+		return RateLevelWarn
+	}
+	return RateLevelOK
 }
 
 // ===================== S18: Per-IP 连接速率限制 =====================

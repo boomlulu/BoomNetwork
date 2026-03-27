@@ -69,6 +69,9 @@ namespace BoomNetwork.Client.FrameSync
         public event Action<NetworkError>? OnError;
         public event Action<string>? OnLog;
 
+        /// <summary>服务器警告：消息速率接近上限，请降速发包</summary>
+        public event Action? OnRateLimitWarning;
+
         // --- 快照回调 ---
         public Func<byte[]?>? OnTakeSnapshot;
         public Action<byte[]>? OnLoadSnapshot;
@@ -505,6 +508,11 @@ namespace BoomNetwork.Client.FrameSync
 
                     case FrameSyncCmd.StopFrameSync:
                         HandleStopFrameSync();
+                        break;
+
+                    case FrameSyncCmd.RateLimitWarning:
+                        Log("Rate limit warning received from server");
+                        OnRateLimitWarning?.Invoke();
                         break;
                 }
             }

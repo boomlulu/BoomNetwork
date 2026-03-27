@@ -21,8 +21,9 @@ type KcpServer struct {
 	mu            sync.Mutex
 	conns         map[int]*Conn
 	maxConns      int // 0 = unlimited
-	onDisconnect  func(*Conn)
-	onRateLimited func()
+	onDisconnect    func(*Conn)
+	onRateLimited   func()
+	onRateLimitWarn func(*Conn)
 	wg            sync.WaitGroup
 	ipLimiter     *IPRateLimiter // S18: per-IP 连接速率限制
 }
@@ -42,6 +43,11 @@ func (s *KcpServer) SetOnDisconnect(fn func(*Conn)) {
 // SetOnRateLimited 设置限流回调
 func (s *KcpServer) SetOnRateLimited(fn func()) {
 	s.onRateLimited = fn
+}
+
+// SetOnRateLimitWarn 设置限流警告回调（接近上限时触发，不断连）
+func (s *KcpServer) SetOnRateLimitWarn(fn func(*Conn)) {
+	s.onRateLimitWarn = fn
 }
 
 // SetSecurity 设置安全配置
@@ -173,13 +179,20 @@ func (s *KcpServer) handleConn(c *Conn) {
 			return
 		}
 
-		// 速率限制（与 TCP 一致）
-		if c.rateLimiter != nil && !c.rateLimiter.Allow() {
-			slog.Warn("client rate limited, disconnecting", "component", "kcp", "connId", c.ID)
-			if s.onRateLimited != nil {
-				s.onRateLimited()
+		// 速率限制（软着陆：先警告，持续超限才断连）
+		if c.rateLimiter != nil {
+			switch c.rateLimiter.AllowLevel() {
+			case RateLevelDeny:
+				slog.Warn("client rate limited, disconnecting", "component", "kcp", "connId", c.ID)
+				if s.onRateLimited != nil {
+					s.onRateLimited()
+				}
+				return
+			case RateLevelWarn:
+				if s.onRateLimitWarn != nil {
+					s.onRateLimitWarn(c)
+				}
 			}
-			return
 		}
 
 		s.handler(c, msg)
@@ -197,6 +210,7 @@ type Server interface {
 	ConnCount() int
 	SetOnDisconnect(fn func(*Conn))
 	SetOnRateLimited(fn func())
+	SetOnRateLimitWarn(fn func(*Conn))
 	SetSecurity(cfg SecurityConfig)
 	SetMaxConns(n int)
 }

@@ -169,6 +169,9 @@ func main() {
 	server := transport.NewServer(*proto, rxHandler)
 	server.SetOnDisconnect(onClientDisconnect)
 	server.SetOnRateLimited(func() { framesync.Metrics.RateLimited.Inc() })
+	server.SetOnRateLimitWarn(func(c *transport.Conn) {
+		c.Send(codec.NewCoreMessage(framesync.CmdRateLimitWarning, nil))
+	})
 	server.SetMaxConns(cfg.MaxConnections)
 
 	// 安全配置

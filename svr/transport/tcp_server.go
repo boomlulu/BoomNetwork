@@ -66,8 +66,9 @@ type TcpServer struct {
 	mu            sync.Mutex
 	conns         map[int]*Conn
 	maxConns      int // 0 = unlimited
-	onDisconnect  func(*Conn)
-	onRateLimited func() // 触发限流时回调（用于指标统计）
+	onDisconnect    func(*Conn)
+	onRateLimited   func()      // 触发限流时回调（用于指标统计）
+	onRateLimitWarn func(*Conn) // 接近限流时回调（发送警告，不断连）
 	wg            sync.WaitGroup
 	ipLimiter     *IPRateLimiter // S18: per-IP 连接速率限制
 }
@@ -82,6 +83,11 @@ func (s *TcpServer) SetMaxConns(n int) {
 // SetOnRateLimited 设置限流回调
 func (s *TcpServer) SetOnRateLimited(fn func()) {
 	s.onRateLimited = fn
+}
+
+// SetOnRateLimitWarn 设置限流警告回调（接近上限时触发，不断连）
+func (s *TcpServer) SetOnRateLimitWarn(fn func(*Conn)) {
+	s.onRateLimitWarn = fn
 }
 
 // SetSecurity 设置安全配置
@@ -223,13 +229,20 @@ func (s *TcpServer) handleConn(c *Conn) {
 			return
 		}
 
-		// 速率限制
-		if c.rateLimiter != nil && !c.rateLimiter.Allow() {
-			slog.Warn("client rate limited, disconnecting", "component", "tcp", "connId", c.ID)
-			if s.onRateLimited != nil {
-				s.onRateLimited()
+		// 速率限制（软着陆：先警告，持续超限才断连）
+		if c.rateLimiter != nil {
+			switch c.rateLimiter.AllowLevel() {
+			case RateLevelDeny:
+				slog.Warn("client rate limited, disconnecting", "component", "tcp", "connId", c.ID)
+				if s.onRateLimited != nil {
+					s.onRateLimited()
+				}
+				return
+			case RateLevelWarn:
+				if s.onRateLimitWarn != nil {
+					s.onRateLimitWarn(c)
+				}
 			}
-			return
 		}
 
 		s.handler(c, msg)

@@ -25,7 +25,8 @@ namespace BoomNetwork.Core.FrameSync
         public const byte HeartbeatRsp    = 9;
         public const byte Reconnect       = 10;
         public const byte ReconnectRsp    = 11;
-        public const byte ServerShutdown  = 12; // 服务器 → 客户端：服务器即将关闭
+        public const byte ServerShutdown      = 12; // 服务器 → 客户端：服务器即将关闭
+        public const byte RateLimitWarning   = 13; // 服务器 → 客户端：消息速率接近上限，请降速
     }
 
     /// <summary>

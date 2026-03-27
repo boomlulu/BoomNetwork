@@ -25,7 +25,8 @@ const (
 	CmdHeartbeatRsp   byte = 9
 	CmdReconnect        byte = 10
 	CmdReconnectRsp     byte = 11
-	CmdServerShutdown   byte = 12 // 服务器 → 客户端：服务器即将关闭
+	CmdServerShutdown     byte = 12 // 服务器 → 客户端：服务器即将关闭
+	CmdRateLimitWarning   byte = 13 // 服务器 → 客户端：消息速率接近上限，请降速
 )
 
 // --- Extended Cmd (uint16) ---
