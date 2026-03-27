@@ -27,6 +27,7 @@ namespace BoomNetwork.GM.Editor
         private string _token;
         private volatile bool _authenticated;
         private volatile bool _disposed;
+        private int _authFailCount;
 
         /// <summary>连接到 GM WebSocket 服务器</summary>
         public void Connect(string httpAdminUrl, string token)
@@ -37,6 +38,7 @@ namespace BoomNetwork.GM.Editor
             _url = httpAdminUrl.TrimEnd('/').Replace("https://", "wss://").Replace("http://", "ws://") + "/ws";
             _token = token;
             _authenticated = false;
+            _authFailCount = 0;
 
             _cts = new CancellationTokenSource();
             _bgThread = new Thread(RunLoop) { IsBackground = true, Name = "BoomGMWs" };
@@ -101,6 +103,13 @@ namespace BoomNetwork.GM.Editor
 
                 _authenticated = false;
 
+                // Auth 连续失败 3 次后停止重连，避免无限刷日志
+                if (_authFailCount >= 3)
+                {
+                    UnityEngine.Debug.LogWarning("[GM-WS] Auth failed 3 times, stopping reconnect. Switch profile or fix token to retry.");
+                    break;
+                }
+
                 // 重连退避 3 秒
                 if (!ct.IsCancellationRequested)
                 {
@@ -128,6 +137,7 @@ namespace BoomNetwork.GM.Editor
             var authEnvRsp = GmEnvelope.Decode(authRsp);
             if (authEnvRsp.Type == "auth_err")
             {
+                _authFailCount++;
                 var errDetail = authEnvRsp.DecodePayload();
                 var errMsg = errDetail != null ? MsgPackLite.GetString(errDetail, "error") : "unknown";
                 UnityEngine.Debug.LogError($"[GM-WS] Auth failed: {errMsg} (check Admin Token in Deploy Profile)");
@@ -140,6 +150,7 @@ namespace BoomNetwork.GM.Editor
             }
 
             _authenticated = true;
+            _authFailCount = 0;
 
             // ===== 订阅所有 topic =====
             foreach (var topic in GmTopics.All)
