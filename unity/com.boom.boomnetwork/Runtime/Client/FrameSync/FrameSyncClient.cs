@@ -179,6 +179,14 @@ namespace BoomNetwork.Client.FrameSync
         private bool _frameSyncStarted;
         private uint _lastSnapshotFrame;
         private Message? _pendingStartMsg;
+
+        // --- 快照上传 ACK 重试 ---
+        private int _snapshotRetryCount;
+        private float _snapshotRetryTimer;  // 倒计时 ms，<=0 表示不在等待
+        private uint _pendingSnapshotFrame;
+        private byte[]? _pendingSnapshotData; // null = 无待重试快照
+        private const int MaxSnapshotRetries = 3;
+        private static readonly float[] SnapshotRetryDelays = { 1000f, 2000f, 4000f };
         private uint _dataSyncVersion;  // 轻量状态同步版本跟踪
 
         public FrameSyncClient(float heartbeatIntervalMs = 3000, float heartbeatTimeoutMs = 10000)
@@ -211,6 +219,15 @@ namespace BoomNetwork.Client.FrameSync
         public void Tick(float deltaTimeMs)
         {
             _connMgr?.Tick(deltaTimeMs);
+            TickSnapshotRetry(deltaTimeMs);
+        }
+
+        private void TickSnapshotRetry(float deltaTimeMs)
+        {
+            if (_pendingSnapshotData == null || _snapshotRetryTimer <= 0) return;
+            _snapshotRetryTimer -= deltaTimeMs;
+            if (_snapshotRetryTimer <= 0)
+                SendSnapshotWithRetry();
         }
 
         /// <summary>
@@ -454,6 +471,9 @@ namespace BoomNetwork.Client.FrameSync
         private void HandleDisconnected()
         {
             _frameSyncStarted = false;
+            _pendingSnapshotData = null;
+            _snapshotRetryCount = 0;
+            _snapshotRetryTimer = 0;
             CurrentState = State.Disconnected;
             Log("Disconnected");
             OnDisconnected?.Invoke();
@@ -461,6 +481,10 @@ namespace BoomNetwork.Client.FrameSync
 
         private void HandleReconnected(ReconnectContext context)
         {
+            _pendingSnapshotData = null;
+            _snapshotRetryCount = 0;
+            _snapshotRetryTimer = 0;
+
             if (context.IsSnapshotRestore && context.SnapshotData != null)
             {
                 OnLoadSnapshot?.Invoke(context.SnapshotData);
@@ -648,6 +672,7 @@ namespace BoomNetwork.Client.FrameSync
         private void CheckSnapshotUpload()
         {
             if (SnapshotInterval == 0 || OnTakeSnapshot == null) return;
+            if (_pendingSnapshotData != null) return; // 已有重试中的快照
             uint boundary = (LastFrameNumber / SnapshotInterval) * SnapshotInterval;
             if (boundary == 0 || boundary == _lastSnapshotFrame) return;
 
@@ -655,8 +680,52 @@ namespace BoomNetwork.Client.FrameSync
             if (data == null || data.Length == 0) return;
 
             _lastSnapshotFrame = boundary;
-            var encoded = SnapshotCodec.EncodeUploadSnapshot(LastFrameNumber, data);
-            _session?.SendExt(FrameSyncExtCmd.UploadSnapshot, encoded);
+            _pendingSnapshotFrame = boundary;
+            _pendingSnapshotData = SnapshotCodec.EncodeUploadSnapshot(LastFrameNumber, data);
+            _snapshotRetryCount = 0;
+            SendSnapshotWithRetry();
+        }
+
+        private void SendSnapshotWithRetry()
+        {
+            if (_session == null || _pendingSnapshotData == null) return;
+            _snapshotRetryTimer = 0;
+            _session.SendExtAsync(
+                FrameSyncExtCmd.UploadSnapshot,
+                _pendingSnapshotData,
+                3000f,
+                onResponse: msg =>
+                {
+                    bool accepted = msg.DataLength >= 1 && msg.DataSpan[0] == 1;
+                    if (accepted)
+                    {
+                        _pendingSnapshotData = null;
+                        _snapshotRetryCount = 0;
+                    }
+                    else
+                    {
+                        Log($"Snapshot upload rejected (frame={_pendingSnapshotFrame}), scheduling retry {_snapshotRetryCount + 1}/{MaxSnapshotRetries}");
+                        ScheduleSnapshotRetry();
+                    }
+                },
+                onTimeout: _ =>
+                {
+                    Log($"Snapshot upload timeout (frame={_pendingSnapshotFrame}), scheduling retry {_snapshotRetryCount + 1}/{MaxSnapshotRetries}");
+                    ScheduleSnapshotRetry();
+                });
+        }
+
+        private void ScheduleSnapshotRetry()
+        {
+            if (_snapshotRetryCount >= MaxSnapshotRetries)
+            {
+                Log($"Snapshot upload failed after {MaxSnapshotRetries} retries, giving up");
+                _pendingSnapshotData = null;
+                _snapshotRetryCount = 0;
+                return;
+            }
+            _snapshotRetryTimer = SnapshotRetryDelays[_snapshotRetryCount];
+            _snapshotRetryCount++;
         }
 
         private void HandleStopFrameSync()
