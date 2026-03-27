@@ -102,8 +102,10 @@ type Room struct {
 	// panic 恢复回调：通知外部清理 playerRoomMap 等全局状态
 	OnPanic func(room *Room, playerIds []int32)
 
-	// 指标：房间生命周期
-	startedAt time.Time
+	// 房间生命周期
+	createdAt time.Time // 创建时间
+	hadPlayer bool      // 是否有过玩家加入
+	startedAt time.Time // 指标：Start 时间
 }
 
 // NewRoom 创建帧同步房间
@@ -127,6 +129,7 @@ func NewRoomWithConfig(config RoomConfig) *Room {
 		broadcastSlice:  make([]*Player, 0, 16),
 		entityAuthority: make(map[int32]int32),
 		dataStore:       make(map[int64]DataEntry),
+		createdAt:       time.Now(),
 	}
 }
 
@@ -139,6 +142,7 @@ func (r *Room) AddPlayer(id int32, conn PlayerConn) {
 	} else {
 		r.players[id] = &Player{ID: id, Conn: conn, State: PlayerOnline}
 	}
+	r.hadPlayer = true
 	r.mu.Unlock()
 }
 
@@ -355,6 +359,16 @@ func (r *Room) IsSnapshotPaused() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.snapshotPaused
+}
+
+// CreatedAt 返回房间创建时间
+func (r *Room) CreatedAt() time.Time { return r.createdAt }
+
+// HadPlayer 是否有过玩家加入
+func (r *Room) HadPlayer() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.hadPlayer
 }
 
 // Start 开始帧同步

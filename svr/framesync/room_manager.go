@@ -3,6 +3,7 @@ package framesync
 import (
 	"log/slog"
 	"sync"
+	"time"
 )
 
 // RoomManager 房间管理器
@@ -122,13 +123,17 @@ func (rm *RoomManager) CreateRoomWithMaxPlayers(maxPlayers int) *Room {
 	return room
 }
 
-// CleanupEmptyRooms 清理空房间（TotalPlayerCount==0 且未运行）
-func (rm *RoomManager) CleanupEmptyRooms() int {
+// CleanupEmptyRooms 清理空闲房间
+// 清理条件：无玩家 + 未运行 + (曾有过玩家 OR 创建超过 idleTimeout)
+func (rm *RoomManager) CleanupEmptyRooms(idleTimeout time.Duration) int {
+	now := time.Now()
 	rm.mu.Lock()
 	var toRemove []int32
 	for id, r := range rm.rooms {
 		if r.TotalPlayerCount() == 0 && !r.IsRunning() {
-			toRemove = append(toRemove, id)
+			if r.HadPlayer() || now.Sub(r.CreatedAt()) >= idleTimeout {
+				toRemove = append(toRemove, id)
+			}
 		}
 	}
 	for _, id := range toRemove {

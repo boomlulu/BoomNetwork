@@ -205,16 +205,21 @@ func main() {
 		go startAdminServer(ctx, *adminAddr, *adminToken)
 	}
 
-	// 空房间定期清理（每 10 秒）
+	// 空房间定期清理
+	cleanupSec := cfg.RoomCleanupSec
+	if cleanupSec <= 0 {
+		cleanupSec = 30
+	}
 	go func() {
-		ticker := time.NewTicker(10 * time.Second)
+		ticker := time.NewTicker(time.Duration(cleanupSec) * time.Second)
 		defer ticker.Stop()
+		idleTimeout := time.Duration(cleanupSec) * time.Second
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				roomMgr.CleanupEmptyRooms()
+				roomMgr.CleanupEmptyRooms(idleTimeout)
 			}
 		}
 	}()
