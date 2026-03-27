@@ -160,54 +160,50 @@ namespace BoomNetwork.GM.Editor
             }
 
             // ===== 收发主循环 =====
-            // 注意：ClientWebSocket.ReceiveAsync 被 CancellationToken 取消会导致连接 Abort，
-            // 所以不能用短超时轮询。改为并发：recv 阻塞等数据，send 独立 Task 刷出站队列。
-            var sendTask = Task.Run(async () =>
-            {
-                while (!ct.IsCancellationRequested && _ws.State == WebSocketState.Open)
-                {
-                    while (_outbound.TryDequeue(out var frame))
-                        await SendFrame(frame, ct);
-                    await Task.Delay(50, ct);
-                }
-            }, ct);
-
+            // ClientWebSocket 允许同时一个 SendAsync + 一个 ReceiveAsync，
+            // 但不能并发多个 Send 或多个 Receive。
+            // 策略：recv 阻塞等数据，收到数据后顺便刷一次出站队列。
+            // 服务端每 2 秒推送 health/stats/rooms，所以 recv 不会长时间阻塞。
             var recvBuf = new byte[65536];
             var msgBuf = new List<byte>();
-            try
+            while (!ct.IsCancellationRequested && _ws.State == WebSocketState.Open)
             {
-                while (!ct.IsCancellationRequested && _ws.State == WebSocketState.Open)
+                // 先刷出站队列（在 recv 之前和之后各刷一次）
+                await FlushOutbound(ct);
+
+                var seg = new ArraySegment<byte>(recvBuf);
+                var result = await _ws.ReceiveAsync(seg, ct);
+
+                if (result.MessageType == WebSocketMessageType.Close)
+                    break;
+
+                if (result.Count > 0)
                 {
-                    var seg = new ArraySegment<byte>(recvBuf);
-                    var result = await _ws.ReceiveAsync(seg, ct);
-
-                    if (result.MessageType == WebSocketMessageType.Close)
-                        break;
-
-                    if (result.Count > 0)
+                    if (result.EndOfMessage && msgBuf.Count == 0)
                     {
-                        if (result.EndOfMessage && msgBuf.Count == 0)
+                        var data = new byte[result.Count];
+                        Buffer.BlockCopy(recvBuf, 0, data, 0, result.Count);
+                        ProcessInboundFrame(data);
+                    }
+                    else
+                    {
+                        for (int i = 0; i < result.Count; i++)
+                            msgBuf.Add(recvBuf[i]);
+                        if (result.EndOfMessage)
                         {
-                            var data = new byte[result.Count];
-                            Buffer.BlockCopy(recvBuf, 0, data, 0, result.Count);
-                            ProcessInboundFrame(data);
-                        }
-                        else
-                        {
-                            for (int i = 0; i < result.Count; i++)
-                                msgBuf.Add(recvBuf[i]);
-                            if (result.EndOfMessage)
-                            {
-                                ProcessInboundFrame(msgBuf.ToArray());
-                                msgBuf.Clear();
-                            }
+                            ProcessInboundFrame(msgBuf.ToArray());
+                            msgBuf.Clear();
                         }
                     }
                 }
             }
-            finally
+        }
+
+        private async Task FlushOutbound(CancellationToken ct)
+        {
+            while (_outbound.TryDequeue(out var frame))
             {
-                try { await sendTask; } catch { /* send task cleanup */ }
+                await SendFrame(frame, ct);
             }
         }
 
