@@ -54,7 +54,8 @@ var playerCounter int32
 var playerMu sync.Mutex
 
 func main() {
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: &logLevel})))
+	jsonHandler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: &logLevel})
+	slog.SetDefault(slog.New(WrapWithLogBuffer(jsonHandler)))
 	flag.Parse()
 
 	if BuildHash != "" {

@@ -24,6 +24,7 @@ type GMHub struct {
 	conns map[*GMConn]struct{}
 
 	msgNotify chan MsgEntry // 来自 MsgLog 的实时消息通知
+	logNotify chan LogEntry // 来自 LogBuf 的实时日志通知
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -34,6 +35,7 @@ func newGMHub(parent context.Context) *GMHub {
 	return &GMHub{
 		conns:     make(map[*GMConn]struct{}),
 		msgNotify: make(chan MsgEntry, 256),
+		logNotify: make(chan LogEntry, 512),
 		ctx:       ctx,
 		cancel:    cancel,
 	}
@@ -77,8 +79,11 @@ func (h *GMHub) broadcast(bit uint32, data []byte) {
 
 // Run 启动 Hub 的后台 goroutine（定时推送 + 实时消息监听）
 func (h *GMHub) Run() {
-	// 注册 MsgLog 通知通道
+	// 注册通知通道
 	MsgLog.SetNotifyCh(h.msgNotify)
+	if LogBuf != nil {
+		LogBuf.SetNotifyCh(h.logNotify)
+	}
 
 	ticker2s := time.NewTicker(2 * time.Second)
 	ticker5s := time.NewTicker(5 * time.Second)
@@ -89,12 +94,22 @@ func (h *GMHub) Run() {
 		select {
 		case <-h.ctx.Done():
 			MsgLog.SetNotifyCh(nil)
+			if LogBuf != nil {
+				LogBuf.SetNotifyCh(nil)
+			}
 			return
 
 		case entry := <-h.msgNotify:
 			// 实时消息推送
 			data := makePushEnvelope(TopicMessages, MsgEntryToWire(entry))
 			h.broadcast(BitMessages, data)
+
+		case entry := <-h.logNotify:
+			// 实时日志推送
+			data := makePushEnvelope(TopicLogs, LogPush{
+				Ts: entry.Ts, Level: entry.Level, Msg: entry.Msg, Attrs: entry.Attrs,
+			})
+			h.broadcast(BitLogs, data)
 
 		case <-ticker2s.C:
 			h.pushHealth()
@@ -343,12 +358,25 @@ func (c *GMConn) readPump(token string) {
 		case "sub":
 			if bit, ok := topicToBit[env.Topic]; ok {
 				atomic.OrUint32(&c.topics, bit)
-				// 回填历史消息，让 Messages Tab 订阅后立即有数据
+				// 回填历史数据，让 Tab 订阅后立即有数据
 				if env.Topic == TopicMessages {
 					recent := MsgLog.Recent(100)
 					// Recent 返回逆序（最新在前），反转为时间正序推送
 					for i := len(recent) - 1; i >= 0; i-- {
 						data := makePushEnvelope(TopicMessages, MsgEntryToWire(recent[i]))
+						select {
+						case c.sendCh <- data:
+						default:
+						}
+					}
+				}
+				if env.Topic == TopicLogs && LogBuf != nil {
+					recent := LogBuf.Recent(200, "")
+					for i := len(recent) - 1; i >= 0; i-- {
+						e := recent[i]
+						data := makePushEnvelope(TopicLogs, LogPush{
+							Ts: e.Ts, Level: e.Level, Msg: e.Msg, Attrs: e.Attrs,
+						})
 						select {
 						case c.sendCh <- data:
 						default:

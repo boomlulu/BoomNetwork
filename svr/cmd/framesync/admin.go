@@ -52,6 +52,7 @@ func startAdminServer(ctx context.Context, addr, token string) {
 	mux.HandleFunc("/netsim", withAuth(token, handleNetSim))
 	mux.HandleFunc("/log-level", withAuth(token, handleLogLevel))
 	mux.HandleFunc("/config/reload", withAuth(token, handleConfigReload))
+	mux.HandleFunc("/logs", withAuth(token, handleLogs))
 
 	// WebSocket GM 长连接
 	hub := newGMHub(ctx)
@@ -625,6 +626,32 @@ func handleConfigReload(w http.ResponseWriter, r *http.Request) {
 	reloadConfig()
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"ok":true,"level":%q}`, logLevel.Level().String())
+}
+
+// handleLogs GET /logs?lines=100&level=warn — 返回最近 N 条日志
+func handleLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	n := 100
+	if v := r.URL.Query().Get("lines"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+			n = parsed
+			if n > 2000 {
+				n = 2000
+			}
+		}
+	}
+	level := strings.ToUpper(r.URL.Query().Get("level"))
+	if LogBuf == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte("[]"))
+		return
+	}
+	entries := LogBuf.Recent(n, level)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(entries)
 }
 
 func jsonError(w http.ResponseWriter, code int, msg string) {

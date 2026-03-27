@@ -28,6 +28,7 @@ const (
 	TopicPerf     = "perf"
 	TopicRates    = "rates"
 	TopicNetsim   = "netsim"
+	TopicLogs     = "logs"
 )
 
 // topicBit 用于订阅位掩码
@@ -39,6 +40,7 @@ const (
 	BitPerf
 	BitRates
 	BitNetsim
+	BitLogs
 )
 
 var topicToBit = map[string]uint32{
@@ -49,6 +51,7 @@ var topicToBit = map[string]uint32{
 	TopicPerf:     BitPerf,
 	TopicRates:    BitRates,
 	TopicNetsim:   BitNetsim,
+	TopicLogs:     BitLogs,
 }
 
 // ===================== Auth 负载 =====================
@@ -179,6 +182,14 @@ type NetsimPush struct {
 	LossPercent  int32 `msgpack:"loss_percent"`
 	StatsDropped int64 `msgpack:"stats_dropped"`
 	StatsDelayed int64 `msgpack:"stats_delayed"`
+}
+
+// LogPush — topic: logs（单条实时推送）
+type LogPush struct {
+	Ts    int64  `msgpack:"ts"`
+	Level string `msgpack:"level"`
+	Msg   string `msgpack:"msg"`
+	Attrs string `msgpack:"attrs,omitempty"`
 }
 
 // ===================== RPC 响应 =====================

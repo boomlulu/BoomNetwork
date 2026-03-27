@@ -61,8 +61,9 @@ namespace BoomNetwork.GM.Editor
         public const string Perf     = "perf";
         public const string Rates    = "rates";
         public const string Netsim   = "netsim";
+        public const string Logs     = "logs";
 
-        public static readonly string[] All = { Health, Stats, Messages, Rooms, Perf, Rates, Netsim };
+        public static readonly string[] All = { Health, Stats, Messages, Rooms, Perf, Rates, Netsim, Logs };
     }
 
     // ===================== Push 数据结构 =====================
@@ -242,6 +243,25 @@ namespace BoomNetwork.GM.Editor
                 }
             }
             return push;
+        }
+    }
+
+    // ===================== Log Entry =====================
+
+    public struct GmLogEntry
+    {
+        public long Ts;
+        public string Level, Msg, Attrs;
+
+        public static GmLogEntry From(Dictionary<string, object> m)
+        {
+            return new GmLogEntry
+            {
+                Ts    = MsgPackLite.GetLong(m, "ts"),
+                Level = MsgPackLite.GetString(m, "level"),
+                Msg   = MsgPackLite.GetString(m, "msg"),
+                Attrs = MsgPackLite.GetString(m, "attrs"),
+            };
         }
     }
 

@@ -70,7 +70,15 @@ namespace BoomNetwork.GM.Editor
 
         // ===== Tab =====
         private int _tab;
-        private static readonly string[] TabNames = { "Monitor", "Messages", "Rooms", "Control", "Deploy" };
+        private static readonly string[] TabNames = { "Monitor", "Messages", "Rooms", "Control", "Deploy", "Logs" };
+
+        // ===== Logs Tab =====
+        private readonly List<GmLogEntry> _logEntries = new List<GmLogEntry>();
+        private const int LOG_BUFFER_MAX = 500;
+        private Vector2 _logScroll;
+        private bool _logAutoScroll = true;
+        private int _logLevelFilter; // 0=All, 1=INFO+, 2=WARN+, 3=ERROR
+        private static readonly string[] LogLevelFilterNames = { "All", "INFO+", "WARN+", "ERROR" };
 
         // ===== Deploy =====
         private DeployTool _deployTool;
@@ -222,7 +230,7 @@ namespace BoomNetwork.GM.Editor
                         _stats = default;
                         _messages = Array.Empty<AdminClient.MsgEntry>();
                         _rooms = Array.Empty<AdminClient.RoomDetail>();
-                        _wsMsgBuffer.Clear();
+                        _wsMsgBuffer.Clear(); _logEntries.Clear();
                         _perfHasData = false; _perf = default; _prevPerf = default;
                         _hotPlayers.Clear();
                         _logLevel = ""; _logLevelPending = "";
@@ -370,6 +378,16 @@ namespace BoomNetwork.GM.Editor
                         var rp = GmRatesPush.From(payload);
                         _hotPlayers = rp.Top ?? new List<GmPlayerRate>();
                         break;
+
+                    case GmTopics.Logs:
+                        var le = GmLogEntry.From(payload);
+                        if (PassesLogLevelFilter(le.Level))
+                        {
+                            _logEntries.Add(le);
+                            if (_logEntries.Count > LOG_BUFFER_MAX)
+                                _logEntries.RemoveAt(0);
+                        }
+                        break;
                 }
             }
             else if (env.Type == "rsp")
@@ -408,6 +426,7 @@ namespace BoomNetwork.GM.Editor
                 case 2: DrawRooms(); break;
                 case 3: DrawControl(); break;
                 case 4: DrawDeploy(); break;
+                case 5: DrawLogs(); break;
             }
         }
 
@@ -1778,6 +1797,80 @@ namespace BoomNetwork.GM.Editor
             EditorPrefs.SetInt(PP + "ppr",           _ppr);
             EditorPrefs.SetString(PP + "adminUrl",   _adminUrl);
             EditorPrefs.SetString(PP + "adminToken", _adminToken);
+        }
+
+        // ===================== Logs Tab =====================
+
+        void DrawLogs()
+        {
+            // Toolbar
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                GUILayout.Label("Level:", GUILayout.Width(40));
+                int newFilter = EditorGUILayout.Popup(_logLevelFilter, LogLevelFilterNames, GUILayout.Width(80));
+                if (newFilter != _logLevelFilter)
+                {
+                    _logLevelFilter = newFilter;
+                    // 重新过滤: 清空并等 WS backfill
+                    _logEntries.Clear();
+                }
+                GUILayout.FlexibleSpace();
+                _logAutoScroll = GUILayout.Toggle(_logAutoScroll, "Auto-scroll");
+                if (GUILayout.Button("Clear", GUILayout.Width(60)))
+                    _logEntries.Clear();
+            }
+
+            // Log list
+            _logScroll = EditorGUILayout.BeginScrollView(_logScroll);
+            var defaultColor = GUI.color;
+            foreach (var e in _logEntries)
+            {
+                GUI.color = LogLevelColor(e.Level);
+                var dt = System.DateTimeOffset.FromUnixTimeMilliseconds(e.Ts).ToLocalTime().ToString("HH:mm:ss");
+                string text = string.IsNullOrEmpty(e.Attrs)
+                    ? $"[{dt}] [{e.Level,-5}] {e.Msg}"
+                    : $"[{dt}] [{e.Level,-5}] {e.Msg}  {e.Attrs}";
+                EditorGUILayout.LabelField(text, EditorStyles.wordWrappedMiniLabel);
+            }
+            GUI.color = defaultColor;
+            EditorGUILayout.EndScrollView();
+
+            if (_logAutoScroll && Event.current.type == EventType.Repaint)
+                _logScroll.y = float.MaxValue;
+        }
+
+        bool PassesLogLevelFilter(string level)
+        {
+            if (_logLevelFilter == 0) return true;
+            int entryLvl = LogLevelRank(level);
+            int filterLvl = _logLevelFilter; // 1=INFO, 2=WARN, 3=ERROR
+            return entryLvl >= filterLvl;
+        }
+
+        static int LogLevelRank(string level)
+        {
+            if (level == null) return 0;
+            switch (level.ToUpperInvariant())
+            {
+                case "DEBUG": return 0;
+                case "INFO":  return 1;
+                case "WARN":  return 2;
+                case "ERROR": return 3;
+                default:      return 0;
+            }
+        }
+
+        static Color LogLevelColor(string level)
+        {
+            if (level == null) return Color.white;
+            switch (level.ToUpperInvariant())
+            {
+                case "DEBUG": return new Color(0.7f, 0.7f, 0.7f);
+                case "INFO":  return new Color(0.85f, 0.85f, 0.85f);
+                case "WARN":  return new Color(1f, 0.78f, 0.31f);
+                case "ERROR": return new Color(1f, 0.31f, 0.31f);
+                default:      return Color.white;
+            }
         }
     }
 }
