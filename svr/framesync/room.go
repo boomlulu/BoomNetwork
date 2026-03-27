@@ -105,6 +105,7 @@ type Room struct {
 	// 房间生命周期
 	createdAt time.Time // 创建时间
 	hadPlayer bool      // 是否有过玩家加入
+	Pinned    bool      // GM 创建的房间，不被自动清理（只能手动 Stop/Kill）
 	startedAt time.Time // 指标：Start 时间
 }
 
@@ -296,8 +297,8 @@ func (r *Room) SetInitialSnapshot(data []byte) {
 // UpdateSnapshot 更新房间快照（只接受比当前更新的帧号）
 func (r *Room) UpdateSnapshot(frameNumber uint32, data []byte) bool {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if frameNumber <= r.snapshotFrame {
+		r.mu.Unlock()
 		return false
 	}
 	r.snapshotFrame = frameNumber
@@ -305,9 +306,15 @@ func (r *Room) UpdateSnapshot(frameNumber uint32, data []byte) bool {
 	copy(r.snapshotData, data)
 	r.snapshotStaleFrames = 0
 
-	if r.snapshotPaused {
+	wasPaused := r.snapshotPaused
+	if wasPaused {
 		r.snapshotPaused = false
 		slog.Info("snapshot received, resuming frame sync", "roomId", r.ID)
+	}
+	r.mu.Unlock()
+
+	if wasPaused {
+		r.broadcast(codec.NewExtMessage(ExtCmdFrameSyncResumed, nil))
 	}
 
 	slog.Info("snapshot updated", "roomId", r.ID, "frame", frameNumber, "bytes", len(data))
@@ -489,6 +496,7 @@ func (r *Room) stepFrame() {
 			r.snapshotPaused = true
 			slog.Warn("no snapshot received, pausing frame sync", "roomId", r.ID, "staleFrames", r.snapshotStaleFrames, "limit", staleLimit)
 			r.mu.Unlock()
+			r.broadcast(codec.NewExtMessage(ExtCmdFrameSyncPaused, []byte{byte(PauseReasonSnapshotStale)}))
 			return
 		}
 		if r.snapshotPaused {

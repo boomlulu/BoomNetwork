@@ -70,6 +70,17 @@ const (
 	ExtCmdPushData        uint16 = 53 // S→C 增量广播 KV 变更
 	ExtCmdRequestDataSync uint16 = 54 // C→S 请求全量 KV 同步
 	ExtCmdPushDataSync    uint16 = 55 // S→C 全量 KV 快照
+
+	// 帧同步暂停/恢复
+	ExtCmdFrameSyncPaused  uint16 = 56 // S→C [Reason:1]
+	ExtCmdFrameSyncResumed uint16 = 57 // S→C (empty body)
+)
+
+// FrameSyncPauseReason 帧同步暂停原因
+type FrameSyncPauseReason byte
+
+const (
+	PauseReasonSnapshotStale FrameSyncPauseReason = 1 // 快照过期
 )
 
 

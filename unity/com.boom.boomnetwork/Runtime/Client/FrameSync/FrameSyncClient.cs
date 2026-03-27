@@ -72,6 +72,11 @@ namespace BoomNetwork.Client.FrameSync
         /// <summary>服务器警告：消息速率接近上限，请降速发包</summary>
         public event Action? OnRateLimitWarning;
 
+        /// <summary>服务器帧同步暂停（如快照过期）</summary>
+        public event Action<FrameSyncPauseReason>? OnFrameSyncPaused;
+        /// <summary>服务器帧同步恢复</summary>
+        public event Action? OnFrameSyncResumed;
+
         // --- 快照回调 ---
         public Func<byte[]?>? OnTakeSnapshot;
         public Action<byte[]>? OnLoadSnapshot;
@@ -560,6 +565,20 @@ namespace BoomNetwork.Client.FrameSync
                         break;
                     case FrameSyncExtCmd.PushDataSync:
                         HandlePushDataSync(msg);
+                        break;
+
+                    case FrameSyncExtCmd.FrameSyncPaused:
+                    {
+                        var reason = msg.DataLength >= 1
+                            ? (FrameSyncPauseReason)msg.DataSpan[0]
+                            : FrameSyncPauseReason.SnapshotStale;
+                        Log($"FrameSync paused by server, reason={reason}");
+                        OnFrameSyncPaused?.Invoke(reason);
+                        break;
+                    }
+                    case FrameSyncExtCmd.FrameSyncResumed:
+                        Log("FrameSync resumed by server");
+                        OnFrameSyncResumed?.Invoke();
                         break;
                 }
             }

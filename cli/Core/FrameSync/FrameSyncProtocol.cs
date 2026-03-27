@@ -71,6 +71,16 @@ namespace BoomNetwork.Core.FrameSync
         public const ushort PushData        = 53; // S→C 增量广播 KV 变更
         public const ushort RequestDataSync = 54; // C→S 请求全量 KV 同步
         public const ushort PushDataSync    = 55; // S→C 全量 KV 快照
+
+        // 帧同步暂停/恢复
+        public const ushort FrameSyncPaused  = 56; // S→C [Reason:1]
+        public const ushort FrameSyncResumed = 57; // S→C (empty)
+    }
+
+    /// <summary>帧同步暂停原因</summary>
+    public enum FrameSyncPauseReason : byte
+    {
+        SnapshotStale = 1,  // 快照过期
     }
 
     /// <summary>
