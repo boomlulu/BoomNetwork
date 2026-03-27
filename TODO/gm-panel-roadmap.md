@@ -6,24 +6,21 @@
 
 ## 现状覆盖率
 
-### ✅ 已覆盖（4 Tab）
+### ✅ 已覆盖（5 Tab，Phase 1 完成后）
 
 | Tab | 覆盖的服务器能力 |
 |-----|-----------------|
-| **Dashboard** | `/health` 状态 · `/stats` 流量统计 · `/netsim` 网络模拟 · 配置展示 · Start/Stop（本地 + SSH） |
+| **Monitor** | `/health` 状态 · `/stats` 流量统计 · `/perf` 运行时性能(Foldout) · `/rates` 消息速率 Top N(Foldout) |
 | **Messages** | `/messages` 消息日志 · WS 实时推送 · Cmd/Dir/Player/Room/MatchKey 多维过滤 |
-| **Rooms** | `/rooms` 房间列表 · Create/Stop/Kill Room · Kick Player · 在线状态 |
+| **Rooms** | `/rooms` 房间列表 · Create/Stop/Kill Room · Kick Player · fps/MatchKey/Paused 标签 |
+| **Control** | `/netsim` 网络模拟 · `/log-level` 日志级别热调 · `/config/reload` 配置热重载 · 配置展示 · Start/Stop |
 | **Deploy** | 编译 · 上传 · 停止 · 启动 · 健康验证 · 多 Profile（Local/SSH）· systemd 生成 |
 
 ### ❌ 服务器已有但 GM 面板未暴露
 
 | 服务器能力 | 端点 | 现状 |
 |-----------|------|------|
-| **Go 运行时性能** | `/perf` + WS `perf` | 服务器已推送，客户端已订阅，但 **UI 没画** |
-| **玩家消息速率 Top 20** | `/rates` + WS `rates` | 同上，已订阅未展示 |
 | **单玩家详情** | `GET /players/{pid}` | 无 UI 入口 |
-| **日志级别热调** | `GET/POST /log-level` | 无 UI 入口 |
-| **配置热重载** | `POST /config/reload` | 无 UI 入口 |
 | **Prometheus 指标** | `:9090/metrics` | 完全未对接 |
 
 ### ❌ 服务器有数据但无管理/可视化
@@ -42,38 +39,40 @@
 
 ## 规划：5 个阶段
 
-### Phase 1 — 补全已有数据的 UI（工作量：小）
+### Phase 1 — 补全已有数据的 UI + Tab 重组 ✅（2026-03-27 完成）
 
-> 服务器已经推送了数据，只需要在 ServerWindow 里画 UI。
+> Tab 按观察者视角重组：Monitor | Messages | Rooms | Control | Deploy
 
-#### 1.1 Dashboard 增强
+#### 1.1 Monitor Tab（原 Dashboard 观察部分）
 
-- [ ] **Performance 面板**（折叠区域）
-  - Goroutines 数 · Heap MB · Sys MB · GC 次数 · GC 暂停 µs
-  - 数据来源：WS `perf` topic（已订阅）
-  - 简单数字 + 趋势箭头（对比上次值）
+- [x] **Performance 面板**（Foldout 折叠区域）
+  - Goroutines 数 · Heap MB · Sys MB · GC 次数 · GC 暂停 ms
+  - 数据来源：WS `perf` topic + HTTP `/perf` fallback
+  - 数字 + 趋势箭头 ▲/▼（对比上次值）
 
-- [ ] **Hot Players 面板**（折叠区域）
-  - Top 10 消息速率玩家列表：PID · msg/5s · 快捷 Kick 按钮
-  - 数据来源：WS `rates` topic（已订阅）
-  - 超阈值（如 >50 msg/s）红色高亮
+- [x] **Hot Players 面板**（Foldout 折叠区域）
+  - Top N 消息速率玩家列表：PID · msg/5s · 快捷 Kick 按钮
+  - 数据来源：WS `rates` topic + HTTP `/rates` fallback
+  - 阈值高亮：>20 红色、>10 黄色
 
-#### 1.2 Dashboard 新操作按钮
+#### 1.2 Control Tab（原 Dashboard 操作部分拆出）
 
-- [ ] **Log Level 下拉框**：DEBUG / INFO / WARN / ERROR
-  - `GET /log-level` 初始化，`POST /log-level` 修改
-  - WS RPC 优先，HTTP fallback
+- [x] **Log Level 下拉框**：DEBUG / INFO / WARN / ERROR
+  - `GET /log-level` 初始化，`POST /log-level` 修改（HTTP-only）
 
-- [ ] **Reload Config 按钮**
-  - `POST /config/reload`
-  - 成功/失败 toast 提示
+- [x] **Reload Config 按钮**
+  - `POST /config/reload`，成功/失败 toast 提示
+
+- [x] NetSim 滑块（从 Dashboard 迁移）
+- [x] Config 字段 + Start/Stop + Manual Command（从 Dashboard 迁移）
 
 #### 1.3 Rooms Tab 增强
 
-- [ ] 每个房间卡片增加：
-  - **帧号 / 帧率** 实时显示（已有数据，改为更醒目）
-  - **快照状态**：`snapshotPaused` 黄色警告标签
-  - **MatchKey** 标签（灰色 badge）
+- [x] 房间卡片增加 `{fps}` 帧率
+- [x] **快照状态**：`snapshotPaused` 黄色 `SNAPSHOT PAUSED` 警告
+- [x] **MatchKey** 蓝色 badge
+- [x] `Total: N` 玩家总数（含离线）
+- [x] `GmRoomDetail.MatchKey` 字段补全（WS + HTTP 双通道）
 
 ---
 
@@ -198,7 +197,7 @@
 
 | Phase | 价值 | 工作量 | 建议优先级 |
 |-------|------|--------|-----------|
-| **Phase 1** — 补全 UI | ⭐⭐⭐⭐ 低垂果实 | 🔧 小（纯 UI） | **P0 — 立即做** |
+| **Phase 1** — 补全 UI + Tab 重组 | ⭐⭐⭐⭐ 低垂果实 | 🔧 小（纯 UI） | **✅ 已完成 2026-03-27** |
 | **Phase 2** — Players Tab | ⭐⭐⭐⭐ 调试必备 | 🔧🔧 中 | **P1 — 下一个** |
 | **Phase 3** — 房间深度 | ⭐⭐⭐ 深度调试 | 🔧🔧 中 | **P1** |
 | **Phase 4** — 可视化 | ⭐⭐⭐ 体验提升 | 🔧🔧🔧 中大 | **P2** |

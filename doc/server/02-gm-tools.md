@@ -44,6 +44,10 @@ go run ./cmd/framesync/ -admin=:9091 -admin-token=your-secret
 | **控制** | 踢出玩家 | `POST /kick/{pid}` | 需鉴权 |
 | | 强制停止房间 | `POST /rooms/stop/{id}` | 需鉴权 |
 | **控制** | 网络状态模拟（延迟/抖动/丢包） | `GET/POST /netsim` | 需鉴权 |
+| | 日志级别热调 | `GET/POST /log-level` | 需鉴权 |
+| | 配置热重载 | `POST /config/reload` | 需鉴权 |
+| | 创建房间 | `POST /rooms/create` | 需鉴权 |
+| | 强制销毁房间 | `POST /rooms/kill/{id}` | 需鉴权 |
 | **诊断** | 单玩家详情 + 最近消息 | `GET /players/{pid}` | 需鉴权 |
 | | 服务器性能（内存/GC/goroutine） | `GET /perf` | 需鉴权 |
 | | 玩家消息速率 Top 20 | `GET /rates` | 需鉴权 |
@@ -183,7 +187,50 @@ curl -X POST http://127.0.0.1:9091/netsim -d '{"enabled":false}'
 }
 ```
 
-Unity ServerWindow Dashboard 中也有滑块控制面板，实时调整。
+Unity ServerWindow Control Tab 中也有滑块控制面板，实时调整。
+
+#### GET/POST /log-level
+
+运行时热调日志级别。
+
+```bash
+# 查看当前级别
+curl http://127.0.0.1:9091/log-level
+# => {"level":"INFO"}
+
+# 修改为 DEBUG
+curl -X POST http://127.0.0.1:9091/log-level -d '{"level":"debug"}'
+# => {"ok":true,"level":"debug"}
+```
+
+可选值：`DEBUG` / `INFO` / `WARN` / `ERROR`。等效于发送 `SIGHUP` 后重新读取配置。
+
+#### POST /config/reload
+
+运行时热重载配置文件（等效 `SIGHUP`）。热更新 `logLevel` 和 `maxMessageSize`。
+
+```bash
+curl -X POST http://127.0.0.1:9091/config/reload
+# => {"ok":true,"level":"INFO"}
+```
+
+#### POST /rooms/create?max_players=N&match_key=K
+
+手动创建房间。
+
+```bash
+curl -X POST "http://127.0.0.1:9091/rooms/create?max_players=4&match_key=pvp"
+# => {"ok":true,"room_id":5}
+```
+
+#### POST /rooms/kill/{id}
+
+强制销毁房间：立即断开所有玩家连接，不广播 StopFrameSync。
+
+```bash
+curl -X POST http://127.0.0.1:9091/rooms/kill/1
+# => {"ok":true,"killed":1}
+```
 
 ---
 
@@ -248,13 +295,15 @@ Unity ServerWindow Dashboard 中也有滑块控制面板，实时调整。
 
 ## 4. Unity ServerWindow
 
-安装 GM 包后菜单 **BoomNetwork → Server Window** 打开，三个 Tab：
+安装 GM 包后菜单 **BoomNetwork → Server Window** 打开，五个 Tab（按观察者视角组织）：
 
-| Tab | 内容 |
-|-----|------|
-| **Dashboard** | 服务器状态 + Game/GM 流量分离 + 配置 + 启停按钮 + 手动命令 |
-| **Messages** | 最近 100 条消息表格。支持 Cmd 筛选、隐藏心跳（默认开）、暂停/恢复、导出剪贴板 |
-| **Rooms** | 房间列表 + 玩家在线/离线状态。每个玩家旁 Kick 按钮，每个房间旁 Stop 按钮 |
+| Tab | 定位 | 内容 |
+|-----|------|------|
+| **Monitor** | 纯观察 | Game/GM 流量分离 · Runtime Performance（Goroutines/Heap/GC，趋势箭头）· Hot Players Top N（消息速率高亮 + Kick） |
+| **Messages** | 线级观察 | 最近 200 条消息表格。Cmd/Dir/Player/Room/MatchKey 多维过滤、隐藏心跳、暂停/恢复、导出剪贴板 |
+| **Rooms** | 实体管理 | 房间列表 + fps/MatchKey/Paused 标签 + 在线/离线状态。Create/Stop/Kill Room，Kick Player |
+| **Control** | 纯操作 | NetSim 滑块 · Log Level 下拉 · Reload Config · 服务器配置 · Start/Stop（本地 + SSH）· 手动命令 |
+| **Deploy** | 部署流水线 | 多 Profile（Local/SSH）· Build → Upload → Stop → Start → Verify · systemd .service 生成 |
 
 ### 配置项（EditorPrefs 跨会话持久化）
 
@@ -281,18 +330,20 @@ Unity ServerWindow Dashboard 中也有滑块控制面板，实时调整。
 ## 6. 架构
 
 ```
-Unity Editor                Go Server :9091
-─────────────               ─────────────────
-ServerWindow                admin.go
-  Tab 0 Dashboard  ←─ GET ─→  /health /stats
-  Tab 1 Messages   ←─ GET ─→  /messages
-  Tab 2 Rooms      ←─ GET ─→  /rooms
-       Kick 按钮   ── POST ──→ /kick/{pid}
-       Stop 按钮   ── POST ──→ /rooms/stop/{id}
+Unity Editor                      Go Server :9091
+─────────────                     ─────────────────
+ServerWindow                      admin.go + admin_ws.go
+  Tab 0 Monitor  ←── WS push ──→  health / stats / perf / rates
+  Tab 1 Messages ←── WS push ──→  messages (实时)
+  Tab 2 Rooms    ←── WS push ──→  rooms (2s)
+       Kick/Stop/Kill ── WS RPC ──→ kick / stop_room / kill_room / create_room
+  Tab 3 Control  ── HTTP POST ──→  /log-level / /config/reload / /netsim
+       Start/Stop ── SSH/Local ──→ systemctl / go run
+  Tab 4 Deploy   ── go build + SCP + SSH ──→ 编译上传启动
 
-AdminClient.cs              stats.go
-  统一 HTTP 客户端            环形缓冲区(60s) + 消息日志(100条)
-  Bearer Token auth           + Per-player 速率统计
+AdminWsClient.cs (主通道)    AdminClient.cs (HTTP fallback)
+  MessagePack 二进制帧           JSON REST, Bearer Token auth
+  订阅 7 个 topic                 2s 轮询（WS 断开时启用）
 ```
 
 数据流：

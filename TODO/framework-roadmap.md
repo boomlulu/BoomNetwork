@@ -36,8 +36,10 @@
 | 房间列表 + 玩家在线状态 | GET /rooms |
 | 踢人 / 停房间 | POST /kick/{pid}、/rooms/stop/{id} |
 | 玩家详情 / 性能 / 限流 | GET /players/{pid}、/perf、/rates |
+| 日志级别热调 / 配置热重载 | GET/POST /log-level、POST /config/reload |
 | Admin 鉴权 | Bearer Token middleware |
-| Unity ServerWindow 三页面板 | Dashboard / Messages / Rooms |
+| WebSocket GM 长连接 | 7 topic 实时推送 + RPC（MessagePack） |
+| Unity ServerWindow 五页面板 | Monitor / Messages / Rooms / Control / Deploy |
 
 ### 文档
 
