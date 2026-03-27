@@ -59,6 +59,8 @@ namespace BoomNetwork.GM.Editor
         private readonly float[] _chartGameRx = new float[CHART_SAMPLES];
         private readonly float[] _chartPlayers = new float[CHART_SAMPLES];
         private readonly float[] _chartHeap = new float[CHART_SAMPLES];
+        private readonly float[] _chartGoroutines = new float[CHART_SAMPLES];
+        private readonly float[] _chartGcPause = new float[CHART_SAMPLES];
         private int _chartHead;
         private bool _chartFoldout = true;
 
@@ -225,6 +227,7 @@ namespace BoomNetwork.GM.Editor
                         _expandedRooms.Clear(); _roomInspectCache.Clear();
                         Array.Clear(_chartGameTx, 0, CHART_SAMPLES); Array.Clear(_chartGameRx, 0, CHART_SAMPLES);
                         Array.Clear(_chartPlayers, 0, CHART_SAMPLES); Array.Clear(_chartHeap, 0, CHART_SAMPLES);
+                        Array.Clear(_chartGoroutines, 0, CHART_SAMPLES); Array.Clear(_chartGcPause, 0, CHART_SAMPLES);
                         _chartHead = 0;
                     }
                     skipReconnect:
@@ -357,6 +360,8 @@ namespace BoomNetwork.GM.Editor
                         _perf = GmPerfPush.From(payload);
                         _perfHasData = true;
                         _chartHeap[_chartHead] = (float)_perf.HeapMB;
+                        _chartGoroutines[_chartHead] = _perf.Goroutines;
+                        _chartGcPause[_chartHead] = _perf.GCPauseUs / 1000f;
                         break;
 
                     case GmTopics.Rates:
@@ -464,11 +469,11 @@ namespace BoomNetwork.GM.Editor
                 TrafficRow("5 sec", _stats.GmTx5Sec / 5, _stats.GmRx5Sec / 5, true);
             }
 
-            // ===== Charts =====
+            // ===== Traffic Charts =====
             if (_lastAlive && _stats.HasData)
             {
                 EditorGUILayout.Space(6);
-                _chartFoldout = EditorGUILayout.Foldout(_chartFoldout, "Charts", true);
+                _chartFoldout = EditorGUILayout.Foldout(_chartFoldout, "Traffic Charts", true);
                 if (_chartFoldout)
                 {
                     var txRect = GUILayoutUtility.GetRect(GUIContent.none, GUIStyle.none,
@@ -487,32 +492,50 @@ namespace BoomNetwork.GM.Editor
                         GUILayout.Height(50), GUILayout.ExpandWidth(true));
                     DrawSparkline(pRect, _chartPlayers, _chartHead, CHART_SAMPLES,
                         Color.yellow, new Color(0.5f, 0.5f, 0f, 0.2f), "Players");
-
-                    if (_perfHasData)
-                    {
-                        EditorGUILayout.Space(2);
-                        var hRect = GUILayoutUtility.GetRect(GUIContent.none, GUIStyle.none,
-                            GUILayout.Height(50), GUILayout.ExpandWidth(true));
-                        DrawSparkline(hRect, _chartHeap, _chartHead, CHART_SAMPLES,
-                            new Color(1f, 0.6f, 0.4f), new Color(0.5f, 0.3f, 0.2f, 0.3f), "Heap MB");
-                    }
                 }
             }
 
-            // ===== Runtime Performance =====
+            // ===== Runtime Performance (summary + sparkline detail) =====
             if (_lastAlive && _perfHasData)
             {
                 EditorGUILayout.Space(6);
-                _perfFoldout = EditorGUILayout.Foldout(_perfFoldout, "Runtime Performance", true);
+
+                // Summary line — always visible
+                EditorGUILayout.BeginHorizontal();
+                var gcMs = _perf.GCPauseUs / 1000f;
+                var summaryLabel = $"Runtime   Goroutines:{_perf.Goroutines}  Heap:{_perf.HeapMB:F1}MB  Sys:{_perf.SysMB:F1}MB  GC:{gcMs:F1}ms";
+
+                // Color the summary based on worst metric
+                var prevC = GUI.contentColor;
+                GUI.contentColor = _perf.Goroutines > 200 || _perf.HeapMB > 100 || gcMs > 5
+                    ? Color.red
+                    : _perf.Goroutines > 100 || _perf.HeapMB > 50 || gcMs > 2
+                        ? Color.yellow
+                        : Color.white;
+                EditorGUILayout.LabelField(summaryLabel, EditorStyles.boldLabel);
+                GUI.contentColor = prevC;
+                EditorGUILayout.EndHorizontal();
+
+                // Foldout for sparkline detail
+                _perfFoldout = EditorGUILayout.Foldout(_perfFoldout, "Detail", true);
                 if (_perfFoldout)
                 {
-                    EditorGUI.indentLevel++;
-                    PerfRow("Goroutines", _perf.Goroutines, _prevPerf.Goroutines);
-                    PerfRowDouble("Heap", $"{_perf.HeapMB:F1} MB", _perf.HeapMB, _prevPerf.HeapMB);
-                    PerfRowDouble("Sys", $"{_perf.SysMB:F1} MB", _perf.SysMB, _prevPerf.SysMB);
-                    PerfRow("GC Count", (int)_perf.GCCount, (int)_prevPerf.GCCount);
-                    PerfRow("GC Pause", (int)(_perf.GCPauseUs / 1000), (int)(_prevPerf.GCPauseUs / 1000), " ms");
-                    EditorGUI.indentLevel--;
+                    var grRect = GUILayoutUtility.GetRect(GUIContent.none, GUIStyle.none,
+                        GUILayout.Height(44), GUILayout.ExpandWidth(true));
+                    DrawSparkline(grRect, _chartGoroutines, _chartHead, CHART_SAMPLES,
+                        Color.cyan, new Color(0f, 0.5f, 0.5f, 0.2f), "Goroutines");
+
+                    EditorGUILayout.Space(2);
+                    var hRect = GUILayoutUtility.GetRect(GUIContent.none, GUIStyle.none,
+                        GUILayout.Height(44), GUILayout.ExpandWidth(true));
+                    DrawSparkline(hRect, _chartHeap, _chartHead, CHART_SAMPLES,
+                        new Color(1f, 0.6f, 0.4f), new Color(0.5f, 0.3f, 0.2f, 0.3f), "Heap MB");
+
+                    EditorGUILayout.Space(2);
+                    var gcRect = GUILayoutUtility.GetRect(GUIContent.none, GUIStyle.none,
+                        GUILayout.Height(44), GUILayout.ExpandWidth(true));
+                    DrawSparkline(gcRect, _chartGcPause, _chartHead, CHART_SAMPLES,
+                        new Color(1f, 0.4f, 0.4f), new Color(0.5f, 0.2f, 0.2f, 0.2f), "GC Pause ms");
                 }
             }
 
