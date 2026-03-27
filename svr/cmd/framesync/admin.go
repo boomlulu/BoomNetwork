@@ -398,6 +398,7 @@ func handleAdminCreateRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	room.MatchKey = matchKey
+	room.Pinned = true
 
 	slog.Info("admin created room", "room_id", room.ID, "max_players", maxPlayers, "match_key", matchKey)
 

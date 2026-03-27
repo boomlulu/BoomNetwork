@@ -130,6 +130,9 @@ func (rm *RoomManager) CleanupEmptyRooms(idleTimeout time.Duration) int {
 	rm.mu.Lock()
 	var toRemove []int32
 	for id, r := range rm.rooms {
+		if r.Pinned {
+			continue // GM 创建的房间不自动清理
+		}
 		if r.TotalPlayerCount() == 0 && !r.IsRunning() {
 			if r.HadPlayer() || now.Sub(r.CreatedAt()) >= idleTimeout {
 				toRemove = append(toRemove, id)

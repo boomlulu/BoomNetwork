@@ -337,6 +337,8 @@ func (c *GMConn) readPump(token string) {
 			return
 		}
 
+		slog.Info("[GM-WS] recv", "type", env.Type, "topic", env.Topic, "id", env.ID, "payloadLen", len(env.Payload))
+
 		switch env.Type {
 		case "sub":
 			if bit, ok := topicToBit[env.Topic]; ok {
@@ -517,6 +519,7 @@ func (c *GMConn) rpcCreateRoom(env *GMEnvelope) {
 		return
 	}
 	room.MatchKey = p.MatchKey
+	room.Pinned = true // GM 创建的房间不被自动清理
 
 	slog.Info("gm-ws created room", "room_id", room.ID, "max_players", p.MaxPlayers, "match_key", p.MatchKey)
 	c.sendRsp(env.ID, "create_room", CreateRoomResult{Ok: true, RoomID: room.ID})
