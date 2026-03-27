@@ -243,6 +243,199 @@ func TestDecodeSetData(t *testing.T) {
 	}
 }
 
+// === 帧事件编解码 ===
+
+func TestFrameDataWithEvents_EncodeDecode(t *testing.T) {
+	frame := &FrameData{
+		FrameNumber: 42,
+		Inputs: []PlayerInput{
+			{PlayerId: 1, Data: []byte{0xAA, 0xBB}},
+			{PlayerId: 2, Data: []byte{0xCC}},
+		},
+		Events: []FrameEvent{
+			{EventType: FrameEventPlayerJoined, PlayerId: 3},
+			{EventType: FrameEventHostChanged, PlayerId: 1},
+		},
+	}
+
+	size := FrameDataSize(frame)
+	// 6(header) + (6+2) + (6+1) + 1(eventCount) + 2*5(events) = 6+8+7+1+10 = 32
+	expectedSize := 6 + (6 + 2) + (6 + 1) + 1 + 2*5
+	if size != expectedSize {
+		t.Fatalf("FrameDataSize: got %d, want %d", size, expectedSize)
+	}
+
+	buf := make([]byte, size)
+	written := EncodeFrameData(frame, buf)
+	if written != size {
+		t.Fatalf("EncodeFrameData: wrote %d, expected %d", written, size)
+	}
+
+	decoded := DecodeFrameData(buf)
+	if decoded.FrameNumber != 42 {
+		t.Errorf("FrameNumber: got %d, want 42", decoded.FrameNumber)
+	}
+	if len(decoded.Inputs) != 2 {
+		t.Fatalf("Inputs: got %d, want 2", len(decoded.Inputs))
+	}
+	if decoded.Inputs[0].PlayerId != 1 || !bytes.Equal(decoded.Inputs[0].Data, []byte{0xAA, 0xBB}) {
+		t.Errorf("Input[0] mismatch")
+	}
+	if decoded.Inputs[1].PlayerId != 2 || !bytes.Equal(decoded.Inputs[1].Data, []byte{0xCC}) {
+		t.Errorf("Input[1] mismatch")
+	}
+
+	if len(decoded.Events) != 2 {
+		t.Fatalf("Events: got %d, want 2", len(decoded.Events))
+	}
+	if decoded.Events[0].EventType != FrameEventPlayerJoined || decoded.Events[0].PlayerId != 3 {
+		t.Errorf("Event[0]: type=%d pid=%d", decoded.Events[0].EventType, decoded.Events[0].PlayerId)
+	}
+	if decoded.Events[1].EventType != FrameEventHostChanged || decoded.Events[1].PlayerId != 1 {
+		t.Errorf("Event[1]: type=%d pid=%d", decoded.Events[1].EventType, decoded.Events[1].PlayerId)
+	}
+}
+
+func TestFrameDataNoEvents_BackwardCompat(t *testing.T) {
+	// Manually encode without events section (simulating old server format)
+	oldSize := 6 + 6 + 4 // header + input header + input data
+	buf := make([]byte, oldSize)
+	binary.LittleEndian.PutUint32(buf[0:], 99)
+	binary.LittleEndian.PutUint16(buf[4:], 1)
+	binary.LittleEndian.PutUint32(buf[6:], 5)
+	binary.LittleEndian.PutUint16(buf[10:], 4)
+	copy(buf[12:], []byte{1, 2, 3, 4})
+
+	decoded := DecodeFrameData(buf)
+	if decoded.FrameNumber != 99 {
+		t.Errorf("FrameNumber: got %d", decoded.FrameNumber)
+	}
+	if len(decoded.Inputs) != 1 {
+		t.Fatalf("Inputs: got %d", len(decoded.Inputs))
+	}
+	if len(decoded.Events) != 0 {
+		t.Errorf("Events should be empty for old format, got %d", len(decoded.Events))
+	}
+}
+
+func TestFrameDataEmptyEvents(t *testing.T) {
+	frame := &FrameData{FrameNumber: 1, Inputs: nil, Events: nil}
+	size := FrameDataSize(frame)
+	buf := make([]byte, size)
+	EncodeFrameData(frame, buf)
+
+	decoded := DecodeFrameData(buf)
+	if decoded.FrameNumber != 1 {
+		t.Errorf("FrameNumber: got %d", decoded.FrameNumber)
+	}
+	if len(decoded.Events) != 0 {
+		t.Errorf("Events: got %d, want 0", len(decoded.Events))
+	}
+}
+
+// === 帧事件压力测试 ===
+
+func TestFrameData_StressEncodeDecode(t *testing.T) {
+	// Simulate 1000 frames with varying inputs and events
+	for frameNum := uint32(0); frameNum < 1000; frameNum++ {
+		inputCount := int(frameNum % 5) // 0-4 inputs
+		eventCount := int(frameNum % 3) // 0-2 events
+
+		inputs := make([]PlayerInput, inputCount)
+		for i := 0; i < inputCount; i++ {
+			inputs[i] = PlayerInput{PlayerId: int32(i + 1), Data: []byte{byte(frameNum), byte(i)}}
+		}
+		events := make([]FrameEvent, eventCount)
+		for i := 0; i < eventCount; i++ {
+			events[i] = FrameEvent{EventType: byte(i + 1), PlayerId: int32(frameNum + uint32(i))}
+		}
+
+		frame := &FrameData{FrameNumber: frameNum, Inputs: inputs, Events: events}
+		size := FrameDataSize(frame)
+		buf := make([]byte, size)
+		written := EncodeFrameData(frame, buf)
+		if written != size {
+			t.Fatalf("frame %d: wrote %d != size %d", frameNum, written, size)
+		}
+
+		decoded := DecodeFrameData(buf[:written])
+		if decoded.FrameNumber != frameNum {
+			t.Fatalf("frame %d: decoded %d", frameNum, decoded.FrameNumber)
+		}
+		if len(decoded.Inputs) != inputCount {
+			t.Fatalf("frame %d: inputs %d != %d", frameNum, len(decoded.Inputs), inputCount)
+		}
+		if len(decoded.Events) != eventCount {
+			t.Fatalf("frame %d: events %d != %d", frameNum, len(decoded.Events), eventCount)
+		}
+		for i := 0; i < eventCount; i++ {
+			if decoded.Events[i].EventType != events[i].EventType || decoded.Events[i].PlayerId != events[i].PlayerId {
+				t.Fatalf("frame %d event %d mismatch", frameNum, i)
+			}
+		}
+	}
+}
+
+// === 房主选举测试 ===
+
+func TestRoom_HostElection(t *testing.T) {
+	room := NewRoomWithConfig(DefaultRoomConfig())
+	room.AddPlayer(1, nil)
+	if room.HostPlayerId() != 1 {
+		t.Errorf("first player should be host, got %d", room.HostPlayerId())
+	}
+
+	room.AddPlayer(2, nil)
+	if room.HostPlayerId() != 1 {
+		t.Errorf("host should not change on second join, got %d", room.HostPlayerId())
+	}
+
+	// Simulate running state for host election
+	room.mu.Lock()
+	room.running = true
+	room.mu.Unlock()
+
+	room.DisconnectPlayer(1)
+	host := room.HostPlayerId()
+	if host != 2 {
+		t.Errorf("after host disconnect, new host should be 2, got %d", host)
+	}
+
+	room.DisconnectPlayer(2)
+	host = room.HostPlayerId()
+	if host != 0 {
+		t.Errorf("all offline, host should be 0, got %d", host)
+	}
+
+	// First to reconnect becomes host
+	room.AddPlayer(2, nil)
+	host = room.HostPlayerId()
+	if host != 2 {
+		t.Errorf("first reconnect should become host, got %d", host)
+	}
+}
+
+func TestRoom_PendingEvents(t *testing.T) {
+	room := NewRoomWithConfig(DefaultRoomConfig())
+	room.EnqueueEvent(FrameEventPlayerJoined, 1)
+	room.EnqueueEvent(FrameEventHostChanged, 1)
+
+	room.mu.Lock()
+	events := room.pendingEvents
+	room.pendingEvents = nil
+	room.mu.Unlock()
+
+	if len(events) != 2 {
+		t.Fatalf("pending events: got %d, want 2", len(events))
+	}
+	if events[0].EventType != FrameEventPlayerJoined || events[0].PlayerId != 1 {
+		t.Errorf("event[0] mismatch")
+	}
+	if events[1].EventType != FrameEventHostChanged || events[1].PlayerId != 1 {
+		t.Errorf("event[1] mismatch")
+	}
+}
+
 func TestRoomSetDataAndSnapshot(t *testing.T) {
 	room := NewRoomWithConfig(DefaultRoomConfig())
 
