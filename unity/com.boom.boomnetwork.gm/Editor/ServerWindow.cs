@@ -263,12 +263,14 @@ namespace BoomNetwork.GM.Editor
         {
             if (env.Type == "push")
             {
+                // 部分 topic（rooms 等）的 payload 是 array 不是 map，DecodePayload 会返回 null
+                // 先尝试 DecodePayload，null 时也继续处理（由各 case 自行解码）
                 var payload = env.DecodePayload();
-                if (payload == null) return;
 
                 switch (env.Topic)
                 {
                     case GmTopics.Health:
+                        if (payload == null) break;
                         var hp = GmHealthPush.From(payload);
                         _health = new AdminClient.HealthResult
                         {
@@ -281,6 +283,7 @@ namespace BoomNetwork.GM.Editor
                         break;
 
                     case GmTopics.Stats:
+                        if (payload == null) break;
                         var sp = GmStatsPush.From(payload);
                         _stats = new AdminClient.StatsResult
                         {
@@ -296,6 +299,7 @@ namespace BoomNetwork.GM.Editor
                         break;
 
                     case GmTopics.Messages:
+                        if (payload == null) break;
                         if (!_msgPaused)
                         {
                             var me = GmMsgEntry.From(payload);
@@ -344,6 +348,7 @@ namespace BoomNetwork.GM.Editor
                         break;
 
                     case GmTopics.Netsim:
+                        if (payload == null) break;
                         var ns = payload;
                         _netSim = new AdminClient.NetSimResult
                         {
@@ -366,6 +371,7 @@ namespace BoomNetwork.GM.Editor
                         break;
 
                     case GmTopics.Perf:
+                        if (payload == null) break;
                         _prevPerf = _perf;
                         _perf = GmPerfPush.From(payload);
                         _perfHasData = true;
@@ -375,11 +381,13 @@ namespace BoomNetwork.GM.Editor
                         break;
 
                     case GmTopics.Rates:
+                        if (payload == null) break;
                         var rp = GmRatesPush.From(payload);
                         _hotPlayers = rp.Top ?? new List<GmPlayerRate>();
                         break;
 
                     case GmTopics.Logs:
+                        if (payload == null) break;
                         var le = GmLogEntry.From(payload);
                         if (PassesLogLevelFilter(le.Level))
                         {
