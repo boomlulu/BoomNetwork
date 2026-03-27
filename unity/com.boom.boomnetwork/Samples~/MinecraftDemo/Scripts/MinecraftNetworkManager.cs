@@ -10,6 +10,7 @@
 
 using System;
 using System.Collections.Generic;
+using Unity.Mathematics;
 using UnityEngine;
 using BoomNetwork.Core.FrameSync;
 using BoomNetwork.Unity;
@@ -22,6 +23,9 @@ namespace BoomNetwork.Samples.MinecraftDemo
         [Header("World")]
         [SerializeField] VoxelWorld voxelWorld;
         [SerializeField] int worldSeed = 42;
+
+        public VoxelWorld VoxelWorld { set => voxelWorld = value; }
+        public int WorldSeed { set => worldSeed = value; }
 
         [Header("Player Prefab (optional)")]
         [SerializeField] GameObject remotePlayerPrefab;
@@ -36,6 +40,12 @@ namespace BoomNetwork.Samples.MinecraftDemo
         uint _lastFrame;
         bool _authorityRegistered;
         bool _worldGenerated;
+        float _entitySendTimer;
+        Vector3 _lastSentPos;
+        float _lastSentRotY;
+        const float PositionThreshold = 0.01f;
+        const float RotationThreshold = 0.5f;
+        const float EntitySendIntervalMs = 50f; // 20fps throttle for entity state
 
         static readonly Color[] PlayerColors =
         {
@@ -85,21 +95,50 @@ namespace BoomNetwork.Samples.MinecraftDemo
                 voxelWorld.ProcessMeshQueue();
             }
 
-            // Collect block action from controller and send as frame sync input
-            SendInput();
+            // --- Block action: only send when player actually does something ---
+            SendBlockActionIfNeeded();
+
+            // --- Entity position: only send when moved/rotated (throttled to 20fps) ---
+            SendEntityStateIfMoved();
         }
 
-        void SendInput()
+        void SendBlockActionIfNeeded()
         {
             if (_localController == null) return;
 
             var action = _localController.PendingAction;
+            if (action.ActionType == 0) return; // no action, send nothing
+
             _localController.PendingAction = default; // consume
+
+            // Red Line #4: 本地立即执行，零延迟。OnFrame 回来时幂等重复执行无副作用。
+            ApplyBlockAction(action.ActionType, action.Position, action.BlockType);
 
             MinecraftInput.Encode(_inputBuf, 0,
                 action.ActionType, action.Position, action.BlockType);
 
             _network.SendInput(_inputBuf);
+        }
+
+        void SendEntityStateIfMoved()
+        {
+            if (_localController == null) return;
+
+            _entitySendTimer += Time.deltaTime * 1000f;
+            if (_entitySendTimer < EntitySendIntervalMs) return;
+            _entitySendTimer -= EntitySendIntervalMs;
+
+            var pos = _localController.transform.position;
+            float rotY = _localController.transform.eulerAngles.y;
+
+            bool posChanged = Vector3.SqrMagnitude(pos - _lastSentPos) > PositionThreshold * PositionThreshold;
+            bool rotChanged = Mathf.Abs(Mathf.DeltaAngle(rotY, _lastSentRotY)) > RotationThreshold;
+
+            if (!posChanged && !rotChanged) return; // idle, send nothing
+
+            _lastSentPos = pos;
+            _lastSentRotY = rotY;
+            _network.Client.SendAuthorityEntityStates();
         }
 
         // --- Frame Sync Start: generate world ---
@@ -108,8 +147,11 @@ namespace BoomNetwork.Samples.MinecraftDemo
         {
             if (!_worldGenerated && voxelWorld != null)
             {
+                MinecraftSnapshot.ClearTracking();
                 voxelWorld.GenerateFullWorld();
                 _worldGenerated = true;
+
+                System.GC.Collect();
             }
         }
 
@@ -128,19 +170,26 @@ namespace BoomNetwork.Samples.MinecraftDemo
                 MinecraftInput.Decode(input.Data, 0,
                     out byte actionType, out var pos, out BlockType blockType);
 
-                if (actionType == 0) continue; // no action
+                if (actionType == 0) continue;
 
-                if (actionType == 1)
-                {
-                    // Break block
-                    voxelWorld.SetBlock(pos, BlockType.Air);
-                }
-                else if (actionType == 2)
-                {
-                    // Place block
-                    voxelWorld.SetBlock(pos, blockType);
-                }
+                // SetBlock is idempotent: local player's action was already applied instantly,
+                // remote players' actions are applied here for the first time.
+                ApplyBlockAction(actionType, pos, blockType);
             }
+        }
+
+        void ApplyBlockAction(byte actionType, int3 pos, BlockType blockType)
+        {
+            BlockType current = voxelWorld.GetBlock(pos);
+            BlockType target = actionType == 1 ? BlockType.Air : blockType;
+
+            if (current == target) return; // idempotent: already applied
+
+            voxelWorld.SetBlock(pos, target);
+
+            // Track for snapshot: compare against generated original (pure math, no allocation)
+            BlockType original = WorldGenerator.GetBlockAt(pos, voxelWorld.Seed);
+            MinecraftSnapshot.TrackBlockChange(pos, target, original);
         }
 
         // --- Entity State: route to remote player syncs ---
@@ -169,7 +218,13 @@ namespace BoomNetwork.Samples.MinecraftDemo
         void OnPlayerJoined(int playerId)
         {
             if (playerId != _network.PlayerId)
+            {
                 SpawnRemotePlayer(playerId);
+
+                // New player just joined — send our current position so they don't see us at spawn.
+                // This is the "Silent When Idle" exception: someone needs our state.
+                _network.Client.SendAuthorityEntityStates();
+            }
         }
 
         void OnPlayerLeft(int playerId)
@@ -183,10 +238,23 @@ namespace BoomNetwork.Samples.MinecraftDemo
 
         void SpawnLocalPlayer()
         {
+            // Root = physics position (transform.position.y = feet)
             var go = new GameObject("LocalPlayer");
             go.transform.position = GetSpawnPosition();
 
+            // Visual capsule as child, offset up so it sits on top of feet
+            // Capsule with scale (0.5, 0.9, 0.5) has visual height ~1.8, center offset = 0.9
+            var visual = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+            visual.name = "Body";
+            visual.transform.SetParent(go.transform, false);
+            visual.transform.localPosition = new Vector3(0, 0.9f, 0);
+            visual.transform.localScale = new Vector3(0.5f, 0.9f, 0.5f);
+            visual.GetComponent<Renderer>().material.color = PlayerColors[(_network.PlayerId - 1) % PlayerColors.Length];
+            var capsuleCol = visual.GetComponent<CapsuleCollider>();
+            if (capsuleCol != null) Destroy(capsuleCol);
+
             _localController = go.AddComponent<MinecraftPlayerController>();
+            _localController.World = voxelWorld;
 
             _localSync = go.AddComponent<MinecraftPlayerSync>();
             _localSync.Init(_network.PlayerId, true);
@@ -205,13 +273,14 @@ namespace BoomNetwork.Samples.MinecraftDemo
             }
             else
             {
-                // Default: capsule with color
-                go = GameObject.CreatePrimitive(PrimitiveType.Capsule);
-                go.transform.localScale = new Vector3(0.5f, 0.9f, 0.5f);
-                var renderer = go.GetComponent<Renderer>();
-                renderer.material.color = PlayerColors[(playerId - 1) % PlayerColors.Length];
-                // Remove default capsule collider to avoid physics interference
-                var col = go.GetComponent<Collider>();
+                go = new GameObject();
+                var visual = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+                visual.name = "Body";
+                visual.transform.SetParent(go.transform, false);
+                visual.transform.localPosition = new Vector3(0, 0.9f, 0);
+                visual.transform.localScale = new Vector3(0.5f, 0.9f, 0.5f);
+                visual.GetComponent<Renderer>().material.color = PlayerColors[(playerId - 1) % PlayerColors.Length];
+                var col = visual.GetComponent<Collider>();
                 if (col != null) Destroy(col);
             }
 
@@ -226,10 +295,9 @@ namespace BoomNetwork.Samples.MinecraftDemo
 
         Vector3 GetSpawnPosition()
         {
-            // Spawn above world center
             float x = VoxelConstants.WorldBlocksX * 0.5f;
             float z = VoxelConstants.WorldBlocksZ * 0.5f;
-            float y = VoxelConstants.WorldBlocksY + 2f; // above max height, will fall
+            float y = VoxelConstants.WorldBlocksY + 2f;
             return new Vector3(x, y, z);
         }
 
@@ -248,46 +316,62 @@ namespace BoomNetwork.Samples.MinecraftDemo
             _worldGenerated = true;
         }
 
-        // --- UI ---
+        // --- UI (cached styles — zero GC per frame) ---
+
+        GUIStyle _titleStyle, _labelStyle, _btnStyle, _btnStyleBold, _helpHeaderStyle, _helpStyle;
+        string[] _blockBarLabels;
+        bool _stylesCached;
+
+        void CacheStyles()
+        {
+            if (_stylesCached) return;
+            _stylesCached = true;
+            _titleStyle = new GUIStyle(GUI.skin.label) { fontSize = 16, fontStyle = FontStyle.Bold };
+            _labelStyle = new GUIStyle(GUI.skin.label) { fontSize = 13 };
+            _btnStyle = new GUIStyle(GUI.skin.button) { fontSize = 10 };
+            _btnStyleBold = new GUIStyle(GUI.skin.button) { fontSize = 10, fontStyle = FontStyle.Bold };
+            _helpHeaderStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 14, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter,
+            };
+            _helpStyle = new GUIStyle(GUI.skin.label) { fontSize = 12, richText = true };
+
+            _blockBarLabels = new string[BlockTypeExt.Count];
+            for (int i = 1; i < BlockTypeExt.Count; i++)
+                _blockBarLabels[i] = $"{i}\n{(BlockType)i}";
+        }
 
         void OnGUI()
         {
-            var title = new GUIStyle(GUI.skin.label) { fontSize = 16, fontStyle = FontStyle.Bold };
-            var label = new GUIStyle(GUI.skin.label) { fontSize = 13 };
+            CacheStyles();
 
             GUILayout.BeginArea(new Rect(10, 10, 350, 200));
-            GUILayout.Label("Minecraft Demo", title);
-            GUILayout.Label($"State: {_network.Client.CurrentState}", label);
-            GUILayout.Label($"Player: {_network.PlayerId}  Frame: {_lastFrame}", label);
-            GUILayout.Label($"RTT: {_network.Client.RttMs:F0}ms  Players: {1 + _remotePlayers.Count}", label);
+            GUILayout.Label("Minecraft Demo", _titleStyle);
+            GUILayout.Label($"State: {_network.Client.CurrentState}", _labelStyle);
+            GUILayout.Label($"Player: {_network.PlayerId}  Frame: {_lastFrame}", _labelStyle);
+            GUILayout.Label($"RTT: {_network.Client.RttMs:F0}ms  Players: {1 + _remotePlayers.Count}", _labelStyle);
 
             if (_localController != null)
             {
                 var block = _localController.SelectedBlockType;
-                GUILayout.Label($"Selected: [{(int)block}] {block}", label);
-
-                if (_localController.HasTarget)
-                    GUILayout.Label($"Target: {_localController.TargetBlockPos}", label);
+                GUILayout.Label($"Selected: [{(int)block}] {block}", _labelStyle);
             }
 
             GUILayout.EndArea();
 
-            // Crosshair
             DrawCrosshair();
-
-            // Block selection bar
             DrawBlockBar();
+            DrawHelpPanel();
         }
 
         void DrawCrosshair()
         {
             float cx = Screen.width * 0.5f;
             float cy = Screen.height * 0.5f;
-            float size = 12f;
+            const float size = 12f;
             GUI.color = Color.white;
             GUI.DrawTexture(new Rect(cx - 1, cy - size, 2, size * 2), Texture2D.whiteTexture);
             GUI.DrawTexture(new Rect(cx - size, cy - 1, size * 2, 2), Texture2D.whiteTexture);
-            GUI.color = Color.white;
         }
 
         void DrawBlockBar()
@@ -300,16 +384,9 @@ namespace BoomNetwork.Samples.MinecraftDemo
 
             for (int i = 1; i < BlockTypeExt.Count; i++)
             {
-                var block = (BlockType)i;
-                bool selected = _localController.SelectedBlockType == block;
-
-                var style = new GUIStyle(GUI.skin.button)
-                {
-                    fontSize = 10,
-                    fontStyle = selected ? FontStyle.Bold : FontStyle.Normal,
-                };
-
+                bool selected = _localController.SelectedBlockType == (BlockType)i;
                 var rect = new Rect(startX + (i - 1) * 40f, y, 38f, 38f);
+
                 if (selected)
                 {
                     GUI.color = Color.yellow;
@@ -318,9 +395,55 @@ namespace BoomNetwork.Samples.MinecraftDemo
                     GUI.color = Color.white;
                 }
 
-                if (GUI.Button(rect, $"{i}\n{block}", style))
-                    _localController.SelectedBlockType = block;
+                if (GUI.Button(rect, _blockBarLabels[i], selected ? _btnStyleBold : _btnStyle))
+                    _localController.SelectedBlockType = (BlockType)i;
             }
+        }
+
+        bool _showHelp = true;
+
+        void DrawHelpPanel()
+        {
+            float panelW = 260f;
+            float panelH = _showHelp ? 280f : 30f;
+            float panelX = Screen.width - panelW - 10f;
+            float panelY = 10f;
+
+            GUI.color = new Color(0, 0, 0, 0.6f);
+            GUI.DrawTexture(new Rect(panelX, panelY, panelW, panelH), Texture2D.whiteTexture);
+            GUI.color = Color.white;
+
+            if (GUI.Button(new Rect(panelX, panelY, panelW, 26f),
+                _showHelp ? "[ Hide Help / \u9690\u85cf\u5e2e\u52a9 ]" : "[ ? Help / \u5e2e\u52a9 ]", _helpHeaderStyle))
+            {
+                _showHelp = !_showHelp;
+            }
+
+            if (!_showHelp) return;
+            var area = new Rect(panelX + 10f, panelY + 30f, panelW - 20f, panelH - 40f);
+
+            GUILayout.BeginArea(area);
+
+            GUILayout.Label("<b>Controls / 操作说明</b>", _helpStyle);
+            GUILayout.Space(4);
+            GUILayout.Label("WASD        Move / 移动", _helpStyle);
+            GUILayout.Label("Space         Jump / 跳跃", _helpStyle);
+            GUILayout.Label("Mouse       Look / 视角", _helpStyle);
+            GUILayout.Label("Left Click    Break block / 破坏方块", _helpStyle);
+            GUILayout.Label("Right Click  Place block / 放置方块", _helpStyle);
+            GUILayout.Label("1-7             Select block / 选择方块", _helpStyle);
+            GUILayout.Label("Scroll          Switch block / 切换方块", _helpStyle);
+            GUILayout.Label("Esc             Release mouse / 释放鼠标", _helpStyle);
+
+            GUILayout.Space(8);
+            GUILayout.Label("<b>Multiplayer / 多人联机</b>", _helpStyle);
+            GUILayout.Space(4);
+            GUILayout.Label("All players share the same world.", _helpStyle);
+            GUILayout.Label("所有玩家共享同一个方块世界。", _helpStyle);
+            GUILayout.Label("Block changes sync in real-time.", _helpStyle);
+            GUILayout.Label("方块操作实时同步给其他人。", _helpStyle);
+
+            GUILayout.EndArea();
         }
     }
 }

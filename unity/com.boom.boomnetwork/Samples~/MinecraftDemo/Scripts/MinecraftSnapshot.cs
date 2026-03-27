@@ -1,65 +1,74 @@
-// BoomNetwork MinecraftDemo — World Snapshot Serialization
+// BoomNetwork MinecraftDemo — World Snapshot (Zero GC)
+//
+// Instead of comparing entire world against regenerated reference each snapshot,
+// we track modified blocks as they happen. TakeSnapshot just serializes the dirty set.
+// No per-snapshot allocation — buffer is pre-allocated and reused.
 
 using System;
 using System.Collections.Generic;
-using System.IO;
 using Unity.Mathematics;
 
 namespace BoomNetwork.Samples.MinecraftDemo
 {
-    /// <summary>
-    /// Serializes/deserializes world block changes for snapshot-based reconnection.
-    /// Uses delta-only encoding: only stores blocks that differ from initial generation.
-    /// Format: [seed:4B][deltaCount:4B][deltas...] where each delta = [worldX:2B][worldY:2B][worldZ:2B][blockType:1B]
-    /// </summary>
     public static class MinecraftSnapshot
     {
-        const int DeltaEntrySize = 7; // 2+2+2+1
+        // Dirty block tracking: world position → current block type
+        // Only blocks that differ from initial generation are stored here.
+        static readonly Dictionary<int3, BlockType> s_dirtyBlocks = new(256);
+
+        // Pre-allocated serialization buffer (grows as needed, never shrinks)
+        static byte[] s_buffer = new byte[1024];
+
+        const int HeaderSize = 8; // seed(4) + count(4)
+        const int EntrySize = 7;  // x(2) + y(2) + z(2) + type(1)
+
+        /// <summary>Record a block modification for snapshot tracking.</summary>
+        public static void TrackBlockChange(int3 worldPos, BlockType newType, BlockType originalType)
+        {
+            if (newType == originalType)
+                s_dirtyBlocks.Remove(worldPos); // reverted to original, no longer dirty
+            else
+                s_dirtyBlocks[worldPos] = newType;
+        }
+
+        /// <summary>Clear all tracked changes (called on world reset/load).</summary>
+        public static void ClearTracking()
+        {
+            s_dirtyBlocks.Clear();
+        }
 
         /// <summary>
-        /// Take a snapshot of world changes (blocks that differ from initial generation).
+        /// Serialize dirty blocks into a byte array. Zero managed allocation
+        /// (reuses static buffer, only returns a new array for the final result
+        /// because the framework requires a byte[] return).
         /// </summary>
         public static byte[] TakeSnapshot(VoxelWorld world)
         {
-            var deltas = new List<(int3 pos, BlockType block)>();
+            int count = s_dirtyBlocks.Count;
+            int requiredSize = HeaderSize + count * EntrySize;
 
-            // Compare each loaded chunk against freshly generated data
-            foreach (var kvp in world.Chunks)
+            // Grow buffer if needed (rare, amortized)
+            if (s_buffer.Length < requiredSize)
+                s_buffer = new byte[requiredSize * 2];
+
+            // Header
+            WriteInt32(s_buffer, 0, world.Seed);
+            WriteInt32(s_buffer, 4, count);
+
+            // Entries
+            int offset = HeaderSize;
+            foreach (var kvp in s_dirtyBlocks)
             {
-                int3 cp = kvp.Key;
-                ChunkData chunk = kvp.Value;
-                int3 origin = chunk.WorldOrigin;
-
-                // Generate a reference chunk to compare against
-                var refChunk = new ChunkData(cp);
-                WorldGenerator.GenerateChunk(refChunk, world.Seed);
-
-                for (int i = 0; i < VoxelConstants.ChunkVolume; i++)
-                {
-                    if (chunk.Blocks[i] != refChunk.Blocks[i])
-                    {
-                        int3 local = VoxelConstants.To3D(i);
-                        int3 worldPos = origin + local;
-                        deltas.Add((worldPos, chunk.Blocks[i]));
-                    }
-                }
+                WriteInt16(s_buffer, offset, (short)kvp.Key.x); offset += 2;
+                WriteInt16(s_buffer, offset, (short)kvp.Key.y); offset += 2;
+                WriteInt16(s_buffer, offset, (short)kvp.Key.z); offset += 2;
+                s_buffer[offset] = (byte)kvp.Value; offset += 1;
             }
 
-            // Serialize
-            using var ms = new MemoryStream();
-            using var bw = new BinaryWriter(ms);
-
-            bw.Write(world.Seed);
-            bw.Write(deltas.Count);
-            foreach (var (pos, block) in deltas)
-            {
-                bw.Write((short)pos.x);
-                bw.Write((short)pos.y);
-                bw.Write((short)pos.z);
-                bw.Write((byte)block);
-            }
-
-            return ms.ToArray();
+            // Framework requires a correctly-sized byte[] (it stores the whole thing)
+            var result = new byte[requiredSize];
+            Buffer.BlockCopy(s_buffer, 0, result, 0, requiredSize);
+            return result;
         }
 
         /// <summary>
@@ -67,37 +76,55 @@ namespace BoomNetwork.Samples.MinecraftDemo
         /// </summary>
         public static void LoadSnapshot(VoxelWorld world, byte[] data)
         {
-            if (data == null || data.Length < 8) return;
+            if (data == null || data.Length < HeaderSize) return;
 
-            using var ms = new MemoryStream(data);
-            using var br = new BinaryReader(ms);
+            int seed = ReadInt32(data, 0);
+            int deltaCount = ReadInt32(data, 4);
 
-            int seed = br.ReadInt32();
-            int deltaCount = br.ReadInt32();
-
-            // Regenerate world with saved seed
             world.Seed = seed;
             world.ClearWorld();
+            ClearTracking();
             world.GenerateFullWorld();
 
-            // Apply deltas
-            for (int i = 0; i < deltaCount; i++)
+            int offset = HeaderSize;
+            for (int i = 0; i < deltaCount && offset + EntrySize <= data.Length; i++)
             {
-                int3 pos = new int3(
-                    br.ReadInt16(),
-                    br.ReadInt16(),
-                    br.ReadInt16());
-                BlockType block = (BlockType)br.ReadByte();
+                var pos = new int3(
+                    ReadInt16(data, offset),
+                    ReadInt16(data, offset + 2),
+                    ReadInt16(data, offset + 4));
+                var block = (BlockType)data[offset + 6];
+                offset += EntrySize;
+
                 world.SetBlock(pos, block);
+                s_dirtyBlocks[pos] = block;
             }
         }
 
-        /// <summary>
-        /// Estimate snapshot size in bytes.
-        /// </summary>
-        public static int EstimateSize(int deltaCount)
+        // --- Byte helpers (no BinaryWriter allocation) ---
+
+        static void WriteInt32(byte[] buf, int off, int val)
         {
-            return 8 + deltaCount * DeltaEntrySize;
+            buf[off]     = (byte)(val & 0xFF);
+            buf[off + 1] = (byte)((val >> 8) & 0xFF);
+            buf[off + 2] = (byte)((val >> 16) & 0xFF);
+            buf[off + 3] = (byte)((val >> 24) & 0xFF);
+        }
+
+        static void WriteInt16(byte[] buf, int off, short val)
+        {
+            buf[off]     = (byte)(val & 0xFF);
+            buf[off + 1] = (byte)((val >> 8) & 0xFF);
+        }
+
+        static int ReadInt32(byte[] buf, int off)
+        {
+            return buf[off] | (buf[off + 1] << 8) | (buf[off + 2] << 16) | (buf[off + 3] << 24);
+        }
+
+        static short ReadInt16(byte[] buf, int off)
+        {
+            return (short)(buf[off] | (buf[off + 1] << 8));
         }
     }
 }

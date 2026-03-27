@@ -77,5 +77,31 @@ namespace BoomNetwork.Samples.MinecraftDemo
 
             chunk.IsDirty = true;
         }
+
+        /// <summary>
+        /// Query a single block at world position. Pure math, zero allocation.
+        /// Used for snapshot dirty tracking without regenerating entire chunks.
+        /// </summary>
+        public static BlockType GetBlockAt(int3 worldPos, int seed)
+        {
+            int wx = worldPos.x;
+            int wy = worldPos.y;
+            int wz = worldPos.z;
+
+            float n = SimplexNoise.FBM2D(
+                wx * Frequency + seed * 0.1f,
+                wz * Frequency + seed * 0.1f,
+                Octaves, 1f, Persistence);
+
+            int surfaceY = (int)(n * MaxHeight) + SeaLevel;
+
+            if (wy > surfaceY)
+                return wy <= SeaLevel ? BlockType.Water : BlockType.Air;
+            if (wy == surfaceY)
+                return wy <= SandBeachHeight ? BlockType.Sand : BlockType.Grass;
+            if (wy > surfaceY - DirtDepth)
+                return wy <= SandBeachHeight ? BlockType.Sand : BlockType.Dirt;
+            return BlockType.Stone;
+        }
     }
 }

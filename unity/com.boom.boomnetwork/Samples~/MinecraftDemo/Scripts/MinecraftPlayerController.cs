@@ -1,38 +1,43 @@
 // BoomNetwork MinecraftDemo — First-Person Player Controller
+//
+// Uses voxel AABB collision instead of CharacterController + MeshCollider.
+// Directly queries block data — zero gap, zero penetration, zero physics jitter.
 
 using Unity.Mathematics;
 using UnityEngine;
 
 namespace BoomNetwork.Samples.MinecraftDemo
 {
-    /// <summary>
-    /// FPS camera controller with block interaction (raycast + place/break).
-    /// Handles local player input; networked actions go through MinecraftNetworkManager.
-    /// </summary>
     public class MinecraftPlayerController : MonoBehaviour
     {
         [Header("Movement")]
-        [SerializeField] float moveSpeed = 6f;
-        [SerializeField] float jumpForce = 7f;
-        [SerializeField] float gravity = -18f;
+        [SerializeField] float moveSpeed = 5.5f;
+        [SerializeField] float jumpForce = 7.5f;
+        [SerializeField] float gravity = -16f;
         [SerializeField] float mouseSensitivity = 2f;
+
+        [Header("Player Size (blocks)")]
+        [SerializeField] float playerWidth = 0.6f;   // X/Z diameter
+        [SerializeField] float playerHeight = 1.7f;   // total height
+        [SerializeField] float eyeHeight = 1.55f;
 
         [Header("Block Interaction")]
         [SerializeField] float reachDistance = 6f;
         [SerializeField] LayerMask blockLayer = ~0;
 
-        CharacterController _cc;
         Transform _cameraTransform;
-        float _verticalVelocity;
         float _cameraPitch;
+
+        // Physics state (voxel-based, no CharacterController)
+        Vector3 _velocity;
+        bool _grounded;
 
         // Block interaction state
         public bool HasTarget { get; private set; }
         public int3 TargetBlockPos { get; private set; }
         public int3 PlaceBlockPos { get; private set; }
-        public Vector3 TargetHitPoint { get; private set; }
 
-        // Pending block action (consumed by network manager each frame)
+
         public BlockAction PendingAction { get; set; }
 
         public struct BlockAction
@@ -42,25 +47,28 @@ namespace BoomNetwork.Samples.MinecraftDemo
             public BlockType BlockType;
         }
 
-        // Selected block type for placement
         public BlockType SelectedBlockType { get; set; } = BlockType.Stone;
+        public VoxelWorld World { get; set; }
+
+        float HalfWidth => playerWidth * 0.5f;
 
         void Start()
         {
-            _cc = GetComponent<CharacterController>();
-            if (_cc == null)
-                _cc = gameObject.AddComponent<CharacterController>();
-            _cc.height = 1.8f;
-            _cc.radius = 0.3f;
-            _cc.center = new Vector3(0, 0.9f, 0);
+            // Remove CharacterController if present (legacy)
+            var cc = GetComponent<CharacterController>();
+            if (cc != null) Destroy(cc);
 
-            // Create camera as child
+            // Remove any collider (we don't use Unity physics for player)
+            var col = GetComponent<Collider>();
+            if (col != null) Destroy(col);
+
+            // Camera
             _cameraTransform = GetComponentInChildren<Camera>()?.transform;
             if (_cameraTransform == null)
             {
                 var camGo = new GameObject("PlayerCamera");
                 camGo.transform.SetParent(transform, false);
-                camGo.transform.localPosition = new Vector3(0, 1.6f, 0);
+                camGo.transform.localPosition = new Vector3(0, eyeHeight, 0);
                 var cam = camGo.AddComponent<Camera>();
                 cam.nearClipPlane = 0.1f;
                 cam.farClipPlane = 200f;
@@ -75,11 +83,13 @@ namespace BoomNetwork.Samples.MinecraftDemo
         void Update()
         {
             HandleMouseLook();
-            HandleMovement();
+            HandleVoxelMovement();
             HandleBlockRaycast();
             HandleBlockInput();
             HandleBlockSelection();
         }
+
+        // ========================= Mouse Look =========================
 
         void HandleMouseLook()
         {
@@ -95,29 +105,164 @@ namespace BoomNetwork.Samples.MinecraftDemo
             transform.Rotate(Vector3.up * mouseX);
         }
 
-        void HandleMovement()
+        // ========================= Voxel Movement =========================
+
+        void HandleVoxelMovement()
         {
+            if (World == null) return;
+
+            float dt = Time.deltaTime;
+
+            // Input
             float h = Input.GetAxisRaw("Horizontal");
             float v = Input.GetAxisRaw("Vertical");
+            Vector3 wishDir = transform.right * h + transform.forward * v;
+            wishDir.y = 0;
+            if (wishDir.sqrMagnitude > 1f) wishDir.Normalize();
 
-            Vector3 move = transform.right * h + transform.forward * v;
-            if (move.sqrMagnitude > 1f) move.Normalize();
-            move *= moveSpeed;
+            // Horizontal velocity (instant, no acceleration for crispy feel)
+            _velocity.x = wishDir.x * moveSpeed;
+            _velocity.z = wishDir.z * moveSpeed;
 
-            if (_cc.isGrounded)
+            // Ground check FIRST, before jump input
+            _grounded = CheckGrounded(transform.position);
+
+            // Gravity + jump
+            if (_grounded)
             {
-                _verticalVelocity = -1f; // small downward force to stay grounded
+                if (_velocity.y < 0) _velocity.y = 0; // landed, stop falling
                 if (Input.GetButtonDown("Jump"))
-                    _verticalVelocity = jumpForce;
+                    _velocity.y = jumpForce;
             }
             else
             {
-                _verticalVelocity += gravity * Time.deltaTime;
+                _velocity.y += gravity * dt;
+                _velocity.y = Mathf.Max(_velocity.y, -40f); // terminal velocity
             }
 
-            move.y = _verticalVelocity;
-            _cc.Move(move * Time.deltaTime);
+            // Move with voxel collision (resolve each axis independently)
+            Vector3 pos = transform.position;
+            Vector3 delta = _velocity * dt;
+
+            // Resolve Y first (gravity/jump), then X, then Z
+            pos = MoveAxis(pos, 1, delta.y);
+            pos = MoveAxis(pos, 0, delta.x);
+            pos = MoveAxis(pos, 2, delta.z);
+
+            transform.position = pos;
         }
+
+        /// <summary>
+        /// Move along one axis, stop at first solid block collision.
+        /// Player AABB: center at (pos.x, pos.y + height/2, pos.z), size (width, height, width).
+        /// pos.y = bottom of player (feet).
+        /// </summary>
+        Vector3 MoveAxis(Vector3 pos, int axis, float delta)
+        {
+            if (Mathf.Abs(delta) < 0.0001f) return pos;
+
+            Vector3 newPos = pos;
+            switch (axis)
+            {
+                case 0: newPos.x += delta; break;
+                case 1: newPos.y += delta; break;
+                case 2: newPos.z += delta; break;
+            }
+
+            if (!CollidesWithWorld(newPos))
+                return newPos;
+
+            // Collision: snap to block edge
+            if (axis == 1) // Y axis
+            {
+                if (delta < 0) // falling — snap feet to top of block below
+                {
+                    newPos.y = Mathf.Ceil(pos.y + delta) ;
+                    _velocity.y = 0;
+                }
+                else // jumping up — snap head to bottom of block above
+                {
+                    newPos.y = Mathf.Floor(pos.y + playerHeight + delta) - playerHeight;
+                    _velocity.y = 0;
+                }
+            }
+            else // X or Z axis — snap to block edge
+            {
+                float hw = HalfWidth;
+                float center = axis == 0 ? pos.x : pos.z;
+                if (delta > 0)
+                    SetAxisF(ref newPos, axis, Mathf.Ceil(center + hw + delta) - 1f - hw + 0.001f);
+                else
+                    SetAxisF(ref newPos, axis, Mathf.Floor(center - hw + delta) + hw + 0.001f);
+
+                if (axis == 0) _velocity.x = 0;
+                else _velocity.z = 0;
+            }
+
+            // Double check the snapped position doesn't still collide
+            if (CollidesWithWorld(newPos))
+                return pos; // give up, stay where we are
+
+            return newPos;
+        }
+
+        /// <summary>
+        /// Check if player AABB at given position overlaps any solid block.
+        /// Scans all block cells that the AABB touches.
+        /// </summary>
+        bool CollidesWithWorld(Vector3 pos)
+        {
+            float hw = HalfWidth;
+
+            // AABB in world space: [minX, minY, minZ] to [maxX, maxY, maxZ]
+            int minBX = Mathf.FloorToInt(pos.x - hw + 0.001f);
+            int maxBX = Mathf.FloorToInt(pos.x + hw - 0.001f);
+            int minBY = Mathf.FloorToInt(pos.y + 0.001f);
+            int maxBY = Mathf.FloorToInt(pos.y + playerHeight - 0.001f);
+            int minBZ = Mathf.FloorToInt(pos.z - hw + 0.001f);
+            int maxBZ = Mathf.FloorToInt(pos.z + hw - 0.001f);
+
+            for (int bx = minBX; bx <= maxBX; bx++)
+            for (int by = minBY; by <= maxBY; by++)
+            for (int bz = minBZ; bz <= maxBZ; bz++)
+            {
+                if (World.GetBlock(new int3(bx, by, bz)).IsSolid())
+                    return true;
+            }
+            return false;
+        }
+
+        bool CheckGrounded(Vector3 pos)
+        {
+            float hw = HalfWidth;
+            float checkY = pos.y - 0.05f; // slightly below feet
+
+            int minBX = Mathf.FloorToInt(pos.x - hw + 0.001f);
+            int maxBX = Mathf.FloorToInt(pos.x + hw - 0.001f);
+            int minBZ = Mathf.FloorToInt(pos.z - hw + 0.001f);
+            int maxBZ = Mathf.FloorToInt(pos.z + hw - 0.001f);
+            int by = Mathf.FloorToInt(checkY);
+
+            for (int bx = minBX; bx <= maxBX; bx++)
+            for (int bz = minBZ; bz <= maxBZ; bz++)
+            {
+                if (World.GetBlock(new int3(bx, by, bz)).IsSolid())
+                    return true;
+            }
+            return false;
+        }
+
+        static void SetAxisF(ref Vector3 v, int axis, float val)
+        {
+            switch (axis)
+            {
+                case 0: v.x = val; break;
+                case 1: v.y = val; break;
+                case 2: v.z = val; break;
+            }
+        }
+
+        // ========================= Block Interaction =========================
 
         void HandleBlockRaycast()
         {
@@ -126,10 +271,6 @@ namespace BoomNetwork.Samples.MinecraftDemo
             if (Physics.Raycast(ray, out RaycastHit hit, reachDistance, blockLayer))
             {
                 HasTarget = true;
-                TargetHitPoint = hit.point;
-
-                // The hit point is on the surface of a block.
-                // To find which block: step slightly into the face (for break) or back (for place)
                 Vector3 breakPoint = hit.point + hit.normal * -0.01f;
                 TargetBlockPos = new int3(
                     Mathf.FloorToInt(breakPoint.x),
@@ -152,7 +293,6 @@ namespace BoomNetwork.Samples.MinecraftDemo
         {
             if (!HasTarget) return;
 
-            // Left click = break
             if (Input.GetMouseButtonDown(0))
             {
                 PendingAction = new BlockAction
@@ -161,31 +301,42 @@ namespace BoomNetwork.Samples.MinecraftDemo
                     Position = TargetBlockPos,
                     BlockType = BlockType.Air,
                 };
+                return;
             }
-            // Right click = place
-            else if (Input.GetMouseButtonDown(1))
+
+            if (!Input.GetMouseButtonDown(1)) return;
+            if (OverlapsPlayerBody(PlaceBlockPos)) return;
+
+            PendingAction = new BlockAction
             {
-                PendingAction = new BlockAction
-                {
-                    ActionType = 2,
-                    Position = PlaceBlockPos,
-                    BlockType = SelectedBlockType,
-                };
-            }
+                ActionType = 2,
+                Position = PlaceBlockPos,
+                BlockType = SelectedBlockType,
+            };
         }
+
+        bool OverlapsPlayerBody(int3 blockPos)
+        {
+            float hw = HalfWidth;
+            var pos = transform.position;
+
+            bool overlapX = blockPos.x < pos.x + hw && blockPos.x + 1 > pos.x - hw;
+            bool overlapY = blockPos.y < pos.y + playerHeight && blockPos.y + 1 > pos.y;
+            bool overlapZ = blockPos.z < pos.z + hw && blockPos.z + 1 > pos.z - hw;
+
+            return overlapX && overlapY && overlapZ;
+        }
+
+        // ========================= Block Selection =========================
 
         void HandleBlockSelection()
         {
-            // Number keys 1-7 to select block type
             for (int i = 1; i <= 7; i++)
             {
                 if (Input.GetKeyDown(KeyCode.Alpha0 + i))
-                {
                     SelectedBlockType = (BlockType)i;
-                }
             }
 
-            // Scroll wheel
             float scroll = Input.GetAxis("Mouse ScrollWheel");
             if (scroll > 0f)
             {
@@ -200,7 +351,6 @@ namespace BoomNetwork.Samples.MinecraftDemo
                 SelectedBlockType = (BlockType)prev;
             }
 
-            // Toggle cursor lock with Escape
             if (Input.GetKeyDown(KeyCode.Escape))
             {
                 if (Cursor.lockState == CursorLockMode.Locked)

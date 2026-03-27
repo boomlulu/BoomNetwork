@@ -1,4 +1,5 @@
 // BoomNetwork MinecraftDemo — Voxel World Manager
+// Zero per-frame GC allocation — all collections are reused.
 
 using System.Collections.Generic;
 using Unity.Mathematics;
@@ -6,24 +7,30 @@ using UnityEngine;
 
 namespace BoomNetwork.Samples.MinecraftDemo
 {
-    /// <summary>
-    /// Manages all chunk data and provides world-level block access.
-    /// Handles chunk loading/unloading around the player.
-    /// </summary>
     public class VoxelWorld : MonoBehaviour
     {
         [Header("World Settings")]
         [SerializeField] int seed = 42;
         [SerializeField] Material chunkMaterial;
 
+        public Material ChunkMaterial { set => chunkMaterial = value; }
+
         [Header("Chunk Loading")]
         [SerializeField] int loadRadiusH = VoxelConstants.LoadRadiusH;
         [SerializeField] int loadRadiusV = VoxelConstants.LoadRadiusV;
         [SerializeField] int maxChunkBuildsPerFrame = 2;
 
-        readonly Dictionary<int3, ChunkData> _chunks = new Dictionary<int3, ChunkData>();
-        readonly Dictionary<int3, ChunkRenderer> _renderers = new Dictionary<int3, ChunkRenderer>();
-        readonly Queue<int3> _meshBuildQueue = new Queue<int3>();
+        readonly Dictionary<int3, ChunkData> _chunks = new();
+        readonly Dictionary<int3, ChunkRenderer> _renderers = new();
+        readonly Queue<int3> _meshBuildQueue = new();
+        readonly HashSet<int3> _meshBuildSet = new();  // O(1) contains check
+
+        // Reusable collections for UpdatePlayerPosition (avoid per-call allocation)
+        readonly HashSet<int3> _chunksToKeep = new();
+        readonly List<int3> _toRemove = new();
+
+        // Cached delegate to avoid per-BuildMesh allocation
+        System.Func<int3, BlockType> _getBlockCached;
 
         int3 _lastPlayerChunk = new int3(int.MaxValue);
 
@@ -35,7 +42,6 @@ namespace BoomNetwork.Samples.MinecraftDemo
 
         public IReadOnlyDictionary<int3, ChunkData> Chunks => _chunks;
 
-        /// <summary>Get block at world position. Returns Air for unloaded chunks.</summary>
         public BlockType GetBlock(int3 worldPos)
         {
             int3 chunkPos = VoxelConstants.WorldToChunk(worldPos);
@@ -45,7 +51,6 @@ namespace BoomNetwork.Samples.MinecraftDemo
             return chunk.GetBlock(local);
         }
 
-        /// <summary>Set block at world position. Marks chunk dirty for re-meshing.</summary>
         public bool SetBlock(int3 worldPos, BlockType type)
         {
             int3 chunkPos = VoxelConstants.WorldToChunk(worldPos);
@@ -55,13 +60,10 @@ namespace BoomNetwork.Samples.MinecraftDemo
             int3 local = VoxelConstants.WorldToLocal(worldPos);
             chunk.SetBlock(local, type);
             EnqueueMeshBuild(chunkPos);
-
-            // If block is at chunk boundary, also rebuild neighbor chunk
             MarkNeighborDirtyIfBoundary(local, chunkPos);
             return true;
         }
 
-        /// <summary>Update chunk loading around a world position.</summary>
         public void UpdatePlayerPosition(Vector3 playerWorldPos)
         {
             int3 playerChunk = VoxelConstants.WorldToChunk(new int3(
@@ -72,48 +74,59 @@ namespace BoomNetwork.Samples.MinecraftDemo
             if (math.all(playerChunk == _lastPlayerChunk)) return;
             _lastPlayerChunk = playerChunk;
 
-            // Load new chunks in range
-            var chunksToKeep = new HashSet<int3>();
+            _chunksToKeep.Clear();
             for (int x = -loadRadiusH; x <= loadRadiusH; x++)
             for (int y = -loadRadiusV; y <= loadRadiusV; y++)
             for (int z = -loadRadiusH; z <= loadRadiusH; z++)
             {
                 int3 cp = playerChunk + new int3(x, y, z);
-                chunksToKeep.Add(cp);
+                _chunksToKeep.Add(cp);
 
                 if (!_chunks.ContainsKey(cp))
                     LoadChunk(cp);
             }
 
-            // Unload chunks out of range
-            var toRemove = new List<int3>();
+            _toRemove.Clear();
             foreach (var cp in _chunks.Keys)
             {
-                if (!chunksToKeep.Contains(cp))
-                    toRemove.Add(cp);
+                if (!_chunksToKeep.Contains(cp))
+                    _toRemove.Add(cp);
             }
-            foreach (var cp in toRemove)
-                UnloadChunk(cp);
+            for (int i = 0; i < _toRemove.Count; i++)
+                UnloadChunk(_toRemove[i]);
         }
 
-        /// <summary>Generate the full fixed-size world (for multiplayer deterministic init).</summary>
+        /// <summary>
+        /// Generate and build ALL chunks synchronously.
+        /// GC spike happens once at load time, then zero GC during gameplay.
+        /// </summary>
         public void GenerateFullWorld()
         {
             for (int cx = 0; cx < VoxelConstants.WorldChunksX; cx++)
             for (int cy = 0; cy < VoxelConstants.WorldChunksY; cy++)
             for (int cz = 0; cz < VoxelConstants.WorldChunksZ; cz++)
-            {
                 LoadChunk(new int3(cx, cy, cz));
+
+            // Build all meshes NOW instead of spreading across frames
+            while (_meshBuildQueue.Count > 0)
+            {
+                int3 cp = _meshBuildQueue.Dequeue();
+                _meshBuildSet.Remove(cp);
+                if (_chunks.TryGetValue(cp, out var chunk) && chunk.IsDirty)
+                {
+                    BuildChunkMesh(cp, chunk);
+                    chunk.IsDirty = false;
+                }
             }
         }
 
-        /// <summary>Rebuild meshes for all dirty chunks (up to limit per frame).</summary>
         public void ProcessMeshQueue()
         {
             int built = 0;
             while (_meshBuildQueue.Count > 0 && built < maxChunkBuildsPerFrame)
             {
                 int3 cp = _meshBuildQueue.Dequeue();
+                _meshBuildSet.Remove(cp);
                 if (_chunks.TryGetValue(cp, out var chunk) && chunk.IsDirty)
                 {
                     BuildChunkMesh(cp, chunk);
@@ -146,7 +159,7 @@ namespace BoomNetwork.Samples.MinecraftDemo
 
         void EnqueueMeshBuild(int3 chunkPos)
         {
-            if (!_meshBuildQueue.Contains(chunkPos))
+            if (_meshBuildSet.Add(chunkPos))
                 _meshBuildQueue.Enqueue(chunkPos);
         }
 
@@ -158,9 +171,8 @@ namespace BoomNetwork.Samples.MinecraftDemo
                 _renderers[chunkPos] = renderer;
             }
 
-            ChunkMeshBuilder.BuildMesh(chunk, GetBlock, renderer.Mesh);
-
-            // Update collider
+            _getBlockCached ??= GetBlock;
+            ChunkMeshBuilder.BuildMesh(chunk, _getBlockCached, renderer.Mesh);
             renderer.UpdateCollider();
         }
 
@@ -183,13 +195,16 @@ namespace BoomNetwork.Samples.MinecraftDemo
             }
         }
 
-        /// <summary>Clear entire world (for snapshot load)</summary>
         public void ClearWorld()
         {
-            var allChunks = new List<int3>(_chunks.Keys);
-            foreach (var cp in allChunks)
-                UnloadChunk(cp);
+            // Avoid allocating new list — iterate keys into reusable buffer
+            _toRemove.Clear();
+            foreach (var cp in _chunks.Keys)
+                _toRemove.Add(cp);
+            for (int i = 0; i < _toRemove.Count; i++)
+                UnloadChunk(_toRemove[i]);
             _meshBuildQueue.Clear();
+            _meshBuildSet.Clear();
             _lastPlayerChunk = new int3(int.MaxValue);
         }
     }

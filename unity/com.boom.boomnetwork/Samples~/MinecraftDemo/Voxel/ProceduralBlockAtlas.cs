@@ -123,27 +123,42 @@ namespace BoomNetwork.Samples.MinecraftDemo
             }
         }
 
-        /// <summary>Create a material using the BlockAtlas shader and procedural texture.</summary>
+        /// <summary>
+        /// Create a vertex-color material that works on any render pipeline.
+        /// Block colors are baked into vertex colors by ChunkMeshBuilder.
+        /// </summary>
         public static Material CreateMaterial()
         {
-            var shader = Shader.Find("BoomNetwork/BlockAtlas");
+            // Use URP Particles/Unlit — it supports vertex color out of the box
+            var shader = Shader.Find("Universal Render Pipeline/Particles/Unlit");
             if (shader == null)
             {
-                // Fallback chain: URP Lit → Built-in Standard
-                Debug.LogWarning("BlockAtlas shader not found, trying URP fallback");
-                shader = Shader.Find("Universal Render Pipeline/Lit");
+                // Fallback for Built-in RP
+                shader = Shader.Find("Particles/Standard Unlit");
                 if (shader == null)
-                    shader = Shader.Find("Standard");
+                    shader = Shader.Find("Universal Render Pipeline/Lit");
             }
 
             var mat = new Material(shader);
-            var tex = Generate();
-            mat.mainTexture = tex;
-            mat.SetVector("_AtlasSize", new Vector4(AtlasCols, AtlasRows, 0, 0));
 
-            // For URP Lit fallback: set _BaseMap (URP uses _BaseMap not _MainTex)
+            // Configure for opaque vertex-color rendering
+            // URP Particles/Unlit: _ColorMode = 1 (Multiply), _Surface = 0 (Opaque)
+            if (mat.HasProperty("_ColorMode"))
+                mat.SetFloat("_ColorMode", 1f); // Multiply with vertex color
+            if (mat.HasProperty("_Surface"))
+                mat.SetFloat("_Surface", 0f);   // Opaque
+            if (mat.HasProperty("_BaseColor"))
+                mat.SetColor("_BaseColor", Color.white);
+            if (mat.HasProperty("_Color"))
+                mat.SetColor("_Color", Color.white);
+
+            // Set white texture so vertex color shows through
+            mat.mainTexture = Texture2D.whiteTexture;
             if (mat.HasProperty("_BaseMap"))
-                mat.SetTexture("_BaseMap", tex);
+                mat.SetTexture("_BaseMap", Texture2D.whiteTexture);
+
+            // Disable backface culling — render both sides
+            mat.SetFloat("_Cull", 0f); // 0=Off, 1=Front, 2=Back
 
             return mat;
         }
