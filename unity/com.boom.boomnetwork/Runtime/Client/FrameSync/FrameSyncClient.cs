@@ -55,6 +55,7 @@ namespace BoomNetwork.Client.FrameSync
         public event Action<int>? OnPlayerLeft;
         public event Action<int>? OnPlayerOffline;
         public event Action<int>? OnPlayerOnline;
+        public event Action<int>? OnHostChanged;  // int = new host PlayerId
         public event Action? OnReconnected;
         public event Action? OnDisconnected;
         public event Action<int>? OnLeftRoom;                 // oldPlayerId
@@ -664,6 +665,34 @@ namespace BoomNetwork.Client.FrameSync
 
             LastFrameNumber = frame.FrameNumber;
             _connMgr?.UpdateFrameNumber(frame.FrameNumber);
+
+            // Dispatch frame events BEFORE OnFrame (game layer sees events in the same frame)
+            if (frame.Events != null)
+            {
+                for (int i = 0; i < frame.Events.Length; i++)
+                {
+                    ref var evt = ref frame.Events[i];
+                    switch (evt.EventType)
+                    {
+                        case FrameEventType.PlayerJoined:
+                            OnPlayerJoined?.Invoke(evt.PlayerId);
+                            break;
+                        case FrameEventType.PlayerLeft:
+                            OnPlayerLeft?.Invoke(evt.PlayerId);
+                            break;
+                        case FrameEventType.PlayerOffline:
+                            OnPlayerOffline?.Invoke(evt.PlayerId);
+                            break;
+                        case FrameEventType.PlayerOnline:
+                            OnPlayerOnline?.Invoke(evt.PlayerId);
+                            break;
+                        case FrameEventType.HostChanged:
+                            OnHostChanged?.Invoke(evt.PlayerId);
+                            break;
+                    }
+                }
+            }
+
             OnFrame?.Invoke(frame);
 
             CheckSnapshotUpload();

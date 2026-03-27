@@ -77,6 +77,16 @@ namespace BoomNetwork.Core.FrameSync
         public const ushort FrameSyncResumed = 57; // S→C (empty)
     }
 
+    /// <summary>帧内事件类型（嵌入 FrameData，确保所有客户端在同一帧处理）</summary>
+    public static class FrameEventType
+    {
+        public const byte PlayerJoined  = 1;
+        public const byte PlayerLeft    = 2;
+        public const byte PlayerOffline = 3;
+        public const byte PlayerOnline  = 4;
+        public const byte HostChanged   = 5;
+    }
+
     /// <summary>帧同步暂停原因</summary>
     public enum FrameSyncPauseReason : byte
     {
@@ -134,15 +144,24 @@ namespace BoomNetwork.Core.FrameSync
         public const byte BufferStale = 2;      // 帧缓冲区过期，客户端应降级到快照重连
     }
 
+    /// <summary>帧内事件</summary>
+    public struct FrameEvent
+    {
+        public byte EventType;
+        public int PlayerId;
+    }
+
     /// <summary>
     /// 单个帧数据（PushFrames 中的一帧）
-    /// Wire: [FrameNumber:4][InputCount:2][Inputs...]
+    /// Wire: [FrameNumber:4][InputCount:2][Inputs...][EventCount:1][Events...]
     /// 每个 Input: [PlayerId:4][DataLen:2][Data:N]
+    /// 每个 Event: [EventType:1][PlayerId:4]
     /// </summary>
     public struct FrameData
     {
         public uint FrameNumber;
         public PlayerInput[] Inputs;
+        public FrameEvent[] Events;  // 帧内事件
 
         public struct PlayerInput
         {
@@ -190,6 +209,21 @@ namespace BoomNetwork.Core.FrameSync
                 }
             }
 
+            // Events
+            byte eventCount = (byte)(frame.Events?.Length ?? 0);
+            buf[offset] = eventCount;
+            offset++;
+            if (frame.Events != null)
+            {
+                for (int i = 0; i < frame.Events.Length; i++)
+                {
+                    buf[offset] = frame.Events[i].EventType;
+                    offset++;
+                    BinaryPrimitives.WriteInt32LittleEndian(buf.Slice(offset), frame.Events[i].PlayerId);
+                    offset += 4;
+                }
+            }
+
             return offset;
         }
 
@@ -226,6 +260,21 @@ namespace BoomNetwork.Core.FrameSync
                 {
                     frame.Inputs[i].Data = Array.Empty<byte>();
                     frame.Inputs[i].DataLength = 0;
+                }
+            }
+
+            // Events (appended after inputs)
+            if (offset < buf.Length)
+            {
+                int eventCount = buf[offset];
+                offset++;
+                frame.Events = new FrameEvent[eventCount];
+                for (int i = 0; i < eventCount; i++)
+                {
+                    frame.Events[i].EventType = buf[offset];
+                    offset++;
+                    frame.Events[i].PlayerId = BinaryPrimitives.ReadInt32LittleEndian(buf.Slice(offset));
+                    offset += 4;
                 }
             }
 
