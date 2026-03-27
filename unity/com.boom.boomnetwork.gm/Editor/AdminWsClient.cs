@@ -96,9 +96,9 @@ namespace BoomNetwork.GM.Editor
                     ConnectAndLoop(ct).GetAwaiter().GetResult();
                 }
                 catch (OperationCanceledException) { break; }
-                catch (Exception)
+                catch (Exception ex)
                 {
-                    // 连接失败静默处理（服务器可能未启动），自动重试
+                    UnityEngine.Debug.LogWarning($"[GM-WS] Connection error: {ex.GetType().Name}: {ex.Message}");
                 }
 
                 _authenticated = false;
@@ -161,6 +161,7 @@ namespace BoomNetwork.GM.Editor
 
             // ===== 收发主循环 =====
             var recvBuf = new byte[65536];
+            var msgBuf = new List<byte>(); // 拼接分片消息
             while (!ct.IsCancellationRequested && _ws.State == WebSocketState.Open)
             {
                 // 刷出站队列
@@ -181,11 +182,24 @@ namespace BoomNetwork.GM.Editor
 
                         if (result.Count > 0)
                         {
-                            var data = new byte[result.Count];
-                            Buffer.BlockCopy(recvBuf, 0, data, 0, result.Count);
-                            var env = GmEnvelope.Decode(data);
-                            if (!string.IsNullOrEmpty(env.Type))
-                                Inbound.Enqueue(env);
+                            if (result.EndOfMessage && msgBuf.Count == 0)
+                            {
+                                // 完整消息，直接处理（最常见路径，零拷贝）
+                                var data = new byte[result.Count];
+                                Buffer.BlockCopy(recvBuf, 0, data, 0, result.Count);
+                                ProcessInboundFrame(data);
+                            }
+                            else
+                            {
+                                // 分片消息，拼接
+                                for (int i = 0; i < result.Count; i++)
+                                    msgBuf.Add(recvBuf[i]);
+                                if (result.EndOfMessage)
+                                {
+                                    ProcessInboundFrame(msgBuf.ToArray());
+                                    msgBuf.Clear();
+                                }
+                            }
                         }
                     }
                     catch (OperationCanceledException) when (!ct.IsCancellationRequested)
@@ -193,6 +207,20 @@ namespace BoomNetwork.GM.Editor
                         // 100ms 超时，无数据，继续下一轮（刷出站队列）
                     }
                 }
+            }
+        }
+
+        private void ProcessInboundFrame(byte[] data)
+        {
+            try
+            {
+                var env = GmEnvelope.Decode(data);
+                if (!string.IsNullOrEmpty(env.Type))
+                    Inbound.Enqueue(env);
+            }
+            catch (Exception ex)
+            {
+                UnityEngine.Debug.LogWarning($"[GM-WS] Decode error: {ex.Message} (len={data.Length})");
             }
         }
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"runtime"
@@ -295,8 +296,13 @@ func (c *GMConn) readPump(token string) {
 	// 验证 token
 	if token != "" {
 		var auth AuthPayload
-		if err := msgpack.Unmarshal(env.Payload, &auth); err != nil || auth.Token != token {
-			c.sendEnvelope(&GMEnvelope{Type: "auth_err", Payload: mustEncodePayload(ErrorResult{Error: "invalid token"})})
+		err := msgpack.Unmarshal(env.Payload, &auth)
+		slog.Info("[GM-WS] Auth debug",
+			"payloadHex", fmt.Sprintf("%x", []byte(env.Payload)),
+			"payloadLen", len(env.Payload),
+			"err", err, "gotToken", auth.Token, "expectToken", token)
+		if err != nil || auth.Token != token {
+			c.sendEnvelope(&GMEnvelope{Type: "auth_err", Payload: mustEncodePayload(ErrorResult{Error: fmt.Sprintf("invalid token (err=%v got=%q)", err, auth.Token)})})
 			return
 		}
 	}
@@ -316,6 +322,7 @@ func (c *GMConn) readPump(token string) {
 	for {
 		_, data, err := c.ws.ReadMessage()
 		if err != nil {
+			slog.Warn("[GM-WS] readPump exit", "err", err)
 			return
 		}
 		GmStats.RecordRx(int64(len(data)))
@@ -325,6 +332,7 @@ func (c *GMConn) readPump(token string) {
 
 		env, err := decodeEnvelope(data)
 		if err != nil {
+			slog.Warn("[GM-WS] decode error", "err", err, "dataHex", fmt.Sprintf("%x", data))
 			c.sendError("", "", "decode error")
 			return
 		}
