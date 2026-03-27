@@ -160,53 +160,54 @@ namespace BoomNetwork.GM.Editor
             }
 
             // ===== 收发主循环 =====
-            var recvBuf = new byte[65536];
-            var msgBuf = new List<byte>(); // 拼接分片消息
-            while (!ct.IsCancellationRequested && _ws.State == WebSocketState.Open)
+            // 注意：ClientWebSocket.ReceiveAsync 被 CancellationToken 取消会导致连接 Abort，
+            // 所以不能用短超时轮询。改为并发：recv 阻塞等数据，send 独立 Task 刷出站队列。
+            var sendTask = Task.Run(async () =>
             {
-                // 刷出站队列
-                while (_outbound.TryDequeue(out var frame))
-                    await SendFrame(frame, ct);
-
-                // 非阻塞检查是否有数据（短超时）
-                using (var recvCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
+                while (!ct.IsCancellationRequested && _ws.State == WebSocketState.Open)
                 {
-                    recvCts.CancelAfter(100); // 100ms 轮询间隔
-                    try
+                    while (_outbound.TryDequeue(out var frame))
+                        await SendFrame(frame, ct);
+                    await Task.Delay(50, ct);
+                }
+            }, ct);
+
+            var recvBuf = new byte[65536];
+            var msgBuf = new List<byte>();
+            try
+            {
+                while (!ct.IsCancellationRequested && _ws.State == WebSocketState.Open)
+                {
+                    var seg = new ArraySegment<byte>(recvBuf);
+                    var result = await _ws.ReceiveAsync(seg, ct);
+
+                    if (result.MessageType == WebSocketMessageType.Close)
+                        break;
+
+                    if (result.Count > 0)
                     {
-                        var seg = new ArraySegment<byte>(recvBuf);
-                        var result = await _ws.ReceiveAsync(seg, recvCts.Token);
-
-                        if (result.MessageType == WebSocketMessageType.Close)
-                            break;
-
-                        if (result.Count > 0)
+                        if (result.EndOfMessage && msgBuf.Count == 0)
                         {
-                            if (result.EndOfMessage && msgBuf.Count == 0)
+                            var data = new byte[result.Count];
+                            Buffer.BlockCopy(recvBuf, 0, data, 0, result.Count);
+                            ProcessInboundFrame(data);
+                        }
+                        else
+                        {
+                            for (int i = 0; i < result.Count; i++)
+                                msgBuf.Add(recvBuf[i]);
+                            if (result.EndOfMessage)
                             {
-                                // 完整消息，直接处理（最常见路径，零拷贝）
-                                var data = new byte[result.Count];
-                                Buffer.BlockCopy(recvBuf, 0, data, 0, result.Count);
-                                ProcessInboundFrame(data);
-                            }
-                            else
-                            {
-                                // 分片消息，拼接
-                                for (int i = 0; i < result.Count; i++)
-                                    msgBuf.Add(recvBuf[i]);
-                                if (result.EndOfMessage)
-                                {
-                                    ProcessInboundFrame(msgBuf.ToArray());
-                                    msgBuf.Clear();
-                                }
+                                ProcessInboundFrame(msgBuf.ToArray());
+                                msgBuf.Clear();
                             }
                         }
                     }
-                    catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-                    {
-                        // 100ms 超时，无数据，继续下一轮（刷出站队列）
-                    }
                 }
+            }
+            finally
+            {
+                try { await sendTask; } catch { /* send task cleanup */ }
             }
         }
 
