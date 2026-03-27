@@ -19,12 +19,25 @@ namespace BoomNetwork.GM.Editor
         {
             var map = MsgPackLite.DecodeMap(data);
             if (map == null) return default;
+
+            // p 字段可能是 bin (byte[]) 或已解码的 msgpack 值 (map/array/etc)
+            // Go RawMessage 不包 bin 壳，直接嵌入 raw msgpack
+            // 如果已被 DecodeMap 解码为 object，需要重新编码回 bytes
+            byte[] payload = null;
+            if (map.TryGetValue("p", out var pVal) && pVal != null)
+            {
+                if (pVal is byte[] raw)
+                    payload = raw;
+                else
+                    payload = MsgPackLite.Encode(pVal);
+            }
+
             return new GmEnvelope
             {
                 Type    = MsgPackLite.GetString(map, "t"),
                 ID      = MsgPackLite.GetString(map, "id"),
                 Topic   = MsgPackLite.GetString(map, "tp"),
-                Payload = MsgPackLite.GetBytes(map, "p"),
+                Payload = payload,
             };
         }
 
