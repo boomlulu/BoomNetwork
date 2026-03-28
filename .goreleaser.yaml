@@ -1,0 +1,77 @@
+version: 2
+
+project_name: boomnetwork
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: framesync
+    dir: svr
+    main: ./cmd/framesync/
+    binary: boomnetwork-server
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+      - -X main.BuildHash={{.ShortCommit}}
+      - -X main.BuildTime={{.Date}}
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+archives:
+  - id: default
+    format: tar.gz
+    format_overrides:
+      - goos: windows
+        format: zip
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - src: svr/cmd/framesync/config.yaml
+        dst: .
+        strip_parent: true
+      - src: deploy/boomnetwork.service
+        dst: .
+        strip_parent: true
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  github:
+    owner: luwenyiCC
+    name: BoomNetwork
+  prerelease: auto
+  name_template: "v{{ .Version }}"
+  header: |
+    ## BoomNetwork v{{ .Version }}
+
+    ### Quick Start
+    ```bash
+    # Download and extract
+    tar xzf boomnetwork_{{ .Version }}_linux_amd64.tar.gz
+
+    # Start server with default config
+    ./boomnetwork-server -config config.yaml
+    ```
+
+    See [llms.txt](https://github.com/luwenyiCC/BoomNetwork/blob/dev1.0/llms.txt) for AI-friendly API reference.
