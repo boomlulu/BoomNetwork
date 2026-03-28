@@ -11,8 +11,9 @@ namespace BoomNetwork.Samples.VampireSurvivors
     {
         static readonly byte[] Magic = { (byte)'V', (byte)'S', (byte)'F', (byte)'X' }; // FX = fixed-point
 
-        public static byte[] Serialize(GameState state)
+        public static byte[] Serialize(VSSimulation sim)
         {
+            var state = sim.State;
             using var ms = new MemoryStream(8192);
             using var w = new BinaryWriter(ms);
 
@@ -98,11 +99,25 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 w.Write(f.PosX.Raw); w.Write(f.PosZ.Raw); w.Write(f.FramesLeft);
             }
 
+            // Pid→Slot mapping (deterministic, needed for late-joiners)
+            sim.GetPidMap(out var pidMap, out int nextSlot);
+            w.Write((byte)nextSlot);
+            for (int i = 0; i < pidMap.Length; i++)
+            {
+                if (pidMap[i] >= 0)
+                {
+                    w.Write((byte)i);          // pid
+                    w.Write((byte)pidMap[i]);   // slot
+                }
+            }
+            w.Write((byte)255); // terminator
+
             return ms.ToArray();
         }
 
-        public static void Deserialize(byte[] data, GameState state)
+        public static void Deserialize(byte[] data, VSSimulation sim)
         {
+            var state = sim.State;
             using var ms = new MemoryStream(data);
             using var r = new BinaryReader(ms);
 
@@ -188,6 +203,21 @@ namespace BoomNetwork.Samples.VampireSurvivors
             {
                 ref var f = ref state.Flashes[i];
                 f.PosX = new FInt(r.ReadInt32()); f.PosZ = new FInt(r.ReadInt32()); f.FramesLeft = r.ReadUInt32();
+            }
+
+            // Pid→Slot mapping
+            if (ms.Position < ms.Length)
+            {
+                int nextSlot = r.ReadByte();
+                var pidMap = new int[256];
+                for (int i = 0; i < pidMap.Length; i++) pidMap[i] = -1;
+                while (true)
+                {
+                    byte pid = r.ReadByte();
+                    if (pid == 255) break;
+                    pidMap[pid] = r.ReadByte();
+                }
+                sim.SetPidMap(pidMap, nextSlot);
             }
         }
     }

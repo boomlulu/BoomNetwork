@@ -11,6 +11,28 @@ namespace BoomNetwork.Samples.VampireSurvivors
     {
         public readonly GameState State = new GameState();
 
+        // PlayerId → slot mapping. Server PlayerIDs are globally incrementing
+        // (not per-room), so we cannot assume pid == slot+1.
+        // Mapping is built deterministically: first unique pid seen gets slot 0, etc.
+        readonly int[] _pidSlotMap = new int[256]; // pid → slot (-1 = unmapped)
+        int _nextSlot;
+
+        public int PidToSlot(int pid)
+        {
+            if (pid < 0 || pid >= _pidSlotMap.Length) return -1;
+            if (_pidSlotMap[pid] < 0 && _nextSlot < GameState.MaxPlayers)
+                _pidSlotMap[pid] = _nextSlot++;
+            return _pidSlotMap[pid];
+        }
+
+        // Snapshot support: expose mapping for serialization
+        public void GetPidMap(out int[] map, out int nextSlot) { map = _pidSlotMap; nextSlot = _nextSlot; }
+        public void SetPidMap(int[] map, int nextSlot)
+        {
+            System.Array.Copy(map, _pidSlotMap, System.Math.Min(map.Length, _pidSlotMap.Length));
+            _nextSlot = nextSlot;
+        }
+
         static readonly WeaponType[] UpgradePool =
             { WeaponType.Knife, WeaponType.Orb, WeaponType.Lightning, WeaponType.HolyWater };
 
@@ -22,6 +44,9 @@ namespace BoomNetwork.Samples.VampireSurvivors
             State.WaveSpawnTimer = 40;
             State.WaveSpawnRemaining = 0;
             State.FrameNumber = 0;
+            // Reset pid mapping
+            for (int i = 0; i < _pidSlotMap.Length; i++) _pidSlotMap[i] = -1;
+            _nextSlot = 0;
         }
 
         public void Tick(FrameData frame)
@@ -66,7 +91,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             for (int i = 0; i < frame.Inputs.Length; i++)
             {
                 ref var input = ref frame.Inputs[i];
-                int slot = input.PlayerId - 1;
+                int slot = PidToSlot(input.PlayerId);
                 if (slot < 0 || slot >= GameState.MaxPlayers) continue;
                 ref var player = ref State.Players[slot];
 

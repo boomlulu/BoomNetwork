@@ -104,7 +104,6 @@ namespace BoomNetwork.Samples.VampireSurvivors
         void OnFrameSyncStart(FrameSyncInitData init)
         {
             FInt dt = FInt.FromInt(init.FrameInterval) / FInt.FromInt(1000);
-            _localSlot = _network.PlayerId - 1;
             uint seed = (uint)(init.StartTime & 0xFFFFFFFF);
 
             if (!_snapshotLoaded)
@@ -124,13 +123,16 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 _sim.State.Dt = dt;
             }
 
+            // Map our PlayerId to a local slot (0-3). PidToSlot assigns
+            // slots deterministically in order of first appearance.
+            _localSlot = _sim.PidToSlot(_network.PlayerId);
             _syncing = true;
 
             _renderer = GetComponent<VSRenderer>();
             if (_renderer == null) _renderer = gameObject.AddComponent<VSRenderer>();
             _renderer.Init(_sim.State, _localSlot);
 
-            Debug.Log($"[VS] FrameSync started. Slot={_localSlot}, snapshot={_snapshotLoaded}, dt={dt}, fps={init.FrameRate}");
+            Debug.Log($"[VS] FrameSync started. Pid={_network.PlayerId}, Slot={_localSlot}, snapshot={_snapshotLoaded}, dt={dt}, fps={init.FrameRate}");
         }
 
         void OnFrameSyncStop() { _syncing = false; }
@@ -146,7 +148,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
         /// </summary>
         void OnPlayerJoined(int pid)
         {
-            int slot = pid - 1;
+            int slot = _sim.PidToSlot(pid);
             if (slot < 0 || slot >= GameState.MaxPlayers) return;
 
             // During sync, frame events guarantee same-frame delivery.
@@ -157,12 +159,9 @@ namespace BoomNetwork.Samples.VampireSurvivors
             Debug.Log($"[VS] Player {pid} joined (slot {slot}){(_syncing ? " — initialized via frame event" : "")}");
         }
 
-        /// <summary>
-        /// Frame event — same-frame delivery guaranteed during sync.
-        /// </summary>
         void OnPlayerLeft(int pid)
         {
-            int slot = pid - 1;
+            int slot = _sim.PidToSlot(pid);
             if (slot < 0 || slot >= GameState.MaxPlayers) return;
 
             if (_syncing)
@@ -196,12 +195,12 @@ namespace BoomNetwork.Samples.VampireSurvivors
         // Only take snapshots after sync has started — the initial
         // RequestStart snapshot would capture uninitialized state
         // (before Init sets the RNG seed), causing late-join desync.
-        byte[] TakeSnapshot() => _syncing ? VSSnapshot.Serialize(_sim.State) : null;
+        byte[] TakeSnapshot() => _syncing ? VSSnapshot.Serialize(_sim) : null;
 
         void LoadSnapshot(byte[] data)
         {
             _snapshotLoaded = true;
-            VSSnapshot.Deserialize(data, _sim.State);
+            VSSnapshot.Deserialize(data, _sim);
 
             // No InitPlayer, no state mutation. The snapshot is the
             // complete authoritative state. Players who join after the
