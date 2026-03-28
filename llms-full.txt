@@ -512,7 +512,7 @@ BoomNetwork/
 ```json
 {
   "dependencies": {
-    "com.boom.boomnetwork": "https://github.com/luwenyiCC/BoomNetwork.git?path=unity/com.boom.boomnetwork#dev1.0"
+    "com.boom.boomnetwork": "https://github.com/boomlulu/BoomNetwork.git?path=unity/com.boom.boomnetwork#dev1.0"
   }
 }
 ```
@@ -521,7 +521,7 @@ Optional GM tools package:
 ```json
 {
   "dependencies": {
-    "com.boom.boomnetwork.gm": "https://github.com/luwenyiCC/BoomNetwork.git?path=unity/com.boom.boomnetwork.gm#dev1.0"
+    "com.boom.boomnetwork.gm": "https://github.com/boomlulu/BoomNetwork.git?path=unity/com.boom.boomnetwork.gm#dev1.0"
   }
 }
 ```

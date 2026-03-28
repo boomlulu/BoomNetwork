@@ -14,3 +14,4 @@ BenchmarkDotNet.Artifacts/
 # Deploy tool
 svr/dist/
 svr/configs/config.prod.yaml
+dist/

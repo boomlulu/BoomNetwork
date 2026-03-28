@@ -6,7 +6,7 @@
   "unity": "2022.3",
   "author": {
     "name": "Boom",
-    "url": "https://github.com/luwenyiCC/BoomNetwork"
+    "url": "https://github.com/boomlulu/BoomNetwork"
   },
   "keywords": [
     "network",
@@ -60,6 +60,6 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/luwenyiCC/BoomNetwork.git"
+    "url": "https://github.com/boomlulu/BoomNetwork.git"
   }
 }

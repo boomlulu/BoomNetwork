@@ -128,5 +128,5 @@ GET  /netsim         POST /config/reload  POST /loglevel
 ## UPM Install
 
 ```json
-"com.boom.boomnetwork": "https://github.com/luwenyiCC/BoomNetwork.git?path=unity/com.boom.boomnetwork#dev1.0"
+"com.boom.boomnetwork": "https://github.com/boomlulu/BoomNetwork.git?path=unity/com.boom.boomnetwork#dev1.0"
 ```

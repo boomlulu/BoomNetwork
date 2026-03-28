@@ -81,4 +81,4 @@ First public release. Frame-sync networking framework for Unity — C# client + 
 - API reference, quickstart, architecture, protocol command tiers
 - Cheatsheet with lifecycle state machine
 
-[0.1.0]: https://github.com/luwenyiCC/BoomNetwork/releases/tag/v0.1.0
+[0.1.0]: https://github.com/boomlulu/BoomNetwork/releases/tag/v0.1.0

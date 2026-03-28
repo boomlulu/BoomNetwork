@@ -67,7 +67,7 @@ changelog:
 
 release:
   github:
-    owner: luwenyiCC
+    owner: boomlulu
     name: BoomNetwork
   prerelease: auto
   name_template: "v{{ .Version }}"
@@ -83,4 +83,4 @@ release:
     ./boomnetwork-server -config config.yaml
     ```
 
-    See [llms.txt](https://github.com/luwenyiCC/BoomNetwork/blob/dev1.0/llms.txt) for AI-friendly API reference.
+    See [llms.txt](https://github.com/boomlulu/BoomNetwork/blob/dev1.0/llms.txt) for AI-friendly API reference.

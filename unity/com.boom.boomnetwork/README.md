@@ -7,7 +7,7 @@
 Unity Package Manager → Add package from git URL:
 
 ```
-https://github.com/luwenyiCC/BoomNetwork.git?path=unity/com.boom.boomnetwork#dev1.0
+https://github.com/boomlulu/BoomNetwork.git?path=unity/com.boom.boomnetwork#dev1.0
 ```
 
 ### GM 工具包（可选，Editor-only）
@@ -15,7 +15,7 @@ https://github.com/luwenyiCC/BoomNetwork.git?path=unity/com.boom.boomnetwork#dev
 开发期使用，不进客户端 build。提供 ServerWindow（服务器控制 + 流量统计）等 Editor 工具。
 
 ```
-https://github.com/luwenyiCC/BoomNetwork.git?path=unity/com.boom.boomnetwork.gm#dev1.0
+https://github.com/boomlulu/BoomNetwork.git?path=unity/com.boom.boomnetwork.gm#dev1.0
 ```
 
 ## 两种接入方式

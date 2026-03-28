@@ -100,7 +100,7 @@ docker run -p 9000:9000 -p 9091:9091 boomnetwork/server
 
 ```json
 // Packages/manifest.json
-"com.boom.boomnetwork": "https://github.com/luwenyiCC/BoomNetwork.git?path=unity/com.boom.boomnetwork#dev1.0"
+"com.boom.boomnetwork": "https://github.com/boomlulu/BoomNetwork.git?path=unity/com.boom.boomnetwork#dev1.0"
 ```
 
 ## Optional: For complete API details, read llms-full.txt

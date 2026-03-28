@@ -26,7 +26,7 @@ go run ./cmd/framesync/ -admin=:9091 -admin-token=your-secret
 
 1. 安装 GM 工具包（UPM）：
    ```
-   https://github.com/luwenyiCC/BoomNetwork.git?path=unity/com.boom.boomnetwork.gm#dev1.0
+   https://github.com/boomlulu/BoomNetwork.git?path=unity/com.boom.boomnetwork.gm#dev1.0
    ```
 2. 菜单 **BoomNetwork → Server Window**
 3. Config 区填 Admin URL + Admin Token

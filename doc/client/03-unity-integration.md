@@ -9,7 +9,7 @@
 Unity 菜单 `Window > Package Manager > + > Add package from git URL`，填入：
 
 ```
-https://github.com/luwenyiCC/BoomNetwork.git?path=unity/com.boom.boomnetwork#dev1.0
+https://github.com/boomlulu/BoomNetwork.git?path=unity/com.boom.boomnetwork#dev1.0
 ```
 
 或直接编辑 `Packages/manifest.json`：
@@ -17,7 +17,7 @@ https://github.com/luwenyiCC/BoomNetwork.git?path=unity/com.boom.boomnetwork#dev
 ```json
 {
   "dependencies": {
-    "com.boom.boomnetwork": "https://github.com/luwenyiCC/BoomNetwork.git?path=unity/com.boom.boomnetwork#dev1.0"
+    "com.boom.boomnetwork": "https://github.com/boomlulu/BoomNetwork.git?path=unity/com.boom.boomnetwork#dev1.0"
   }
 }
 ```

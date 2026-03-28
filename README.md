@@ -62,7 +62,7 @@ go run ./cmd/framesync/ -gen-config    # 生成 config.yaml
 在 Unity 项目的 `Packages/manifest.json` 中添加：
 
 ```json
-"com.boom.boomnetwork": "https://github.com/luwenyiCC/BoomNetwork.git?path=unity/com.boom.boomnetwork#dev1.0"
+"com.boom.boomnetwork": "https://github.com/boomlulu/BoomNetwork.git?path=unity/com.boom.boomnetwork#dev1.0"
 ```
 
 ### 3. 最小代码示例
@@ -149,7 +149,7 @@ disconnectKeepSec: 120       # 断线玩家保留时长（秒），即最大重�
 
 ## Demo 工程
 
-Unity Demo 在独立仓库 [BoomNetworkUnity](https://github.com/luwenyiCC/BoomNetworkUnity)：
+Unity Demo 在独立仓库 [BoomNetworkUnity](https://github.com/boomlulu/BoomNetworkUnity)：
 
 | 场景 | 说明 |
 |------|------|
