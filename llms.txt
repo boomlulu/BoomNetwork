@@ -1,0 +1,106 @@
+# BoomNetwork
+
+> Unity multiplayer frame-sync networking framework — C# client + Go server.
+> Self-authority model: your input = zero-latency truth, no prediction, no rollback.
+
+## Docs
+
+- [Full API Reference for LLMs](llms-full.txt): Complete class/method/event listing with code templates
+- [Quick Start](doc/shared/03-quickstart.md): Project structure and setup
+- [Core Philosophy](doc/shared/04-core-philosophy.md): Three axioms of self-authority
+- [API Reference](doc/client/01-api-reference.md): Detailed client API
+- [Architecture](doc/shared/07-architecture.md): System overview
+- [Local-First Pattern](doc/shared/08-local-first-pattern.md): The OnFrame contract
+- [Entity Authority Sync](doc/design/entity-authority-sync.md): Dead Reckoning + Inertia model
+- [Server Deployment](doc/server/01-deployment.md): Docker / systemd / binary
+
+## Core Philosophy (Three Axioms)
+
+1. **Self-authority** — Each player owns their character. Own input executes instantly, no server confirmation needed.
+2. **Trust and smooth** — Remote state is trusted directly, smoothed visually via interpolation/extrapolation.
+3. **Arbitrator settles conflicts** — One ruling (host or server), no rollback. At most a visual correction.
+
+## Design Red Lines (MUST follow when generating code)
+
+1. **No rollback in core** — Never import or reference prediction/rollback concepts.
+2. **Zero-latency own input** — Own input executes immediately in the game loop, NOT inside OnFrame.
+3. **Local-First OnFrame** — Inside OnFrame, SKIP the local player's input (already executed locally).
+4. **Silent When Idle** — Only call SendInput when the player has actual input. Never send empty input every frame.
+5. **Deterministic OnFrame** — All shared game state changes MUST happen inside OnFrame. No async mutations.
+
+## Minimal Example (Plain C#)
+
+```csharp
+var client = new FrameSyncClient(heartbeatIntervalMs: 3000, heartbeatTimeoutMs: 10000);
+
+client.OnConnected      += () => client.MatchRoom(maxPlayers: 4);
+client.OnReady          += () => client.RequestStart();
+client.OnFrame          += frame => {
+    foreach (var input in frame.Inputs)
+        if (input.PlayerId != client.PlayerId)  // Local-First: skip own
+            ApplyInput(input.PlayerId, input.DataSpan);
+};
+
+client.Connect("127.0.0.1", 9000);
+
+// Game loop
+void Update(float dtMs) {
+    client.Tick(dtMs);
+    if (client.CurrentState == FrameSyncClient.State.Syncing && HasInput()) {
+        byte[] input = BuildInput();
+        client.SendInput(input);   // send to server
+        ApplyInput(client.PlayerId, input);  // execute locally NOW (zero latency)
+    }
+}
+```
+
+## Minimal Example (Unity — BoomNetworkManager)
+
+```csharp
+// Add BoomNetworkManager to a GameObject, set host/port in Inspector
+[RequireComponent(typeof(BoomNetworkManager))]
+public class MyGame : MonoBehaviour {
+    BoomNetworkManager _net;
+    void Start() {
+        _net = GetComponent<BoomNetworkManager>();
+        _net.Client.OnFrame += OnFrame;
+        _net.QuickStart();  // Connect → MatchRoom → RequestStart
+    }
+    void Update() {
+        if (_net.IsSyncing && HasInput()) {
+            byte[] input = BuildInput();
+            _net.SendInput(input);
+            ApplyLocalInput(input);
+        }
+    }
+    void OnFrame(FrameData frame) {
+        foreach (var inp in frame.Inputs)
+            if (inp.PlayerId != _net.PlayerId) ApplyInput(inp);
+    }
+}
+```
+
+## Server Startup
+
+```bash
+cd svr && go run ./cmd/framesync/ -config cmd/framesync/config.yaml
+# Or with Docker:
+docker run -p 9000:9000 -p 9091:9091 boomnetwork/server
+```
+
+## Three Sync Modes
+
+| Mode | Use Case | Start Frame Sync? | Key Methods |
+|------|----------|-------------------|-------------|
+| **Frame Sync** | Action/MOBA/survival | Yes (RequestStart) | SendInput, OnFrame |
+| **Entity Authority** | Open world/racing | Yes | RegisterAuthorityEntity, OnEntityState |
+| **State Sync** | Social/casual/chat | No | SendStateMessage, SetData, OnStateMessage |
+
+## Package Install (Unity)
+
+```json
+// Packages/manifest.json
+"com.boom.boomnetwork": "https://github.com/luwenyiCC/BoomNetwork.git?path=unity/com.boom.boomnetwork#dev1.0"
+```
+
+## Optional: For complete API details, read llms-full.txt

@@ -1,0 +1,527 @@
+# BoomNetwork — Complete API Reference (for LLMs)
+
+> This file contains everything an AI coding assistant needs to generate correct BoomNetwork multiplayer code.
+> Read this file completely before generating code. Pay special attention to the "Common Mistakes" section.
+
+---
+
+## 1. FrameSyncClient — Primary Entry Point
+
+Namespace: `BoomNetwork.Client.FrameSync`
+
+### Constructor
+```csharp
+new FrameSyncClient(float heartbeatIntervalMs = 3000, float heartbeatTimeoutMs = 10000)
+```
+
+### State Machine
+```
+Disconnected → Connecting → Connected → InRoom → Syncing
+                                                    ↕
+                                              Reconnecting
+```
+
+### Properties (read-only)
+```csharp
+State  CurrentState          // current connection state
+int    PlayerId              // assigned after SessionBind (0 = not assigned)
+int    RoomId                // assigned after JoinRoom (0 = not in room)
+uint   LastFrameNumber       // latest received frame
+float  RttMs                 // round-trip time in ms (-1 if unmeasured)
+FrameSyncInitData? InitData  // set after OnFrameSyncStart
+bool   HasPreviousIdentity   // PlayerId > 0 && RoomId > 0 (for reconnect)
+uint   SnapshotInterval      // frames between snapshots (default 100, overridden by server)
+```
+
+### Lifecycle Methods
+```csharp
+void Connect(string host, int port)       // start connection
+void Tick(float deltaTimeMs)              // MUST call every frame in Update()
+void Disconnect()                         // graceful disconnect, keeps identity for reconnect
+void DisconnectAndClear()                 // disconnect + clear identity (no reconnect possible)
+```
+
+### Room Methods
+```csharp
+void GetRooms(Action<RoomInfo[]> onResult)           // list available rooms
+void CreateRoom(int maxPlayers, Action<int>? cb)     // create and get roomId
+void JoinRoom(int roomId)                            // join specific room
+void CreateAndJoinRoom(int maxPlayers)               // create + join in one call
+void MatchRoom(int maxPlayers, string? matchKey)     // auto-match: join existing or create new
+void LeaveRoom()                                     // leave current room
+```
+
+### Frame Sync Methods
+```csharp
+void RequestStart()                                  // start frame sync (host calls this)
+void RequestStop()                                   // stop frame sync
+void SendInput(byte[] data, int dataLength = -1)     // send player input (also flushes entity states)
+void SendAuthorityEntityStates()                     // send entity states without input
+void SendFrameHash(uint frameNumber, uint hash)      // desync detection hash
+```
+
+### Entity Authority Methods
+```csharp
+void RegisterAuthorityEntity(IEntitySync entity)     // register owned entity (idempotent)
+void UnregisterAuthorityEntity(int entityId)         // unregister owned entity
+void RequestAuthorityTransfer(int entityId)          // request ownership of entity
+void ReleaseAuthority(int entityId)                  // release ownership
+```
+
+### Lightweight State Sync (no frame sync needed)
+```csharp
+void SendStateMessage(byte[] data)                   // broadcast to room, not stored
+void SetData(int key, byte[] value)                  // persistent KV, server stores + broadcasts
+void DeleteData(int key)                             // delete KV entry
+void RequestDataSync()                               // force full KV re-sync
+void SendGameMessage(uint gameCmd, byte[] data)      // custom game message, server relays with senderPid
+```
+
+### Snapshot Callbacks (assign before Connect)
+```csharp
+Func<byte[]?>? OnTakeSnapshot     // framework calls this periodically; return serialized game state
+Action<byte[]>? OnLoadSnapshot    // framework calls this on reconnect/late-join; restore game state
+```
+
+### Events
+```csharp
+// Connection lifecycle
+event Action?                        OnConnected          // SessionBind success
+event Action<int, int[]>?            OnJoinedRoom         // (roomId, existingPlayerIds)
+event Action?                        OnReady              // unified: first join OR reconnect success
+event Action?                        OnReconnected        // reconnect specifically succeeded
+event Action?                        OnDisconnected       // connection lost
+event Action<int>?                   OnLeftRoom           // (oldPlayerId)
+
+// Frame sync
+event Action<FrameSyncInitData>?     OnFrameSyncStart     // frame sync started, initData available
+event Action<FrameData>?             OnFrame              // new frame received — process game logic here
+event Action?                        OnFrameSyncStop      // frame sync stopped
+
+// Player events (also delivered as FrameEvent inside OnFrame during sync)
+event Action<int>?                   OnPlayerJoined       // (playerId)
+event Action<int>?                   OnPlayerLeft         // (playerId)
+event Action<int>?                   OnPlayerOffline      // (playerId) — temporary disconnect
+event Action<int>?                   OnPlayerOnline       // (playerId) — reconnected
+event Action<int>?                   OnHostChanged        // (newHostPlayerId)
+
+// Entity authority
+event Action<int,int,byte[],int,int>? OnEntityState      // (senderPid, entityId, data, offset, len)
+event Action<int,int>?                OnAuthorityChanged  // (entityId, newOwnerPlayerId) 0=unclaimed
+
+// Lightweight state sync
+event Action<int, byte[]>?           OnStateMessage       // (playerId, data)
+event Action<uint,int,int,byte[]>?   OnDataChanged        // (version, playerId, key, value)
+event Action<uint, DataEntry[]>?     OnDataSynced         // (version, entries) full sync
+
+// Custom game messages
+event Action<uint,int,byte[],int>?   OnGameMessage        // (gameCmd, senderPid, data, offset)
+
+// Diagnostics
+event Action<NetworkError>?          OnError
+event Action<string>?                OnLog
+event Action?                        OnRateLimitWarning
+event Action<FrameSyncPauseReason>?  OnFrameSyncPaused    // SnapshotStale=1, Desync=2
+event Action?                        OnFrameSyncResumed
+event Action<FrameHashMismatch>?     OnDesyncDetected
+```
+
+---
+
+## 2. BoomNetworkManager — Unity MonoBehaviour Wrapper
+
+Namespace: `BoomNetwork.Unity`
+
+### Inspector Fields
+```
+host: string = "127.0.0.1"          // server address
+port: int = 9000                     // server port
+heartbeatIntervalMs: float = 3000
+heartbeatTimeoutMs: float = 10000
+maxPlayers: int = 4
+autoStart: bool = true               // auto RequestStart after OnReady
+matchKey: string = ""                // scopes matchmaking
+logEnabled: bool = true
+```
+
+### Properties
+```csharp
+FrameSyncClient Client    // direct access to the underlying client
+int PlayerId              // shortcut
+bool IsConnected          // State >= Connected
+bool IsSyncing            // State == Syncing
+```
+
+### Methods
+```csharp
+void Connect()                                   // uses Inspector host/port
+void Connect(string serverHost, int serverPort)  // override
+void Disconnect()
+void SendInput(byte[] data, int dataLength = -1)
+void QuickStart()   // Connect → MatchRoom → RequestStart (all automatic)
+```
+
+Note: BoomNetworkManager calls `client.Tick()` in its own `Update()`. Do NOT call Tick yourself.
+
+---
+
+## 3. Data Structures
+
+```csharp
+// Core frame data — received in OnFrame
+struct FrameData {
+    uint FrameNumber;
+    PlayerInput[] Inputs;
+    FrameEvent[] Events;   // player join/leave/offline/online/host change
+}
+
+struct PlayerInput {
+    int PlayerId;
+    byte[] Data;
+    int DataLength;
+    ReadOnlySpan<byte> DataSpan;   // zero-copy access (prefer this)
+}
+
+struct FrameEvent {
+    byte EventType;   // 1=PlayerJoined, 2=PlayerLeft, 3=PlayerOffline, 4=PlayerOnline, 5=HostChanged
+    int PlayerId;
+}
+
+// Init data — received in OnFrameSyncStart
+struct FrameSyncInitData {
+    int FrameRate;           // e.g. 20
+    int FrameInterval;       // ms per frame, e.g. 50
+    long StartTime;          // server timestamp
+    int SnapshotInterval;    // frames between snapshots
+    int QuickReconnectMaxMs; // quick reconnect window
+}
+
+// Room info
+struct RoomInfo {
+    int RoomId;
+    int PlayerCount;
+    int MaxPlayers;
+    bool Running;       // frame sync active
+    string MatchKey;
+}
+
+// Entity sync interface — implement for authority entities
+interface IEntitySync {
+    int EntityId { get; }
+    int StateSize { get; }
+    int WriteState(byte[] buffer, int offset);                                // authority: serialize state
+    void OnRemoteState(byte[] data, int offset, int length, int senderPid);  // remote: apply state
+}
+
+// KV store entry
+struct DataEntry {
+    int PlayerId;
+    int Key;
+    byte[] Value;
+}
+
+// Desync detection
+struct FrameHashMismatch {
+    uint FrameNumber;
+    (int PlayerId, uint Hash)[] PlayerHashes;
+}
+
+enum FrameSyncPauseReason : byte { SnapshotStale = 1, Desync = 2 }
+```
+
+---
+
+## 4. Complete Code Templates
+
+### Template A: Frame Sync Game (Action/MOBA/Survival)
+
+```csharp
+using BoomNetwork.Client.FrameSync;
+
+public class FrameSyncGame {
+    FrameSyncClient client;
+    Dictionary<int, PlayerState> players = new();
+
+    public void Init() {
+        client = new FrameSyncClient();
+
+        // Snapshot for reconnect + late-join
+        client.OnTakeSnapshot = () => SerializeAllPlayers();
+        client.OnLoadSnapshot = data => DeserializeAllPlayers(data);
+
+        // Connection flow
+        client.OnConnected      += () => client.MatchRoom(4, "my-game");
+        client.OnReady          += () => client.RequestStart();
+        client.OnFrameSyncStart += init => InitGame(init.FrameRate);
+
+        // Frame processing — THE CORE LOOP
+        client.OnFrame += frame => {
+            // Process frame events first
+            foreach (var evt in frame.Events) {
+                switch (evt.EventType) {
+                    case 1: SpawnPlayer(evt.PlayerId); break;    // PlayerJoined
+                    case 2: RemovePlayer(evt.PlayerId); break;   // PlayerLeft
+                    case 5: SetHost(evt.PlayerId); break;        // HostChanged
+                }
+            }
+            // Process inputs — SKIP LOCAL PLAYER (Local-First)
+            foreach (var input in frame.Inputs) {
+                if (input.PlayerId == client.PlayerId) continue;
+                ApplyInput(input.PlayerId, input.DataSpan);
+            }
+            // Advance game simulation (shared state update)
+            TickGameLogic(frame.FrameNumber);
+        };
+
+        // Reconnect
+        client.OnReconnected  += () => ResumeGame();
+        client.OnDisconnected += () => ShowDisconnectUI();
+
+        client.Connect("127.0.0.1", 9000);
+    }
+
+    // Called every frame (e.g. Unity Update)
+    public void Update(float dtMs) {
+        client.Tick(dtMs);
+
+        if (client.CurrentState == FrameSyncClient.State.Syncing) {
+            // SILENT WHEN IDLE: only send when player has actual input
+            if (HasPlayerInput()) {
+                byte[] input = GatherInput();  // WASD, mouse, actions
+                client.SendInput(input);
+                ApplyInput(client.PlayerId, input);  // LOCAL-FIRST: execute immediately
+            }
+        }
+    }
+}
+```
+
+### Template B: Entity Authority Sync (Open World/Racing)
+
+```csharp
+using BoomNetwork.Client.FrameSync;
+
+// Step 1: Implement IEntitySync on your networked object
+public class NetworkPlayer : MonoBehaviour, IEntitySync {
+    public int EntityId { get; set; }
+    public int StateSize => 24;  // 3 floats position + 3 floats rotation
+
+    public int WriteState(byte[] buf, int off) {
+        // Authority player: serialize current state
+        BitConverter.TryWriteBytes(buf.AsSpan(off), transform.position.x);
+        BitConverter.TryWriteBytes(buf.AsSpan(off + 4), transform.position.y);
+        BitConverter.TryWriteBytes(buf.AsSpan(off + 8), transform.position.z);
+        // ... rotation ...
+        return StateSize;
+    }
+
+    public void OnRemoteState(byte[] data, int off, int len, int senderPid) {
+        // Remote player: apply received state with smoothing
+        float x = BitConverter.ToSingle(data, off);
+        float y = BitConverter.ToSingle(data, off + 4);
+        float z = BitConverter.ToSingle(data, off + 8);
+        transform.position = Vector3.Lerp(transform.position, new Vector3(x, y, z), 0.3f);
+    }
+}
+
+// Step 2: Register with client
+void OnSpawnLocalPlayer(NetworkPlayer player) {
+    player.EntityId = client.PlayerId;  // use playerId as entityId
+    client.RegisterAuthorityEntity(player);
+}
+
+// Step 3: Listen for remote entity states
+client.OnEntityState += (senderPid, entityId, data, offset, len) => {
+    if (remoteEntities.TryGetValue(entityId, out var entity))
+        entity.OnRemoteState(data, offset, len, senderPid);
+};
+
+// SendInput or SendAuthorityEntityStates flushes all registered entity states automatically
+```
+
+### Template C: State Sync Only (Chat/Social/Casual)
+
+```csharp
+// No frame sync needed — just rooms + message broadcasting
+var client = new FrameSyncClient();
+
+client.OnConnected += () => client.MatchRoom(8, "lobby");
+client.OnReady += () => {
+    // Do NOT call RequestStart — no frame sync
+    client.SetData(1, Encoding.UTF8.GetBytes("PlayerName"));  // persistent KV
+};
+
+// Receive broadcasts
+client.OnStateMessage += (pid, data) => UpdateRemotePosition(pid, data);
+client.OnDataChanged  += (ver, pid, key, val) => UpdatePlayerInfo(pid, key, val);
+client.OnDataSynced   += (ver, entries) => RebuildAll(entries);
+
+// Send position (only when changed — Silent When Idle)
+if (positionChanged)
+    client.SendStateMessage(EncodePosition(myPos));
+
+// Custom game messages
+client.SendGameMessage(gameCmd: 100, data: myPayload);
+client.OnGameMessage += (cmd, senderPid, data, off) => HandleGameMsg(cmd, senderPid, data);
+```
+
+---
+
+## 5. Common Mistakes (AI MUST avoid these)
+
+### WRONG: Processing own input in OnFrame
+```csharp
+// BAD — causes double execution of local input
+client.OnFrame += frame => {
+    foreach (var input in frame.Inputs)
+        ApplyInput(input.PlayerId, input.DataSpan);  // includes self!
+};
+```
+
+### CORRECT: Skip own input in OnFrame (Local-First)
+```csharp
+// GOOD — local input already executed in Update()
+client.OnFrame += frame => {
+    foreach (var input in frame.Inputs)
+        if (input.PlayerId != client.PlayerId)
+            ApplyInput(input.PlayerId, input.DataSpan);
+};
+```
+
+### WRONG: Sending input every frame regardless
+```csharp
+// BAD — violates Silent When Idle, wastes bandwidth
+void Update() {
+    client.Tick(dt);
+    client.SendInput(GatherInput());  // sends even when player does nothing!
+}
+```
+
+### CORRECT: Only send when player has actual input
+```csharp
+// GOOD — silent when idle
+void Update() {
+    client.Tick(dt);
+    if (client.CurrentState == FrameSyncClient.State.Syncing && HasInput()) {
+        byte[] input = GatherInput();
+        client.SendInput(input);
+        ApplyLocalInput(input);
+    }
+}
+```
+
+### WRONG: Modifying game state outside OnFrame
+```csharp
+// BAD — causes desync between players
+async void OnPowerUpCollected() {
+    playerHP += 50;  // async mutation outside OnFrame = desync!
+}
+```
+
+### CORRECT: All shared state changes inside OnFrame
+```csharp
+// GOOD — encode event as input, process deterministically in OnFrame
+void OnPowerUpCollected() {
+    pendingActions.Enqueue(Action.Heal50);  // queue it
+}
+byte[] GatherInput() {
+    // include pending actions in input packet
+}
+// In OnFrame: all players process the same action at the same frame
+```
+
+### WRONG: Using prediction/rollback concepts
+```csharp
+// BAD — BoomNetwork has no rollback. Never write this.
+client.Predict(input);
+client.Rollback(frame);
+client.Reconcile();
+```
+
+### CORRECT: Self-authority model
+```csharp
+// GOOD — own input is truth, remote input is trusted, no rollback
+ApplyLocalInput(input);      // immediate, authoritative
+// In OnFrame:
+ApplyRemoteInput(remote);    // trusted, no verification needed
+```
+
+---
+
+## 6. Server Configuration (config.yaml)
+
+```yaml
+# Network
+addr: ":9000"              # game server listen address
+protocol: "tcp"            # "tcp" or "kcp"
+
+# Frame sync
+frameRate: 20              # ticks per second (20 = 50ms per frame)
+frameBufferSize: 2400      # ring buffer size (frames), determines max reconnect window
+snapshotIntervalFrames: 100  # pushed to client, client uploads snapshot every N frames
+quickReconnectMaxMs: 5000    # pushed to client, fast-reconnect timeout
+
+# Room
+maxPlayersPerRoom: 4       # default max players
+disconnectKeepSec: 120     # how long to keep disconnected player's slot
+
+# Admin
+adminAddr: ":9091"         # admin HTTP + WebSocket
+adminToken: ""             # auth token for admin endpoints (empty = no auth)
+```
+
+### Admin HTTP Endpoints
+```
+GET  /health              # health check
+GET  /stats               # traffic + room stats
+GET  /rooms               # room list with player counts
+GET  /rooms/inspect/{id}  # deep room inspection
+POST /rooms/{id}/kick/{pid}  # kick player
+POST /rooms/{id}/stop     # force stop room
+POST /netsim              # set network simulation (delay/jitter/loss)
+GET  /netsim              # get current netsim settings
+POST /config/reload       # hot-reload config
+POST /loglevel            # change log level at runtime
+```
+
+---
+
+## 7. Project Structure
+
+```
+BoomNetwork/
+├── svr/                          # Go server
+│   ├── cmd/framesync/main.go     #   entry point + admin + config
+│   ├── framesync/room.go         #   room tick loop + frame ring buffer
+│   ├── framesync/protocol.go     #   protocol definitions
+│   ├── codec/                    #   binary message codec
+│   ├── transport/                #   TCP + KCP listeners
+│   └── session/                  #   message routing
+├── cli/                          # C# client library (.NET 8)
+│   ├── Core/                     #   protocol, codec, IEntitySync
+│   ├── Client/                   #   FrameSyncClient, ConnectionManager, Room, Reconnect
+│   └── Tests/                    #   NUnit tests
+├── unity/com.boom.boomnetwork/   # Unity UPM package
+│   ├── Runtime/                  #   mirrors cli/ as Unity asmdef
+│   └── Samples~/                 #   8 progressive demos
+└── doc/                          # documentation
+```
+
+## 8. UPM Package Installation
+
+```json
+{
+  "dependencies": {
+    "com.boom.boomnetwork": "https://github.com/luwenyiCC/BoomNetwork.git?path=unity/com.boom.boomnetwork#dev1.0"
+  }
+}
+```
+
+Optional GM tools package:
+```json
+{
+  "dependencies": {
+    "com.boom.boomnetwork.gm": "https://github.com/luwenyiCC/BoomNetwork.git?path=unity/com.boom.boomnetwork.gm#dev1.0"
+  }
+}
+```
