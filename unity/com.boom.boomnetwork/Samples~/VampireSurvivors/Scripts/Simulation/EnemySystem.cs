@@ -32,6 +32,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
                     case EnemyType.Zombie: TickZombie(ref e, state, dt); break;
                     case EnemyType.Bat: TickBat(ref e, state, dt); break;
                     case EnemyType.SkeletonMage: TickMage(ref e, state, dt); break;
+                    case EnemyType.Boss: TickBoss(ref e, state, dt); break;
                 }
 
                 e.PosX = FInt.Clamp(e.PosX, -arenaLimit, arenaLimit);
@@ -115,6 +116,17 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 }
             }
             else e.BehaviorTimer--;
+        }
+
+        static void TickBoss(ref EnemyState e, GameState state, FInt dt)
+        {
+            ref var target = ref state.Players[e.TargetPlayerId];
+            FInt dx = target.PosX - e.PosX, dz = target.PosZ - e.PosZ;
+            FInt distSq = dx * dx + dz * dz;
+            if (distSq < _pointZeroOne) return;
+            FInt invDist = FInt.InvSqrt(distSq);
+            e.PosX = e.PosX + dx * invDist * GameState.BossSpeed * dt;
+            e.PosZ = e.PosZ + dz * invDist * GameState.BossSpeed * dt;
         }
     }
 }

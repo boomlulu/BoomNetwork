@@ -19,6 +19,11 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 state.WaveNumber++;
                 state.WaveSpawnRemaining = (uint)(BaseEnemyCount + state.WaveNumber * EnemiesPerWave);
                 state.WaveSpawnTimer = SpawnIntervalFrames;
+
+                // Boss wave: spawn a Boss at the start of every Nth wave
+                if (state.WaveNumber % GameState.BossWaveInterval == 0)
+                    SpawnBoss(state);
+
                 return;
             }
             if (state.WaveSpawnTimer > 0) { state.WaveSpawnTimer--; return; }
@@ -60,6 +65,22 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 case 2: e.PosX = -margin; e.PosZ = along; break;
                 default: e.PosX = margin; e.PosZ = along; break;
             }
+            e.TargetPlayerId = state.FindNearestPlayer(e.PosX, e.PosZ);
+        }
+
+        static void SpawnBoss(GameState state)
+        {
+            int slot = state.AllocEnemy();
+            if (slot < 0) return;
+            ref var e = ref state.Enemies[slot];
+            e.IsAlive = true;
+            e.Type = EnemyType.Boss;
+            e.Hp = GameState.BossHp + state.WaveNumber * 2;
+            e.BehaviorTimer = 0;
+            e.DirX = FInt.Zero; e.DirZ = FInt.Zero;
+            // Spawn from top edge
+            e.PosX = FInt.Zero;
+            e.PosZ = GameState.ArenaHalfSize + FInt.FromInt(2);
             e.TargetPlayerId = state.FindNearestPlayer(e.PosX, e.PosZ);
         }
 

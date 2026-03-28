@@ -282,7 +282,28 @@ namespace BoomNetwork.Samples.VampireSurvivors
         static void KillEnemy(GameState state, int idx, int killerPlayerId)
         {
             ref var enemy = ref state.Enemies[idx];
-            WeaponSystem.SpawnXpGem(state, enemy.PosX, enemy.PosZ, enemy.Type);
+
+            if (enemy.Type == EnemyType.Boss)
+            {
+                // Boss scatters multiple gems on death
+                for (int g = 0; g < GameState.BossGemCount; g++)
+                {
+                    FInt offX = DeterministicRng.Range(ref state.RngState, new FInt(-1024), new FInt(1024));
+                    FInt offZ = DeterministicRng.Range(ref state.RngState, new FInt(-1024), new FInt(1024));
+                    int gemSlot = state.AllocGem();
+                    if (gemSlot < 0) break;
+                    ref var gem = ref state.Gems[gemSlot];
+                    gem.IsAlive = true;
+                    gem.PosX = enemy.PosX + offX;
+                    gem.PosZ = enemy.PosZ + offZ;
+                    gem.Value = GameState.BossXpValue / GameState.BossGemCount;
+                }
+            }
+            else
+            {
+                WeaponSystem.SpawnXpGem(state, enemy.PosX, enemy.PosZ, enemy.Type);
+            }
+
             enemy.IsAlive = false;
             if (killerPlayerId >= 0 && killerPlayerId < GameState.MaxPlayers)
                 state.Players[killerPlayerId].KillCount++;

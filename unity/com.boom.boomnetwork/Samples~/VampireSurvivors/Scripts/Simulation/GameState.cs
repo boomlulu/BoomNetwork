@@ -5,7 +5,7 @@
 
 namespace BoomNetwork.Samples.VampireSurvivors
 {
-    public enum EnemyType : byte { Zombie = 0, Bat = 1, SkeletonMage = 2 }
+    public enum EnemyType : byte { Zombie = 0, Bat = 1, SkeletonMage = 2, Boss = 3 }
     public enum WeaponType : byte { None = 0, Knife = 1, Orb = 2, Lightning = 3, HolyWater = 4 }
     public enum ProjectileType : byte { Knife = 0, BoneShard = 1, HolyPuddle = 2 }
 
@@ -185,6 +185,15 @@ namespace BoomNetwork.Samples.VampireSurvivors
         public const int HolyWaterDamage = 2;
         public const uint HolyWaterDamageTick = 6;
 
+        // --- Boss ---
+        public static readonly FInt BossSpeed = new FInt(1024);      // 1.0
+        public static readonly FInt BossRadius = new FInt(1536);     // 1.5
+        public const int BossHp = 200;
+        public const int BossDamage = 25;
+        public const int BossXpValue = 50;
+        public const int BossWaveInterval = 5;
+        public const int BossGemCount = 8;
+
         // --- XP ---
         public static readonly FInt XpPickupRadius = new FInt(1536); // 1.5
 
@@ -292,15 +301,15 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
         public static int GetEnemyXpValue(EnemyType t)
         {
-            switch (t) { case EnemyType.Bat: return BatXpValue; case EnemyType.SkeletonMage: return MageXpValue; default: return ZombieXpValue; }
+            switch (t) { case EnemyType.Bat: return BatXpValue; case EnemyType.SkeletonMage: return MageXpValue; case EnemyType.Boss: return BossXpValue; default: return ZombieXpValue; }
         }
         public static FInt GetEnemyRadius(EnemyType t)
         {
-            switch (t) { case EnemyType.Bat: return BatRadius; case EnemyType.SkeletonMage: return MageRadius; default: return ZombieRadius; }
+            switch (t) { case EnemyType.Bat: return BatRadius; case EnemyType.SkeletonMage: return MageRadius; case EnemyType.Boss: return BossRadius; default: return ZombieRadius; }
         }
         public static int GetEnemyDamage(EnemyType t)
         {
-            switch (t) { case EnemyType.Bat: return BatDamage; case EnemyType.SkeletonMage: return MageDamage; default: return ZombieDamage; }
+            switch (t) { case EnemyType.Bat: return BatDamage; case EnemyType.SkeletonMage: return MageDamage; case EnemyType.Boss: return BossDamage; default: return ZombieDamage; }
         }
 
         /// <summary>
