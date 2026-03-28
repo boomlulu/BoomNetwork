@@ -7,6 +7,10 @@ obj/
 *.DotSettings
 BenchmarkDotNet.Artifacts/
 
+# Override global *~ ignore for Unity Samples~ convention
+!unity/com.boom.boomnetwork/Samples~/
+!unity/com.boom.boomnetwork/Samples~/**
+
 # Deploy tool
 svr/dist/
 svr/configs/config.prod.yaml
