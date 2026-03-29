@@ -3,8 +3,8 @@ package session
 import (
 	"testing"
 
-	"github.com/boom/boomnetwork/codec"
-	"github.com/boom/boomnetwork/transport"
+	"github.com/boomlulu/boomnetwork/codec"
+	"github.com/boomlulu/boomnetwork/transport"
 )
 
 func makeMsg(cmdType byte, cmd byte, extCmd uint16, gameCmd uint32) *codec.Message {

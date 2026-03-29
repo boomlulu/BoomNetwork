@@ -7,9 +7,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/boom/boomnetwork/codec"
-	"github.com/boom/boomnetwork/session"
-	"github.com/boom/boomnetwork/transport"
+	"github.com/boomlulu/boomnetwork/codec"
+	"github.com/boomlulu/boomnetwork/session"
+	"github.com/boomlulu/boomnetwork/transport"
 )
 
 const (

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/boom/boomnetwork/framesync"
+	"github.com/boomlulu/boomnetwork/framesync"
 
 	"github.com/gorilla/websocket"
 	"github.com/vmihailenco/msgpack/v5"

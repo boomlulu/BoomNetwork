@@ -1,4 +1,4 @@
-module github.com/boom/boomnetwork
+module github.com/boomlulu/boomnetwork
 
 go 1.24.0
 

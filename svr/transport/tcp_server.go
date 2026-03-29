@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/boom/boomnetwork/codec"
+	"github.com/boomlulu/boomnetwork/codec"
 )
 
 // Conn 代表一个客户端连接

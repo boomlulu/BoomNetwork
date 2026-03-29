@@ -12,8 +12,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/boom/boomnetwork/codec"
-	"github.com/boom/boomnetwork/framesync"
+	"github.com/boomlulu/boomnetwork/codec"
+	"github.com/boomlulu/boomnetwork/framesync"
 )
 
 var (

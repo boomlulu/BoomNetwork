@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/boom/boomnetwork/framesync"
+	"github.com/boomlulu/boomnetwork/framesync"
 )
 
 // ensureTestGlobals ensures package-level globals are usable in tests

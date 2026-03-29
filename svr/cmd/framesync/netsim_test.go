@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/boom/boomnetwork/codec"
+	"github.com/boomlulu/boomnetwork/codec"
 )
 
 // mockConn records messages sent to it

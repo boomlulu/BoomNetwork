@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/boom/boomnetwork/codec"
+	"github.com/boomlulu/boomnetwork/codec"
 )
 
 // PlayerConn 玩家连接接口

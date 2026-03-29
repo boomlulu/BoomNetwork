@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/boom/boomnetwork/codec"
+	"github.com/boomlulu/boomnetwork/codec"
 	kcp "github.com/xtaci/kcp-go/v5"
 )
 

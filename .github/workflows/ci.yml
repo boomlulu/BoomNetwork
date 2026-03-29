@@ -24,6 +24,12 @@ jobs:
       - name: Go vet
         run: go vet ./...
 
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          working-directory: svr
+
       - name: Go test
         run: go test -race -count=1 ./...
 
