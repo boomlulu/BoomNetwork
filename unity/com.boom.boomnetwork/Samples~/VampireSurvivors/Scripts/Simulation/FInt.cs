@@ -67,16 +67,16 @@ namespace BoomNetwork.Samples.VampireSurvivors
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static FInt operator /(FInt a, FInt b)
         {
-            if (b.Raw == 0) return b.Raw >= 0 ? MaxValue : MinValue;
+            if (b.Raw == 0) return MaxValue;
             return new FInt((int)(((long)a.Raw << SHIFT) / b.Raw));
         }
 
         // FInt × int (no shift needed for the int side)
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static FInt operator *(FInt a, int b) => new FInt(a.Raw * b);
+        public static FInt operator *(FInt a, int b) => new FInt((int)((long)a.Raw * b));
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static FInt operator *(int a, FInt b) => new FInt(a * b.Raw);
+        public static FInt operator *(int a, FInt b) => new FInt((int)((long)a * b.Raw));
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static FInt operator /(FInt a, int b)

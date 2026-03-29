@@ -80,7 +80,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 proj.LifetimeFrames = GameState.KnifeLifetimeFrames;
                 proj.OwnerPlayerId = playerIdx; proj.DamageTick = 0;
             }
-            weapon.Cooldown = Math.Max(4u, GameState.KnifeBaseCooldown - (uint)weapon.Level);
+            weapon.Cooldown = (uint)Math.Max(4, (int)GameState.KnifeBaseCooldown - weapon.Level);
         }
 
         static void UpdateOrbs(GameState state, ref PlayerState player, ref WeaponSlot weapon)
@@ -153,7 +153,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 }
                 cx = enemy.PosX; cz = enemy.PosZ;
             }
-            weapon.Cooldown = Math.Max(10u, GameState.LightningBaseCooldown - (uint)(weapon.Level * 3));
+            weapon.Cooldown = (uint)Math.Max(10, (int)GameState.LightningBaseCooldown - weapon.Level * 3);
         }
 
         static void FireHolyWater(GameState state, ref PlayerState player, ref WeaponSlot weapon, int playerIdx)
@@ -168,7 +168,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             proj.Radius = GameState.HolyWaterBaseRadius + FInt.FromInt(weapon.Level) * _03;
             proj.LifetimeFrames = GameState.HolyWaterLifetime + (uint)(weapon.Level * 10);
             proj.OwnerPlayerId = playerIdx; proj.DamageTick = 0;
-            weapon.Cooldown = Math.Max(20u, GameState.HolyWaterBaseCooldown - (uint)(weapon.Level * 5));
+            weapon.Cooldown = (uint)Math.Max(20, (int)GameState.HolyWaterBaseCooldown - weapon.Level * 5);
         }
 
         static void AdvanceProjectiles(GameState state)

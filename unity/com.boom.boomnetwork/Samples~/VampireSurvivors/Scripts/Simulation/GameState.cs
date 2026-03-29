@@ -410,6 +410,16 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 h = Fnv(h, (uint)g.Value);
             }
 
+            for (int i = 0; i < MaxLightningFlashes; i++)
+            {
+                ref var f = ref Flashes[i];
+                if (f.FramesLeft == 0) continue;
+                h = Fnv(h, (uint)i);
+                h = Fnv(h, (uint)f.PosX.Raw);
+                h = Fnv(h, (uint)f.PosZ.Raw);
+                h = Fnv(h, f.FramesLeft);
+            }
+
             return h;
         }
 
