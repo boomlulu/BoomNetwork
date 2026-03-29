@@ -224,6 +224,8 @@ func NewServer(proto string, handler Handler, configs ...ServerConfig) Server {
 	switch proto {
 	case "kcp":
 		return NewKcpServer(handler, configs...)
+	case "ws":
+		return NewWsServer(handler, configs...)
 	default:
 		return NewTcpServer(handler, configs...)
 	}

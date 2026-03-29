@@ -18,7 +18,7 @@ const (
 	CmdNoReply = 3 // 不回复，用于测试客户端超时
 )
 
-var proto = flag.String("proto", "tcp", "protocol: tcp or kcp")
+var proto = flag.String("proto", "tcp", "protocol: tcp, kcp, or ws")
 
 func main() {
 	flag.Parse()
