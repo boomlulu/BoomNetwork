@@ -44,6 +44,22 @@ namespace BoomNetwork.Samples.VampireSurvivors
         const float CamSmoothSpeed = 8f;
         Vector3 _camCurrentPos;
 
+        // ==================== Player Interpolation (jitter fix) ====================
+        // Store previous and current sim positions to interpolate between frames.
+        // SyncVisuals runs at ~20fps (server tick), but Update runs at 60fps+.
+        Vector3[] _playerPrevPos = new Vector3[GameState.MaxPlayers];
+        Vector3[] _playerCurPos = new Vector3[GameState.MaxPlayers];
+        Quaternion[] _playerPrevRot = new Quaternion[GameState.MaxPlayers];
+        Quaternion[] _playerCurRot = new Quaternion[GameState.MaxPlayers];
+        float _interpT; // 0→1 between sim frames
+        float _simFrameInterval; // seconds between sim ticks (e.g. 0.05)
+        float _timeSinceLastSync;
+
+        // ==================== Jitter Diagnostic ====================
+        float _lastSyncTime;
+        int _syncCount;
+        float _diagTimer;
+
         // ==================== Shadow Copy (delta detection) ====================
         int[] _prevEnemyHp = new int[GameState.MaxEnemies];
         bool[] _prevEnemyAlive = new bool[GameState.MaxEnemies];
@@ -83,10 +99,11 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
         // ==================== Init ====================
 
-        public void Init(GameState state, int localSlot)
+        public void Init(GameState state, int localSlot, float simFrameInterval = 0.05f)
         {
             _state = state;
             _localSlot = localSlot;
+            _simFrameInterval = simFrameInterval;
             if (_initialized) return;
             _initialized = true;
 
@@ -101,6 +118,13 @@ namespace BoomNetwork.Samples.VampireSurvivors
             CreateOrbPool();
             CreateFlashPool();
             CreateDamageNumberPool();
+
+            // Init interpolation arrays
+            for (int i = 0; i < GameState.MaxPlayers; i++)
+            {
+                _playerPrevRot[i] = Quaternion.identity;
+                _playerCurRot[i] = Quaternion.identity;
+            }
 
             // Snap camera to player or center
             if (_localSlot >= 0 && _localSlot < GameState.MaxPlayers && state.Players[_localSlot].IsActive)
@@ -154,14 +178,54 @@ namespace BoomNetwork.Samples.VampireSurvivors
             if (mainCam != null && mainCam != _cam) mainCam.gameObject.SetActive(false);
         }
 
+        // Camera runs in LateUpdate (every render frame, 60fps+) not SyncVisuals (20fps).
+        // SyncVisuals only updates _camTarget; LateUpdate smoothly interpolates.
+        Vector3 _camTarget;
+
         void SyncCamera()
         {
             if (_localSlot < 0 || _localSlot >= GameState.MaxPlayers) return;
             ref var p = ref _state.Players[_localSlot];
             if (!p.IsActive) return;
+            _camTarget = new Vector3(p.PosX.ToFloat(), 0f, p.PosZ.ToFloat()) + IsoOffset;
+        }
 
-            Vector3 playerWorld = new Vector3(p.PosX.ToFloat(), 0f, p.PosZ.ToFloat());
-            Vector3 target = playerWorld + IsoOffset + _shakeOffset;
+        void Update()
+        {
+            if (!_initialized || _state == null) return;
+
+            // Advance interpolation timer
+            _timeSinceLastSync += Time.deltaTime;
+            _interpT = (_simFrameInterval > 0f) ? Mathf.Clamp01(_timeSinceLastSync / _simFrameInterval) : 1f;
+
+            // Interpolate player positions between prev and current sim positions
+            for (int i = 0; i < GameState.MaxPlayers; i++)
+            {
+                if (_playerObjs[i] == null || !_playerObjs[i].activeSelf) continue;
+
+                Vector3 interpPos = Vector3.Lerp(_playerPrevPos[i], _playerCurPos[i], _interpT);
+                _playerObjs[i].transform.position = interpPos;
+
+                Quaternion interpRot = Quaternion.Slerp(_playerPrevRot[i], _playerCurRot[i], _interpT);
+                _playerObjs[i].transform.rotation = interpRot;
+            }
+        }
+
+        void LateUpdate()
+        {
+            if (!_initialized || _cam == null) return;
+
+            // Camera follows interpolated local player position (not sim position)
+            if (_localSlot >= 0 && _localSlot < GameState.MaxPlayers
+                && _playerObjs[_localSlot] != null && _playerObjs[_localSlot].activeSelf)
+            {
+                _camTarget = _playerObjs[_localSlot].transform.position
+                    - new Vector3(0f, 0.5f, 0f) // remove capsule Y offset
+                    + IsoOffset;
+            }
+
+            UpdateShake();
+            Vector3 target = _camTarget + _shakeOffset;
             _camCurrentPos = Vector3.Lerp(_camCurrentPos, target, Time.deltaTime * CamSmoothSpeed);
             _cam.transform.position = _camCurrentPos;
             _cam.transform.rotation = IsoRotation;
@@ -331,7 +395,6 @@ namespace BoomNetwork.Samples.VampireSurvivors
         {
             if (!_initialized || _state == null) return;
 
-            SyncCamera();
             SyncPlayers();
             SyncEnemies();
             SyncProjectiles();
@@ -340,7 +403,6 @@ namespace BoomNetwork.Samples.VampireSurvivors
             SyncFlashes();
             UpdateDeathExplosions();
             UpdateDamageNumbers();
-            UpdateShake();
             UpdateBossWarning();
             CaptureFrameShadow();
         }
@@ -349,6 +411,23 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
         void SyncPlayers()
         {
+            // === Jitter Diagnostic ===
+            float now = Time.realtimeSinceStartup;
+            float syncDelta = now - _lastSyncTime;
+            _lastSyncTime = now;
+            _syncCount++;
+            _diagTimer += syncDelta;
+            if (_diagTimer >= 2f)
+            {
+                float avgHz = _syncCount / _diagTimer;
+                Debug.Log($"[VS-Jitter] SyncPlayers avg rate: {avgHz:F1} Hz (expected ~{1f/_simFrameInterval:F0}), interval: {syncDelta*1000f:F1}ms, renderFPS: {1f/Time.deltaTime:F0}");
+                _diagTimer = 0f;
+                _syncCount = 0;
+            }
+
+            // Reset interpolation timer — new sim frame arrived
+            _timeSinceLastSync = 0f;
+
             for (int i = 0; i < GameState.MaxPlayers; i++)
             {
                 ref var p = ref _state.Players[i];
@@ -359,13 +438,32 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 // Feature 5a: player scale by level
                 float pScale = 1f + Mathf.Min(p.Level - 1, 9) * 0.015f;
                 _playerObjs[i].transform.localScale = new Vector3(0.7f * pScale, 0.5f * pScale, 0.7f * pScale);
-                _playerObjs[i].transform.position = new Vector3(p.PosX.ToFloat(), 0.5f, p.PosZ.ToFloat());
 
+                // Capture previous → current for interpolation
+                Vector3 newPos = new Vector3(p.PosX.ToFloat(), 0.5f, p.PosZ.ToFloat());
+                _playerPrevPos[i] = _playerCurPos[i];
+                _playerCurPos[i] = newPos;
+
+                // Snap on first frame (prev == zero)
+                if (_playerPrevPos[i] == Vector3.zero)
+                    _playerPrevPos[i] = newPos;
+
+                // Set position immediately (Update will refine with interpolation)
+                _playerObjs[i].transform.position = newPos;
+
+                Quaternion newRot;
                 if (p.FacingX != FInt.Zero || p.FacingZ != FInt.Zero)
                 {
                     float angle = Mathf.Atan2(p.FacingX.ToFloat(), p.FacingZ.ToFloat()) * Mathf.Rad2Deg;
-                    _playerObjs[i].transform.rotation = Quaternion.Euler(0f, angle, 0f);
+                    newRot = Quaternion.Euler(0f, angle, 0f);
                 }
+                else
+                {
+                    newRot = _playerCurRot[i];
+                }
+                _playerPrevRot[i] = _playerCurRot[i];
+                _playerCurRot[i] = newRot;
+                _playerObjs[i].transform.rotation = newRot;
 
                 var rend = _playerObjs[i].GetComponent<Renderer>();
                 rend.sharedMaterial = p.InvincibilityFrames > 0 && (_state.FrameNumber % 4 < 2)

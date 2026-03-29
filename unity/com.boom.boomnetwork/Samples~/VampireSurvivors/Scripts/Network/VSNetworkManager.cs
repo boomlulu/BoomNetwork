@@ -138,7 +138,8 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
             _renderer = GetComponent<VSRenderer>();
             if (_renderer == null) _renderer = gameObject.AddComponent<VSRenderer>();
-            _renderer.Init(_sim.State, _localSlot);
+            float frameIntervalSec = init.FrameInterval / 1000f;
+            _renderer.Init(_sim.State, _localSlot, frameIntervalSec);
 
             Debug.Log($"[VS] FrameSync started. Pid={_network.PlayerId}, Slot={_localSlot}, snapshot={_snapshotLoaded}, dt={dt}, fps={init.FrameRate}");
         }
