@@ -423,17 +423,19 @@ namespace BoomNetwork.Client.FrameSync
             _session?.SendExt(FrameSyncExtCmd.FrameHash, buf);
         }
 
-        /// <summary>请求服务器暂停帧同步（停推帧，零游戏流量）。暂停期间输入仍缓存，恢复后第一帧带上。</summary>
+        /// <summary>请求服务器暂停帧同步（停推帧，零游戏流量）。暂停期间输入仍缓存，恢复后第一帧带上。
+        /// 服务器侧幂等：已暂停时重复调用无副作用。</summary>
         public void RequestGamePause()
         {
-            if (CurrentState != State.Syncing || IsGamePaused) return;
+            if (CurrentState != State.Syncing) return;
             _session?.SendExt(FrameSyncExtCmd.RequestGamePause, null);
         }
 
-        /// <summary>请求服务器恢复帧同步。</summary>
+        /// <summary>请求服务器恢复帧同步。
+        /// 服务器侧幂等：未暂停时重复调用无副作用。</summary>
         public void RequestGameResume()
         {
-            if (CurrentState != State.Syncing || !IsGamePaused) return;
+            if (CurrentState != State.Syncing) return;
             _session?.SendExt(FrameSyncExtCmd.RequestGameResume, null);
         }
 

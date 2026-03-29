@@ -100,8 +100,11 @@ namespace BoomNetwork.Samples.VampireSurvivors
             _network.SendInput(_inputBuf);
 
             // 升级选择发出后，立即请求恢复帧推送（打破死锁：OnFrame 需要服务器推帧才触发）
-            if (ability != 0 && _network.Client.IsGamePaused)
+            if (ability != 0)
+            {
+                Debug.Log($"[VS] Upgrade choice sent: ability={ability}, IsGamePaused={_network.Client.IsGamePaused}");
                 _network.Client.RequestGameResume();
+            }
         }
 
         // ==================== Network Events ====================
