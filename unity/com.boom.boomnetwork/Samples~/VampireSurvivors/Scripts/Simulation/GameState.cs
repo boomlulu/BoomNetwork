@@ -108,6 +108,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
     public struct XpGemState
     {
         public bool IsAlive;
+        public bool Attracting; // 正在被磁吸
         public FInt PosX, PosZ;
         public int Value;
     }
@@ -194,8 +195,14 @@ namespace BoomNetwork.Samples.VampireSurvivors
         public const int BossWaveInterval = 5;
         public const int BossGemCount = 8;
 
+        // --- Weapon ---
+        public const int MaxWeaponLevel = 10;
+
         // --- XP ---
         public static readonly FInt XpPickupRadius = new FInt(1536); // 1.5
+        public static readonly FInt XpMagnetRadius = FInt.FromInt(5);  // 磁吸范围
+        public static readonly FInt XpMagnetBaseSpeed = FInt.FromInt(8); // 最远处吸引速度
+        public static readonly FInt XpMagnetMaxSpeed = FInt.FromInt(25); // 最近处吸引速度
 
         // --- Shared ---
         static readonly FInt _enemyApproxRadius = new FInt(409);     // 0.4
@@ -397,6 +404,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 ref var g = ref Gems[i];
                 if (!g.IsAlive) continue;
                 h = Fnv(h, (uint)i);
+                h = Fnv(h, g.Attracting ? 1u : 0u);
                 h = Fnv(h, (uint)g.PosX.Raw);
                 h = Fnv(h, (uint)g.PosZ.Raw);
                 h = Fnv(h, (uint)g.Value);

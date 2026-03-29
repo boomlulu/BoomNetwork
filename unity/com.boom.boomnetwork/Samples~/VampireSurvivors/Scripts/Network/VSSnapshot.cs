@@ -89,6 +89,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 ref var g = ref state.Gems[i];
                 if (!g.IsAlive) continue;
                 w.Write((ushort)i); // slot index
+                w.Write(g.Attracting);
                 w.Write(g.PosX.Raw); w.Write(g.PosZ.Raw); w.Write(g.Value);
             }
 
@@ -195,6 +196,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 int slot = r.ReadUInt16();
                 ref var g = ref state.Gems[slot];
                 g.IsAlive = true;
+                g.Attracting = r.ReadBoolean();
                 g.PosX = new FInt(r.ReadInt32()); g.PosZ = new FInt(r.ReadInt32()); g.Value = r.ReadInt32();
             }
 

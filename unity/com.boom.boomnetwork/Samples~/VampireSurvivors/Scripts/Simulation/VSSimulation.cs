@@ -64,6 +64,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             WaveSystem.Tick(State);
             EnemySystem.Tick(State);
             WeaponSystem.Tick(State);
+            CollisionSystem.AttractGems(State);
             CollisionSystem.CachePositions(State);
             CollisionSystem.Rebuild(State);
             CollisionSystem.Resolve(State);
@@ -145,7 +146,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             if (existingSlot >= 0)
             {
                 var w = player.GetWeapon(existingSlot);
-                if (w.Level < 5) w.Level++;
+                if (w.Level < GameState.MaxWeaponLevel) w.Level++;
                 player.SetWeapon(existingSlot, w);
             }
             else

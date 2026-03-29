@@ -248,6 +248,51 @@ namespace BoomNetwork.Samples.VampireSurvivors
             }
         }
 
+        /// <summary>磁吸：磁吸范围内的宝石向最近玩家飞行，距离越近速度越快。</summary>
+        public static void AttractGems(GameState state)
+        {
+            long magnetSq = (long)GameState.XpMagnetRadius.Raw * GameState.XpMagnetRadius.Raw;
+            for (int g = 0; g < GameState.MaxGems; g++)
+            {
+                ref var gem = ref state.Gems[g];
+                if (!gem.IsAlive) continue;
+
+                // 找最近的活着的玩家
+                int nearest = -1;
+                long nearestDistSq = long.MaxValue;
+                for (int p = 0; p < GameState.MaxPlayers; p++)
+                {
+                    ref var player = ref state.Players[p];
+                    if (!player.IsActive || !player.IsAlive) continue;
+                    long dx = player.PosX.Raw - gem.PosX.Raw;
+                    long dz = player.PosZ.Raw - gem.PosZ.Raw;
+                    long distSq = dx * dx + dz * dz;
+                    if (distSq < nearestDistSq) { nearestDistSq = distSq; nearest = p; }
+                }
+                if (nearest < 0) continue;
+
+                // 已在磁吸中或刚进入磁吸范围
+                if (!gem.Attracting && nearestDistSq > magnetSq) continue;
+                gem.Attracting = true;
+
+                // 距离越近，速度越快（线性插值 base→max）
+                FInt dist = FInt.Sqrt(new FInt((int)Math.Min(nearestDistSq, int.MaxValue)));
+                if (dist.Raw <= 0) continue; // 重合，下一帧 snap-collect 处理
+
+                FInt t = FInt.One - FInt.Clamp(dist / GameState.XpMagnetRadius, FInt.Zero, FInt.One);
+                FInt speed = GameState.XpMagnetBaseSpeed + (GameState.XpMagnetMaxSpeed - GameState.XpMagnetBaseSpeed) * t;
+                FInt step = speed * state.Dt;
+
+                // 不要飞过头
+                if (step > dist) step = dist;
+
+                ref var target = ref state.Players[nearest];
+                FInt invDist = FInt.One / dist;
+                gem.PosX = gem.PosX + (target.PosX - gem.PosX) * invDist * step;
+                gem.PosZ = gem.PosZ + (target.PosZ - gem.PosZ) * invDist * step;
+            }
+        }
+
         static void ResolvePlayersVsGems(GameState state)
         {
             long rSq = (long)GameState.XpPickupRadius.Raw * GameState.XpPickupRadius.Raw;
