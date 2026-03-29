@@ -34,6 +34,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
         uint _desyncFrame;
         byte _pendingUpgradeChoice;
         bool _firstInputSent;
+        bool _wasUpgrading;
 
         // Cached GUIStyles
         bool _stylesCached;
@@ -180,6 +181,14 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
             uint hash = _sim.State.ComputeHash();
             _network.Client.SendFrameHash(frame.FrameNumber, hash);
+
+            // 检测升级暂停状态变化 → 请求服务器暂停/恢复帧推送
+            bool upgrading = _sim.IsAnyPlayerUpgrading();
+            if (upgrading && !_wasUpgrading)
+                _network.Client.RequestGamePause();
+            else if (!upgrading && _wasUpgrading)
+                _network.Client.RequestGameResume();
+            _wasUpgrading = upgrading;
         }
 
         void OnDesync(FrameHashMismatch mismatch)

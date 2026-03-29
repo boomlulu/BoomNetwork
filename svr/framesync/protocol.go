@@ -75,6 +75,10 @@ const (
 	ExtCmdFrameSyncPaused  uint16 = 56 // S→C [Reason:1]
 	ExtCmdFrameSyncResumed uint16 = 57 // S→C (empty body)
 
+	// 游戏级暂停（客户端请求）
+	ExtCmdRequestGamePause  uint16 = 58 // C→S (empty body)
+	ExtCmdRequestGameResume uint16 = 59 // C→S (empty body)
+
 	// 帧 hash 校验
 	ExtCmdFrameHash        uint16 = 60 // C→S [FrameNumber:4][Hash:4]
 	ExtCmdFrameHashMismatch uint16 = 61 // S→C [FrameNumber:4][PlayerCount:1][PlayerId:4 + Hash:4]...
@@ -86,6 +90,7 @@ type FrameSyncPauseReason byte
 const (
 	PauseReasonSnapshotStale FrameSyncPauseReason = 1 // 快照过期
 	PauseReasonDesync        FrameSyncPauseReason = 2 // 帧 hash 不匹配
+	PauseReasonGamePause     FrameSyncPauseReason = 3 // 游戏逻辑暂停（客户端请求）
 )
 
 

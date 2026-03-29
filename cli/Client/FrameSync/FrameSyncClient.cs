@@ -44,6 +44,9 @@ namespace BoomNetwork.Client.FrameSync
         public FrameSyncInitData? InitData { get; private set; }
         public bool HasPreviousIdentity => PlayerId > 0 && RoomId > 0;
 
+        /// <summary>服务器是否处于游戏级暂停（客户端请求的暂停，暂停期间不推帧）</summary>
+        public bool IsGamePaused { get; private set; }
+
         // --- 事件 ---
         public event Action? OnConnected;
         public event Action<int, int[]>? OnJoinedRoom;       // roomId, existingPlayerIds
@@ -413,11 +416,25 @@ namespace BoomNetwork.Client.FrameSync
         /// </summary>
         public void SendFrameHash(uint frameNumber, uint hash)
         {
-            if (CurrentState != State.Syncing) return;
+            if (CurrentState != State.Syncing || IsGamePaused) return;
             var buf = new byte[8];
             BinaryPrimitives.WriteUInt32LittleEndian(buf, frameNumber);
             BinaryPrimitives.WriteUInt32LittleEndian(buf.AsSpan(4), hash);
             _session?.SendExt(FrameSyncExtCmd.FrameHash, buf);
+        }
+
+        /// <summary>请求服务器暂停帧同步（停推帧，零游戏流量）。暂停期间输入仍缓存，恢复后第一帧带上。</summary>
+        public void RequestGamePause()
+        {
+            if (CurrentState != State.Syncing || IsGamePaused) return;
+            _session?.SendExt(FrameSyncExtCmd.RequestGamePause, null);
+        }
+
+        /// <summary>请求服务器恢复帧同步。</summary>
+        public void RequestGameResume()
+        {
+            if (CurrentState != State.Syncing || !IsGamePaused) return;
+            _session?.SendExt(FrameSyncExtCmd.RequestGameResume, null);
         }
 
         // ===================== Network Stack =====================
@@ -489,6 +506,7 @@ namespace BoomNetwork.Client.FrameSync
         private void HandleDisconnected()
         {
             _frameSyncStarted = false;
+            IsGamePaused = false;
             _pendingSnapshotData = null;
             _snapshotRetryCount = 0;
             _snapshotRetryTimer = 0;
@@ -615,11 +633,14 @@ namespace BoomNetwork.Client.FrameSync
                             ? (FrameSyncPauseReason)msg.DataSpan[0]
                             : FrameSyncPauseReason.SnapshotStale;
                         Log($"FrameSync paused by server, reason={reason}");
+                        if (reason == FrameSyncPauseReason.GamePause)
+                            IsGamePaused = true;
                         OnFrameSyncPaused?.Invoke(reason);
                         break;
                     }
                     case FrameSyncExtCmd.FrameSyncResumed:
                         Log("FrameSync resumed by server");
+                        IsGamePaused = false;
                         OnFrameSyncResumed?.Invoke();
                         break;
 
@@ -782,6 +803,7 @@ namespace BoomNetwork.Client.FrameSync
         private void HandleStopFrameSync()
         {
             _frameSyncStarted = false;
+            IsGamePaused = false;
             CurrentState = State.InRoom;
             OnFrameSyncStop?.Invoke();
         }

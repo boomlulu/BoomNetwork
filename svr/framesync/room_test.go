@@ -146,3 +146,121 @@ func TestSnapshotPauseAndResume(t *testing.T) {
 		t.Error("should resume after snapshot upload")
 	}
 }
+
+func TestGamePause_Toggle(t *testing.T) {
+	room := NewRoomWithConfig(RoomConfig{
+		FrameRate:       20,
+		FrameBufferSize: 100,
+	})
+
+	if room.IsGamePaused() {
+		t.Error("should not be paused initially")
+	}
+
+	// First pause → state changed
+	if !room.GamePause() {
+		t.Error("GamePause should return true on state change")
+	}
+	if !room.IsGamePaused() {
+		t.Error("should be paused after GamePause")
+	}
+
+	// Duplicate pause → no change
+	if room.GamePause() {
+		t.Error("GamePause should return false when already paused")
+	}
+
+	// Resume → state changed
+	if !room.GameResume() {
+		t.Error("GameResume should return true on state change")
+	}
+	if room.IsGamePaused() {
+		t.Error("should not be paused after GameResume")
+	}
+
+	// Duplicate resume → no change
+	if room.GameResume() {
+		t.Error("GameResume should return false when already running")
+	}
+}
+
+func TestGamePause_StepFrameBlocked(t *testing.T) {
+	room := NewRoomWithConfig(RoomConfig{
+		FrameRate:       20,
+		FrameBufferSize: 100,
+	})
+	room.mu.Lock()
+	room.running = true
+	room.mu.Unlock()
+
+	// Push a few frames normally
+	room.stepFrame()
+	room.stepFrame()
+	room.stepFrame()
+	if room.frameNumber != 3 {
+		t.Fatalf("expected frame 3, got %d", room.frameNumber)
+	}
+
+	// Pause → stepFrame should not advance
+	room.GamePause()
+	room.stepFrame()
+	room.stepFrame()
+	if room.frameNumber != 3 {
+		t.Errorf("frame should stay 3 during pause, got %d", room.frameNumber)
+	}
+
+	// Resume → stepFrame should advance again
+	room.GameResume()
+	room.stepFrame()
+	if room.frameNumber != 4 {
+		t.Errorf("frame should be 4 after resume, got %d", room.frameNumber)
+	}
+}
+
+func TestGamePause_InputsBuffered(t *testing.T) {
+	room := NewRoomWithConfig(RoomConfig{
+		FrameRate:       20,
+		FrameBufferSize: 100,
+	})
+	room.mu.Lock()
+	room.running = true
+	room.mu.Unlock()
+
+	// Advance to frame 1 so we have a baseline
+	room.stepFrame()
+
+	// Pause and add input
+	room.GamePause()
+	room.OnInput(1, []byte{0xAB, 0xCD})
+
+	// stepFrame blocked — input stays in pendingInputs
+	room.stepFrame()
+	if room.frameNumber != 1 {
+		t.Fatalf("frame should stay 1 during pause, got %d", room.frameNumber)
+	}
+
+	// Resume — next frame should carry the buffered input
+	room.GameResume()
+	room.stepFrame()
+	if room.frameNumber != 2 {
+		t.Errorf("frame should be 2 after resume, got %d", room.frameNumber)
+	}
+
+	// Verify the input was included by checking the ring buffer
+	room.mu.Lock()
+	// The latest frame is at (ringPos-1) mod size
+	pos := (room.frameRingPos - 1 + len(room.frameRing)) % len(room.frameRing)
+	data := room.frameRing[pos].EncodedData
+	room.mu.Unlock()
+
+	frame := DecodeFrameData(data)
+	if frame.FrameNumber != 2 {
+		t.Errorf("decoded frame should be 2, got %d", frame.FrameNumber)
+	}
+	if len(frame.Inputs) != 1 {
+		t.Fatalf("expected 1 input in resumed frame, got %d", len(frame.Inputs))
+	}
+	if frame.Inputs[0].PlayerId != 1 {
+		t.Errorf("input playerId should be 1, got %d", frame.Inputs[0].PlayerId)
+	}
+}

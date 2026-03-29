@@ -136,6 +136,9 @@ func main() {
 	router.OnExt(framesync.ExtCmdSendStateMsg, txStats(handleSendStateMsg))
 	router.OnExt(framesync.ExtCmdSetData, txStats(handleSetData))
 	router.OnExt(framesync.ExtCmdRequestDataSync, txStats(handleRequestDataSync))
+	// 游戏级暂停
+	router.OnExt(framesync.ExtCmdRequestGamePause, txStats(handleRequestGamePause))
+	router.OnExt(framesync.ExtCmdRequestGameResume, txStats(handleRequestGameResume))
 	// 帧 hash 校验
 	router.OnExt(framesync.ExtCmdFrameHash, txStats(handleFrameHash))
 	// Game Cmd (uint32) — 服务器透传
@@ -1102,6 +1105,48 @@ func handleFrameHash(conn *transport.Conn, msg *codec.Message) *codec.Message {
 		mismatchData := framesync.EncodeFrameHashMismatch(frameNum, hashes)
 		broadcastToRoom(room, -1, codec.NewExtMessage(framesync.ExtCmdFrameHashMismatch, mismatchData))
 		broadcastToRoom(room, -1, codec.NewExtMessage(framesync.ExtCmdFrameSyncPaused, []byte{byte(framesync.PauseReasonDesync)}))
+	}
+	return nil
+}
+
+// handleRequestGamePause 客户端请求游戏级暂停
+func handleRequestGamePause(conn *transport.Conn, msg *codec.Message) *codec.Message {
+	val, ok := connPlayerMap.Load(conn.ID)
+	if !ok {
+		return nil
+	}
+	playerId := val.(int32)
+
+	roomVal, ok := playerRoomMap.Load(playerId)
+	if !ok {
+		return nil
+	}
+	room := roomVal.(*framesync.Room)
+
+	if room.GamePause() {
+		slog.Info("game paused by player", "roomId", room.ID, "playerId", playerId)
+		broadcastToRoom(room, -1, codec.NewExtMessage(framesync.ExtCmdFrameSyncPaused, []byte{byte(framesync.PauseReasonGamePause)}))
+	}
+	return nil
+}
+
+// handleRequestGameResume 客户端请求解除游戏级暂停
+func handleRequestGameResume(conn *transport.Conn, msg *codec.Message) *codec.Message {
+	val, ok := connPlayerMap.Load(conn.ID)
+	if !ok {
+		return nil
+	}
+	playerId := val.(int32)
+
+	roomVal, ok := playerRoomMap.Load(playerId)
+	if !ok {
+		return nil
+	}
+	room := roomVal.(*framesync.Room)
+
+	if room.GameResume() {
+		slog.Info("game resumed by player", "roomId", room.ID, "playerId", playerId)
+		broadcastToRoom(room, -1, codec.NewExtMessage(framesync.ExtCmdFrameSyncResumed, nil))
 	}
 	return nil
 }

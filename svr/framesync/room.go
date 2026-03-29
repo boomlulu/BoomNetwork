@@ -94,6 +94,9 @@ type Room struct {
 	snapshotStaleFrames uint32 // 自上次快照以来经过的帧数
 	snapshotPaused      bool   // 是否因快照过期而暂停
 
+	// 游戏级暂停: 客户端请求，服务器停推帧（心跳保持）
+	gamePaused bool
+
 	// 实体权威表: entityId → ownerPlayerId (0 = unclaimed)
 	entityAuthority map[int32]int32
 
@@ -267,6 +270,35 @@ func (r *Room) StartTime() int64 {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.startTime
+}
+
+// IsGamePaused 是否处于游戏级暂停
+func (r *Room) IsGamePaused() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.gamePaused
+}
+
+// GamePause 设置游戏级暂停。返回 true 表示状态变更（从运行→暂停）。
+func (r *Room) GamePause() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.gamePaused {
+		return false
+	}
+	r.gamePaused = true
+	return true
+}
+
+// GameResume 解除游戏级暂停。返回 true 表示状态变更（从暂停→运行）。
+func (r *Room) GameResume() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.gamePaused {
+		return false
+	}
+	r.gamePaused = false
+	return true
 }
 
 // GetRoomInfo 获取房间信息快照
@@ -556,6 +588,12 @@ func (r *Room) stepFrame() {
 			r.mu.Unlock()
 			return
 		}
+	}
+
+	// 游戏级暂停: 客户端请求的暂停，不推帧、不递增帧号
+	if r.gamePaused {
+		r.mu.Unlock()
+		return
 	}
 
 	r.frameNumber++

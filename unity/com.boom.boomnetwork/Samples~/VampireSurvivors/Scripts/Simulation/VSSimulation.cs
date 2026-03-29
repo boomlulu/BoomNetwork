@@ -75,7 +75,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             }
         }
 
-        bool IsAnyPlayerUpgrading()
+        public bool IsAnyPlayerUpgrading()
         {
             for (int i = 0; i < GameState.MaxPlayers; i++)
                 if (State.Players[i].IsActive && State.Players[i].IsAlive && State.Players[i].PendingLevelUp)

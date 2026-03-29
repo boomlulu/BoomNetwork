@@ -76,6 +76,10 @@ namespace BoomNetwork.Core.FrameSync
         public const ushort FrameSyncPaused  = 56; // S→C [Reason:1]
         public const ushort FrameSyncResumed = 57; // S→C (empty)
 
+        // 游戏级暂停（客户端请求）
+        public const ushort RequestGamePause  = 58; // C→S (empty)
+        public const ushort RequestGameResume = 59; // C→S (empty)
+
         // 不同步检测
         public const ushort FrameHash         = 60; // C→S [FrameNumber:4][Hash:4]
         public const ushort FrameHashMismatch = 61; // S→C [FrameNumber:4][PlayerCount:1][PlayerId:4+Hash:4]...
@@ -96,6 +100,7 @@ namespace BoomNetwork.Core.FrameSync
     {
         SnapshotStale = 1,  // 快照过期
         Desync        = 2,  // 帧 hash 不匹配（不同步）
+        GamePause     = 3,  // 游戏逻辑暂停（客户端请求）
     }
 
     /// <summary>帧 hash 不匹配详情</summary>
