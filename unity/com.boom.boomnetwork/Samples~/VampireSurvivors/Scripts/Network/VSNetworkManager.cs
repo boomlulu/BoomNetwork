@@ -98,6 +98,10 @@ namespace BoomNetwork.Samples.VampireSurvivors
             if (h == 0f && v == 0f && ability == 0) return;
             VSInput.Encode(_inputBuf, h, v, ability);
             _network.SendInput(_inputBuf);
+
+            // 升级选择发出后，立即请求恢复帧推送（打破死锁：OnFrame 需要服务器推帧才触发）
+            if (ability != 0 && _network.Client.IsGamePaused)
+                _network.Client.RequestGameResume();
         }
 
         // ==================== Network Events ====================
