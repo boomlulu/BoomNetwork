@@ -200,6 +200,17 @@ maxPlayers: 4                # 每房间最大玩家数
 disconnectKeepSec: 120       # 断线保留时长
 ```
 
+## 文档
+
+| 文档 | 内容 |
+|------|------|
+| [5 分钟教程](doc/tutorial.md) | 从零到两个角色同步移动 |
+| [性能报告](doc/performance.md) | 4000 人压测、Codec 基准、带宽分析 |
+| [核心哲学](doc/shared/04-core-philosophy.md) | 自权威、不回滚、三条公理 |
+| [API Reference](doc/client/01-api-reference.md) | FrameSyncClient 全接口 |
+| [llms.txt](llms.txt) | AI 编码助手专用参考 |
+| [Cheatsheet](doc/cheatsheet.md) | 一页速查 |
+
 ## 生产部署
 
 - 腾讯云验证通过（systemd 托管）

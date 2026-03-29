@@ -1,0 +1,14 @@
+services:
+  server:
+    build:
+      context: ./svr
+    ports:
+      - "9000:9000"   # Game (TCP)
+      - "9091:9091"   # Admin HTTP + WebSocket
+      - "9090:9090"   # Prometheus metrics
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9091/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
