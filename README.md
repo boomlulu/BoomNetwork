@@ -1,5 +1,9 @@
 # BoomNetwork
 
+[![CI](https://github.com/boomlulu/BoomNetwork/actions/workflows/ci.yml/badge.svg?branch=dev1.0)](https://github.com/boomlulu/BoomNetwork/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/boomlulu/BoomNetwork)](https://github.com/boomlulu/BoomNetwork/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 帧驱动状态同步框架 — 让多人游戏的网络层**消失**。
 
 C# 客户端 + Go 服务器 + Unity UPM 包。不绑定游戏类型，不要求理解回滚。
@@ -56,8 +60,15 @@ BoomNetwork/
 ### 1. 启动服务器
 
 ```bash
+# 方式 A: Docker（推荐，零依赖）
+docker run -p 9000:9000 -p 9091:9091 ghcr.io/boomlulu/boomnetwork:latest
+
+# 方式 B: 下载二进制
+# → https://github.com/boomlulu/BoomNetwork/releases
+./boomnetwork-server -config config.yaml
+
+# 方式 C: 源码编译
 cd svr && go run ./cmd/framesync/ -config cmd/framesync/config.yaml
-# → [FrameSync Server] Running on :9000
 ```
 
 ### 2. Unity 接入
@@ -111,6 +122,25 @@ client.SendInput(myInputBytes);
 - 玩家移动 → 实体权威同步（自权威零延迟）
 - 世界恢复 → 快照（dirty block tracking，增量序列化）
 - 完整体素引擎：Greedy Meshing + Simplex 噪声 + Voxel AABB 物理
+
+## 生命周期
+
+```mermaid
+stateDiagram-v2
+    [*] --> Disconnected
+    Disconnected --> Connecting : Connect()
+    Connecting --> Connected : SessionBind
+    Connected --> InRoom : MatchRoom / JoinRoom
+    InRoom --> Syncing : RequestStart
+    Syncing --> Syncing : OnFrame loop
+    Syncing --> Reconnecting : 断线
+    Reconnecting --> Syncing : Stage 1 快速补帧
+    Reconnecting --> Syncing : Stage 2 快照恢复
+    Reconnecting --> Disconnected : 重连失败
+    Syncing --> InRoom : StopFrameSync
+    InRoom --> Connected : LeaveRoom
+    Connected --> Disconnected : Disconnect
+```
 
 ## 架构
 
