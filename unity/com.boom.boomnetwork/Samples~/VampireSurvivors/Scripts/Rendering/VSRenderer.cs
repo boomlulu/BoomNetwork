@@ -59,6 +59,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
         // ==================== Gem Magnet (Feature 3) ====================
         Vector3[] _gemVisualPos = new Vector3[GameState.MaxGems];
+        bool[] _gemWasAlive = new bool[GameState.MaxGems];
         const float GemMagnetRadius = 4f;
         const float GemMagnetLerpSpeed = 8f;
 
@@ -489,7 +490,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 _gemPool[i].SetActive(show);
                 if (!show)
                 {
-                    _gemVisualPos[i] = new Vector3(g.PosX.ToFloat(), 0.2f, g.PosZ.ToFloat());
+                    _gemWasAlive[i] = false;
                     continue;
                 }
 
@@ -497,22 +498,31 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 float bob = Mathf.Sin((_state.FrameNumber + i * 7) * 0.15f) * 0.1f;
                 Vector3 simPos = new Vector3(simX, 0.2f + bob, simZ);
 
-                // Find closest player within magnet radius
-                Vector3 pullTarget = simPos;
-                float bestSq = GemMagnetRadius * GemMagnetRadius;
-                bool inMagnet = false;
-                for (int p = 0; p < GameState.MaxPlayers; p++)
+                // Snap on first frame after spawn to avoid lerping from stale slot position
+                if (!_gemWasAlive[i])
                 {
-                    ref var pl = ref _state.Players[p];
-                    if (!pl.IsActive || !pl.IsAlive) continue;
-                    float dx = pl.PosX.ToFloat() - simX;
-                    float dz = pl.PosZ.ToFloat() - simZ;
-                    float dSq = dx * dx + dz * dz;
-                    if (dSq < bestSq) { bestSq = dSq; pullTarget = new Vector3(pl.PosX.ToFloat(), 0.3f, pl.PosZ.ToFloat()); inMagnet = true; }
+                    _gemVisualPos[i] = simPos;
+                    _gemWasAlive[i] = true;
                 }
+                else
+                {
+                    // Find closest player within magnet radius
+                    Vector3 pullTarget = simPos;
+                    float bestSq = GemMagnetRadius * GemMagnetRadius;
+                    bool inMagnet = false;
+                    for (int p = 0; p < GameState.MaxPlayers; p++)
+                    {
+                        ref var pl = ref _state.Players[p];
+                        if (!pl.IsActive || !pl.IsAlive) continue;
+                        float dx = pl.PosX.ToFloat() - simX;
+                        float dz = pl.PosZ.ToFloat() - simZ;
+                        float dSq = dx * dx + dz * dz;
+                        if (dSq < bestSq) { bestSq = dSq; pullTarget = new Vector3(pl.PosX.ToFloat(), 0.3f, pl.PosZ.ToFloat()); inMagnet = true; }
+                    }
 
-                Vector3 targetVisual = inMagnet ? pullTarget : simPos;
-                _gemVisualPos[i] = Vector3.Lerp(_gemVisualPos[i], targetVisual, Time.deltaTime * GemMagnetLerpSpeed);
+                    Vector3 targetVisual = inMagnet ? pullTarget : simPos;
+                    _gemVisualPos[i] = Vector3.Lerp(_gemVisualPos[i], targetVisual, Time.deltaTime * GemMagnetLerpSpeed);
+                }
                 _gemPool[i].transform.position = _gemVisualPos[i];
             }
         }
