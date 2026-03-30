@@ -92,8 +92,23 @@ var _ net.Conn = (*wsConnAdapter)(nil)
 
 // ── WsServer: WebSocket 服务器 ──
 
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true }, // 允许所有来源
+// checkOrigin 根据安全配置返回 Origin 检查函数
+func checkOrigin(allowed []string) func(r *http.Request) bool {
+	if len(allowed) == 0 {
+		return func(r *http.Request) bool { return true } // 向后兼容
+	}
+	set := make(map[string]struct{}, len(allowed))
+	for _, o := range allowed {
+		set[o] = struct{}{}
+	}
+	return func(r *http.Request) bool {
+		origin := r.Header.Get("Origin")
+		_, ok := set[origin]
+		if !ok {
+			slog.Warn("ws origin rejected", "origin", origin)
+		}
+		return ok
+	}
 }
 
 // WsServer WebSocket 服务器
@@ -102,6 +117,7 @@ type WsServer struct {
 	handler         Handler
 	config          ServerConfig
 	security        SecurityConfig
+	upgrader        websocket.Upgrader
 	nextID          int
 	mu              sync.Mutex
 	conns           map[int]*Conn
@@ -138,6 +154,7 @@ func (s *WsServer) SetOnRateLimitWarn(fn func(*Conn)) {
 // SetSecurity 设置安全配置
 func (s *WsServer) SetSecurity(cfg SecurityConfig) {
 	s.security = cfg
+	s.upgrader.CheckOrigin = checkOrigin(cfg.AllowedOrigins)
 	codec.MaxMessageSize = cfg.MaxMessageSize
 }
 
@@ -147,10 +164,14 @@ func NewWsServer(handler Handler, configs ...ServerConfig) *WsServer {
 	if len(configs) > 0 {
 		cfg = configs[0]
 	}
+	sec := DefaultSecurityConfig()
 	return &WsServer{
-		handler:   handler,
-		config:    cfg,
-		security:  DefaultSecurityConfig(),
+		handler:  handler,
+		config:   cfg,
+		security: sec,
+		upgrader: websocket.Upgrader{
+			CheckOrigin: checkOrigin(sec.AllowedOrigins),
+		},
 		conns:     make(map[int]*Conn),
 		ipLimiter: NewIPRateLimiter(10),
 	}
@@ -213,7 +234,7 @@ func (s *WsServer) handleUpgrade(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	wsConn, err := upgrader.Upgrade(w, r, nil)
+	wsConn, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		slog.Warn("websocket upgrade failed", "component", "ws", "err", err)
 		return

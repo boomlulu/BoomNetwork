@@ -38,6 +38,9 @@ namespace BoomNetwork.Client.Transport
         private readonly byte[] _recvBuf = new byte[65536];
         private readonly byte[] _errorBuf = new byte[512];
 
+        /// <summary>强制使用 wss:// 加密连接（默认根据端口自动判断：443 → wss，其他 → ws）</summary>
+        public bool ForceWss { get; set; }
+
         public TransportState State { get; private set; } = TransportState.Disconnected;
 
         public event Action? OnConnected;
@@ -53,7 +56,7 @@ namespace BoomNetwork.Client.Transport
             _lastPort = port;
             State = TransportState.Connecting;
 
-            var scheme = port == 443 ? "wss" : "ws";
+            var scheme = (ForceWss || port == 443) ? "wss" : "ws";
             var url = $"{scheme}://{host}:{port}/";
             _socketId = BoomNetworkWS_Connect(url);
             _lastJsState = JsStateConnecting;

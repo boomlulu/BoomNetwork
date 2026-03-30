@@ -2,6 +2,7 @@ using System;
 using System.Buffers.Binary;
 using BoomNetwork.Core;
 using BoomNetwork.Core.FrameSync;
+using BoomNetwork.Core.Transport;
 using BoomNetwork.Client.Transport;
 using BoomNetwork.Client.Session;
 using BoomNetwork.Client.Connection;
@@ -174,7 +175,7 @@ namespace BoomNetwork.Client.FrameSync
         }
 
         // --- 内部网络栈（创建一次，不重建）---
-        private TcpClientTransport? _transport;
+        private ITransport? _transport;
         private NetworkSession? _session;
         private ConnectionManager? _connMgr;
         private RoomClient? _roomClient;
@@ -195,11 +196,18 @@ namespace BoomNetwork.Client.FrameSync
         private const int MaxSnapshotRetries = 3;
         private static readonly float[] SnapshotRetryDelays = { 1000f, 2000f, 4000f };
         private uint _dataSyncVersion;  // 轻量状态同步版本跟踪
+        private readonly Func<ITransport>? _transportFactory;
 
-        public FrameSyncClient(float heartbeatIntervalMs = 3000, float heartbeatTimeoutMs = 10000)
+        /// <summary>
+        /// 创建帧同步客户端。
+        /// transportFactory 可选：不传则自动选择（WebGL → WebGLWebSocketTransport，其他 → TcpClientTransport）。
+        /// </summary>
+        public FrameSyncClient(float heartbeatIntervalMs = 3000, float heartbeatTimeoutMs = 10000,
+            Func<ITransport>? transportFactory = null)
         {
             _heartbeatIntervalMs = heartbeatIntervalMs;
             _heartbeatTimeoutMs = heartbeatTimeoutMs;
+            _transportFactory = transportFactory;
         }
 
         // ===================== Lifecycle =====================
@@ -441,9 +449,18 @@ namespace BoomNetwork.Client.FrameSync
 
         // ===================== Network Stack =====================
 
+        private static ITransport CreateDefaultTransport()
+        {
+#if UNITY_WEBGL && !UNITY_EDITOR
+            return new WebGLWebSocketTransport();
+#else
+            return new TcpClientTransport();
+#endif
+        }
+
         private void CreateNetworkStack()
         {
-            _transport = new TcpClientTransport();
+            _transport = _transportFactory != null ? _transportFactory() : CreateDefaultTransport();
             _session = new NetworkSession(_transport);
 
             var reconnectStrategy = new CompositeReconnectStrategy(

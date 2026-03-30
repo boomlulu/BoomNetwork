@@ -1,3 +1,4 @@
+#if !UNITY_WEBGL || UNITY_EDITOR
 using System;
 using System.Buffers;
 using System.Collections.Concurrent;
@@ -144,3 +145,4 @@ namespace BoomNetwork.Client.Transport
         }
     }
 }
+#endif

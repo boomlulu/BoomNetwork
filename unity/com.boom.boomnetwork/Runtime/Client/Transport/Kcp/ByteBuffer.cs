@@ -1,4 +1,5 @@
-﻿using System;
+﻿#if !UNITY_WEBGL || UNITY_EDITOR
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -1197,4 +1198,5 @@ namespace KcpProject
             buf = null;
         }
     }
+#endif
 }

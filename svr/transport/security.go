@@ -14,6 +14,7 @@ type SecurityConfig struct {
 	RequireAuth       bool          // 是否要求鉴权
 	AuthTimeout       time.Duration // 鉴权超时
 	AuthToken         string        // 预共享 token（简单鉴权）
+	AllowedOrigins    []string      // WebSocket Origin 白名单（空=允许所有，向后兼容）
 }
 
 // DefaultSecurityConfig 默认安全配置
