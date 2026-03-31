@@ -60,6 +60,9 @@ namespace BoomNetwork.Samples.VampireSurvivors
         int _syncCount;
         float _diagTimer;
 
+        // ==================== Backward-Move Detector ====================
+        Vector3[] _lastRenderPos = new Vector3[GameState.MaxPlayers];
+
         // ==================== Shadow Copy (delta detection) ====================
         int[] _prevEnemyHp = new int[GameState.MaxEnemies];
         bool[] _prevEnemyAlive = new bool[GameState.MaxEnemies];
@@ -204,6 +207,17 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 if (_playerObjs[i] == null || !_playerObjs[i].activeSelf) continue;
 
                 Vector3 interpPos = Vector3.Lerp(_playerPrevPos[i], _playerCurPos[i], _interpT);
+
+                // Backward-move detector: log if render position moves opposite to sim direction
+                Vector3 simDir = _playerCurPos[i] - _playerPrevPos[i];
+                Vector3 renderDelta = interpPos - _lastRenderPos[i];
+                if (_lastRenderPos[i] != Vector3.zero && simDir.sqrMagnitude > 0.0001f && renderDelta.sqrMagnitude > 0.0001f)
+                {
+                    if (Vector3.Dot(renderDelta.normalized, simDir.normalized) < -0.5f)
+                        Debug.LogWarning($"[VS-Backward] p{i} renderDelta={renderDelta:F3} simDir={simDir:F3} interpT={_interpT:F3} timeSince={_timeSinceLastSync*1000f:F1}ms prev={_playerPrevPos[i]:F3} cur={_playerCurPos[i]:F3}");
+                }
+                _lastRenderPos[i] = interpPos;
+
                 _playerObjs[i].transform.position = interpPos;
 
                 Quaternion interpRot = Quaternion.Slerp(_playerPrevRot[i], _playerCurRot[i], _interpT);
@@ -425,6 +439,11 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 _syncCount = 0;
             }
 
+            // Log if frame arrived while last interpolation wasn't complete (early) or overshot (late)
+            float interpAtReceipt = (_simFrameInterval > 0f) ? _timeSinceLastSync / _simFrameInterval : 1f;
+            if (interpAtReceipt < 0.7f || interpAtReceipt > 1.5f)
+                Debug.LogWarning($"[VS-FrameTiming] Frame arrived at interpT={interpAtReceipt:F2} (timeSince={_timeSinceLastSync*1000f:F1}ms, expected {_simFrameInterval*1000f:F0}ms)");
+
             // Reset interpolation timer — new sim frame arrived
             _timeSinceLastSync = 0f;
 
@@ -433,7 +452,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 ref var p = ref _state.Players[i];
                 bool show = p.IsActive && p.IsAlive;
                 _playerObjs[i].SetActive(show);
-                if (!show) continue;
+                if (!show) { _lastRenderPos[i] = Vector3.zero; continue; }
 
                 // Feature 5a: player scale by level
                 float pScale = 1f + Mathf.Min(p.Level - 1, 9) * 0.015f;
