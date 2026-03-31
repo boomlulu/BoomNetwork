@@ -239,9 +239,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             }
 
             UpdateShake();
-            Vector3 target = _camTarget + _shakeOffset;
-            _camCurrentPos = Vector3.Lerp(_camCurrentPos, target, Time.deltaTime * CamSmoothSpeed);
-            _cam.transform.position = _camCurrentPos;
+            _cam.transform.position = _camTarget + _shakeOffset;
             _cam.transform.rotation = IsoRotation;
         }
 
