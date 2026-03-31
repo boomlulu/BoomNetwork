@@ -448,9 +448,6 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 if (_playerPrevPos[i] == Vector3.zero)
                     _playerPrevPos[i] = newPos;
 
-                // Set position immediately (Update will refine with interpolation)
-                _playerObjs[i].transform.position = newPos;
-
                 Quaternion newRot;
                 if (p.FacingX != FInt.Zero || p.FacingZ != FInt.Zero)
                 {
@@ -463,7 +460,6 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 }
                 _playerPrevRot[i] = _playerCurRot[i];
                 _playerCurRot[i] = newRot;
-                _playerObjs[i].transform.rotation = newRot;
 
                 var rend = _playerObjs[i].GetComponent<Renderer>();
                 rend.sharedMaterial = p.InvincibilityFrames > 0 && (_state.FrameNumber % 4 < 2)
