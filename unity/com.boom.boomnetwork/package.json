@@ -56,6 +56,11 @@
       "displayName": "Minecraft Demo",
       "description": "多人方块世界 — 混合同步（Entity Sync + Frame Sync + Snapshot）",
       "path": "Samples~/MinecraftDemo"
+    },
+    {
+      "displayName": "Tower Defense",
+      "description": "多人塔防 — 纯帧同步，7 种塔 + 5 种敌人 + 双层经济系统，展示 512 敌人零额外带宽",
+      "path": "Samples~/TowerDefense"
     }
   ],
   "repository": {
