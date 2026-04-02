@@ -149,7 +149,7 @@ public class HelloWorld : MonoBehaviour
         tip.normal.textColor = new Color(0.6f, 0.85f, 1f);
 
         // 左上：状态面板
-        GUILayout.BeginArea(new Rect(10, 10, 260, 100), GUI.skin.box);
+        GUILayout.BeginArea(new Rect(10, 10, 280, 90), GUI.skin.box);
         GUILayout.Label("BoomNetwork Hello World", title);
         GUILayout.Space(2);
         GUILayout.Label($"  State: {_network.Client.CurrentState}", text);
@@ -157,7 +157,7 @@ public class HelloWorld : MonoBehaviour
         GUILayout.EndArea();
 
         // 右上：操作说明
-        GUILayout.BeginArea(new Rect(Screen.width - 220, 10, 210, 120), GUI.skin.box);
+        GUILayout.BeginArea(new Rect(Screen.width - 230, 10, 220, 145), GUI.skin.box);
         GUILayout.Label("Controls", title);
         GUILayout.Space(2);
         GUILayout.Label("  WASD / Arrows = Move", tip);
