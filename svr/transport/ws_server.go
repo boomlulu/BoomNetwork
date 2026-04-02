@@ -123,7 +123,7 @@ type WsServer struct {
 	conns           map[int]*Conn
 	maxConns        int // 0 = unlimited
 	onDisconnect    func(*Conn)
-	onRateLimited   func()
+	onRateLimited   func(*Conn)
 	onRateLimitWarn func(*Conn)
 	wg              sync.WaitGroup
 	ipLimiter       *IPRateLimiter
@@ -142,7 +142,7 @@ func (s *WsServer) SetOnDisconnect(fn func(*Conn)) {
 }
 
 // SetOnRateLimited 设置限流回调
-func (s *WsServer) SetOnRateLimited(fn func()) {
+func (s *WsServer) SetOnRateLimited(fn func(*Conn)) {
 	s.onRateLimited = fn
 }
 
@@ -299,7 +299,7 @@ func (s *WsServer) handleConn(c *Conn) {
 			case RateLevelDeny:
 				slog.Error("client rate limited, disconnecting", "component", "ws", "connId", c.ID)
 				if s.onRateLimited != nil {
-					s.onRateLimited()
+					s.onRateLimited(c)
 				}
 				return
 			case RateLevelWarn:

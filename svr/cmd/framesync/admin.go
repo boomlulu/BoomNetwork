@@ -285,9 +285,11 @@ func handleKick(w http.ResponseWriter, r *http.Request) {
 	room.RemovePlayer(playerId)
 	playerRoomMap.Delete(playerId)
 
-	// 断开连接
+	// 断开连接（先通知再关闭）
 	if connVal, ok := playerConnMap.LoadAndDelete(playerId); ok {
-		connVal.(*transport.Conn).Close()
+		conn := connVal.(*transport.Conn)
+		conn.Send(codec.NewCoreMessage(framesync.CmdKicked, []byte{framesync.KickReasonAdmin}))
+		conn.Close()
 	}
 
 	// 通知同房其他玩家

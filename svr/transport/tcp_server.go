@@ -67,7 +67,7 @@ type TcpServer struct {
 	conns         map[int]*Conn
 	maxConns      int // 0 = unlimited
 	onDisconnect    func(*Conn)
-	onRateLimited   func()      // 触发限流时回调（用于指标统计）
+	onRateLimited   func(*Conn) // 触发限流时回调（断连前通知客户端）
 	onRateLimitWarn func(*Conn) // 接近限流时回调（发送警告，不断连）
 	wg            sync.WaitGroup
 	ipLimiter     *IPRateLimiter // S18: per-IP 连接速率限制
@@ -81,7 +81,7 @@ func (s *TcpServer) SetMaxConns(n int) {
 }
 
 // SetOnRateLimited 设置限流回调
-func (s *TcpServer) SetOnRateLimited(fn func()) {
+func (s *TcpServer) SetOnRateLimited(fn func(*Conn)) {
 	s.onRateLimited = fn
 }
 
@@ -235,7 +235,7 @@ func (s *TcpServer) handleConn(c *Conn) {
 			case RateLevelDeny:
 				slog.Error("client rate limited, disconnecting", "component", "tcp", "connId", c.ID)
 				if s.onRateLimited != nil {
-					s.onRateLimited()
+					s.onRateLimited(c)
 				}
 				return
 			case RateLevelWarn:

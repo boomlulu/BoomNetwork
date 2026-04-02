@@ -473,7 +473,9 @@ func (c *GMConn) rpcKick(env *GMEnvelope) {
 	room.RemovePlayer(p.Pid)
 	playerRoomMap.Delete(p.Pid)
 	if connVal, ok := playerConnMap.LoadAndDelete(p.Pid); ok {
-		connVal.(*transport.Conn).Close()
+		conn := connVal.(*transport.Conn)
+		conn.Send(codec.NewCoreMessage(framesync.CmdKicked, []byte{framesync.KickReasonAdmin}))
+		conn.Close()
 	}
 	if room.IsRunning() {
 		room.EnqueueEvent(framesync.FrameEventPlayerLeft, p.Pid)

@@ -196,7 +196,10 @@ func main() {
 	}
 	server := transport.NewServer(*proto, rxHandler)
 	server.SetOnDisconnect(onClientDisconnect)
-	server.SetOnRateLimited(func() { framesync.Metrics.RateLimited.Inc() })
+	server.SetOnRateLimited(func(c *transport.Conn) {
+		framesync.Metrics.RateLimited.Inc()
+		c.Send(codec.NewCoreMessage(framesync.CmdKicked, []byte{framesync.KickReasonRateLimit}))
+	})
 	server.SetOnRateLimitWarn(func(c *transport.Conn) {
 		c.Send(codec.NewCoreMessage(framesync.CmdRateLimitWarning, nil))
 	})

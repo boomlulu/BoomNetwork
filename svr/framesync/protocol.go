@@ -27,6 +27,13 @@ const (
 	CmdReconnectRsp     byte = 11
 	CmdServerShutdown     byte = 12 // 服务器 → 客户端：服务器即将关闭
 	CmdRateLimitWarning   byte = 13 // 服务器 → 客户端：消息速率接近上限，请降速
+	CmdKicked             byte = 14 // 服务器 → 客户端：你已被踢出 [Reason:1]
+)
+
+// --- Kick Reason ---
+const (
+	KickReasonRateLimit byte = 1 // 消息频率超限
+	KickReasonAdmin     byte = 2 // 管理员手动踢出
 )
 
 // --- Extended Cmd (uint16) ---

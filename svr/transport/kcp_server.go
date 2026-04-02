@@ -22,7 +22,7 @@ type KcpServer struct {
 	conns         map[int]*Conn
 	maxConns      int // 0 = unlimited
 	onDisconnect    func(*Conn)
-	onRateLimited   func()
+	onRateLimited   func(*Conn)
 	onRateLimitWarn func(*Conn)
 	wg            sync.WaitGroup
 	ipLimiter     *IPRateLimiter // S18: per-IP 连接速率限制
@@ -41,7 +41,7 @@ func (s *KcpServer) SetOnDisconnect(fn func(*Conn)) {
 }
 
 // SetOnRateLimited 设置限流回调
-func (s *KcpServer) SetOnRateLimited(fn func()) {
+func (s *KcpServer) SetOnRateLimited(fn func(*Conn)) {
 	s.onRateLimited = fn
 }
 
@@ -185,7 +185,7 @@ func (s *KcpServer) handleConn(c *Conn) {
 			case RateLevelDeny:
 				slog.Error("client rate limited, disconnecting", "component", "kcp", "connId", c.ID)
 				if s.onRateLimited != nil {
-					s.onRateLimited()
+					s.onRateLimited(c)
 				}
 				return
 			case RateLevelWarn:
@@ -209,7 +209,7 @@ type Server interface {
 	Wait()
 	ConnCount() int
 	SetOnDisconnect(fn func(*Conn))
-	SetOnRateLimited(fn func())
+	SetOnRateLimited(fn func(*Conn))
 	SetOnRateLimitWarn(fn func(*Conn))
 	SetSecurity(cfg SecurityConfig)
 	SetMaxConns(n int)
