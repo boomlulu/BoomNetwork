@@ -141,10 +141,30 @@ public class HelloWorld : MonoBehaviour
 
     void OnGUI()
     {
-        var style = new GUIStyle(GUI.skin.label) { fontSize = 14 };
-        GUILayout.Label($"State: {_network.Client.CurrentState}", style);
-        GUILayout.Label($"Player: {_network.PlayerId}", style);
-        GUILayout.Label($"Frame: {_lastFrame}", style);
-        GUILayout.Label($"Players: {_players.Count}", style);
+        var title = new GUIStyle(GUI.skin.label) { fontSize = 14, fontStyle = FontStyle.Bold };
+        title.normal.textColor = Color.white;
+        var text = new GUIStyle(GUI.skin.label) { fontSize = 13 };
+        text.normal.textColor = new Color(0.85f, 0.85f, 0.85f);
+        var tip = new GUIStyle(GUI.skin.label) { fontSize = 12 };
+        tip.normal.textColor = new Color(0.6f, 0.85f, 1f);
+
+        // 左上：状态面板
+        GUILayout.BeginArea(new Rect(10, 10, 260, 100), GUI.skin.box);
+        GUILayout.Label("BoomNetwork Hello World", title);
+        GUILayout.Space(2);
+        GUILayout.Label($"  State: {_network.Client.CurrentState}", text);
+        GUILayout.Label($"  Player: {_network.PlayerId}   Frame: {_lastFrame}   Online: {_players.Count}", text);
+        GUILayout.EndArea();
+
+        // 右上：操作说明
+        GUILayout.BeginArea(new Rect(Screen.width - 220, 10, 210, 120), GUI.skin.box);
+        GUILayout.Label("Controls", title);
+        GUILayout.Space(2);
+        GUILayout.Label("  WASD / Arrows = Move", tip);
+        GUILayout.Space(4);
+        GUILayout.Label("Quick Start:", text);
+        GUILayout.Label("  1. Start Go server", tip);
+        GUILayout.Label("  2. Play → auto connect", tip);
+        GUILayout.EndArea();
     }
 }
