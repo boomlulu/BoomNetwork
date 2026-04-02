@@ -297,7 +297,7 @@ func (s *WsServer) handleConn(c *Conn) {
 		if c.rateLimiter != nil {
 			switch c.rateLimiter.AllowLevel() {
 			case RateLevelDeny:
-				slog.Warn("client rate limited, disconnecting", "component", "ws", "connId", c.ID)
+				slog.Error("client rate limited, disconnecting", "component", "ws", "connId", c.ID)
 				if s.onRateLimited != nil {
 					s.onRateLimited()
 				}

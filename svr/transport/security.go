@@ -129,7 +129,7 @@ func (l *IPRateLimiter) Allow(remoteAddr net.Addr) bool {
 	v, _ := l.m.LoadOrStore(ip, &ipRate{lastReset: time.Now()})
 	rate := v.(*ipRate)
 	if !rate.allow(l.maxPerSec) {
-		slog.Warn("per-IP connection rate limit exceeded", "ip", ip, "maxPerSec", l.maxPerSec)
+		slog.Error("per-IP connection rate limit exceeded", "ip", ip, "maxPerSec", l.maxPerSec)
 		return false
 	}
 	return true

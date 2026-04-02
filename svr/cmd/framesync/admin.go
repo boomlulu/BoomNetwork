@@ -297,7 +297,7 @@ func handleKick(w http.ResponseWriter, r *http.Request) {
 		broadcastToRoom(room, playerId, codec.NewExtMessage(framesync.ExtCmdPlayerLeft, framesync.EncodePlayerId(playerId)))
 	}
 
-	slog.Info("admin kicked player", "player_id", playerId, "room_id", room.ID)
+	slog.Warn("admin kicked player", "player_id", playerId, "room_id", room.ID)
 
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"ok":true,"kicked":%d,"room":%d}`, playerId, room.ID)

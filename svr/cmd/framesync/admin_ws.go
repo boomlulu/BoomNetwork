@@ -481,7 +481,7 @@ func (c *GMConn) rpcKick(env *GMEnvelope) {
 		broadcastToRoom(room, p.Pid, codec.NewExtMessage(framesync.ExtCmdPlayerLeft, framesync.EncodePlayerId(p.Pid)))
 	}
 
-	slog.Info("gm-ws kicked player", "player_id", p.Pid, "room_id", room.ID)
+	slog.Warn("gm-ws kicked player", "player_id", p.Pid, "room_id", room.ID)
 	c.sendRsp(env.ID, "kick", KickResult{Ok: true, Kicked: p.Pid, Room: room.ID})
 }
 
