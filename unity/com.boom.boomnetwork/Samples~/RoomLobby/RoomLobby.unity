@@ -225,8 +225,8 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: a79441f348de89743a2939f4d699eac1, type: 3}
-  m_Name:
-  m_EditorClassIdentifier:
+  m_Name: 
+  m_EditorClassIdentifier: 
   m_RenderShadows: 1
   m_RequiresDepthTextureOption: 2
   m_RequiresOpaqueTextureOption: 2
@@ -302,8 +302,8 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 70bffb5ba2f54ae58bda3435d64fd184, type: 3}
-  m_Name:
-  m_EditorClassIdentifier:
+  m_Name: 
+  m_EditorClassIdentifier: 
   host: 124.220.6.174
   port: 9000
   heartbeatIntervalMs: 3000
@@ -321,9 +321,9 @@ MonoBehaviour:
   m_GameObject: {fileID: 210000001}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: a8c2341bb36f34e23a56b4ffb36994d7, type: 3}
-  m_Name:
-  m_EditorClassIdentifier:
+  m_Script: {fileID: 11500000, guid: 10236d94c480e456b9f02c46ffc81b84, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
   moveSpeed: 1
   maxPlayers: 4
 --- !u!1660057539 &9223372036854775807
