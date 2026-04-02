@@ -147,9 +147,13 @@ type RoomDetailWire struct {
 	MatchKey         string           `msgpack:"match_key,omitempty"`
 	Players          []PlayerInfoWire `msgpack:"players"`
 	// 房间生命周期倒计时字段
-	EmptyAt          int64            `msgpack:"empty_at,omitempty"`           // 房间变空的时刻（unix ms）；有玩家时为 0
-	EmptyGraceSec    int              `msgpack:"empty_grace_sec,omitempty"`    // 宽限期（秒），与服务器配置一致
-	DisconnectKeepSec int             `msgpack:"disconnect_keep_sec,omitempty"` // 玩家踢出宽限期（秒）
+	EmptyAt           int64 `msgpack:"empty_at,omitempty"`            // 房间变空的时刻（unix ms）；有玩家时为 0
+	EmptyGraceSec     int   `msgpack:"empty_grace_sec,omitempty"`     // 宽限期（秒），与服务器配置一致
+	DisconnectKeepSec int   `msgpack:"disconnect_keep_sec,omitempty"` // 玩家踢出宽限期（秒）
+	// 从未有玩家加入的空房间
+	CreatedAt      int64 `msgpack:"created_at,omitempty"`       // 房间创建时刻（unix ms）
+	HadPlayer      bool  `msgpack:"had_player,omitempty"`        // 是否有过玩家加入
+	RoomCleanupSec int   `msgpack:"room_cleanup_sec,omitempty"` // 空房间兜底清理周期（秒）
 }
 
 type PlayerInfoWire struct {

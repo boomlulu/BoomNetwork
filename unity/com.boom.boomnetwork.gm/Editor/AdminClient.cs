@@ -101,6 +101,10 @@ namespace BoomNetwork.GM.Editor
             public long EmptyAt;           // 房间变空时刻（unix ms）；有玩家时为 0
             public int EmptyGraceSec;      // 销毁宽限期（秒）
             public int DisconnectKeepSec;  // 玩家踢出宽限期（秒）
+            // 从未有玩家加入的空房间
+            public long CreatedAt;         // 创建时刻（unix ms）
+            public bool HadPlayer;         // 是否有过玩家加入
+            public int RoomCleanupSec;     // 兜底清理周期（秒）
         }
 
         public struct PlayerInfo

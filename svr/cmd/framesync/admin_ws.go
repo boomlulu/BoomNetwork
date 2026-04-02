@@ -186,6 +186,9 @@ func (h *GMHub) pushRooms() {
 			EmptyAt:           emptyAtMs,
 			EmptyGraceSec:     cfg.EmptyGraceSec,
 			DisconnectKeepSec: cfg.DisconnectKeepSec,
+			CreatedAt:         room.CreatedAt().UnixMilli(),
+			HadPlayer:         room.HadPlayer(),
+			RoomCleanupSec:    cfg.RoomCleanupSec,
 		}
 		room.ForEachPlayer(func(p framesync.PlayerInfo) {
 			detail.Players = append(detail.Players, PlayerInfoWire{

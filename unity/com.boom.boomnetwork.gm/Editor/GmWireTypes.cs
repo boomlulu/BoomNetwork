@@ -161,6 +161,10 @@ namespace BoomNetwork.GM.Editor
         public long EmptyAt;           // 房间变空的时刻（unix ms）；有玩家时为 0
         public int EmptyGraceSec;      // 销毁宽限期（秒）
         public int DisconnectKeepSec;  // 玩家踢出宽限期（秒）
+        // 从未有玩家加入的空房间
+        public long CreatedAt;         // 创建时刻（unix ms）
+        public bool HadPlayer;         // 是否有过玩家加入
+        public int RoomCleanupSec;     // 兜底清理周期（秒）
 
         public static GmRoomDetail From(Dictionary<string, object> m)
         {
@@ -178,6 +182,9 @@ namespace BoomNetwork.GM.Editor
                 EmptyAt           = MsgPackLite.GetLong(m, "empty_at"),
                 EmptyGraceSec     = MsgPackLite.GetInt(m, "empty_grace_sec"),
                 DisconnectKeepSec = MsgPackLite.GetInt(m, "disconnect_keep_sec"),
+                CreatedAt         = MsgPackLite.GetLong(m, "created_at"),
+                HadPlayer         = MsgPackLite.GetBool(m, "had_player"),
+                RoomCleanupSec    = MsgPackLite.GetInt(m, "room_cleanup_sec"),
             };
             var players = MsgPackLite.GetArray(m, "players");
             if (players != null)

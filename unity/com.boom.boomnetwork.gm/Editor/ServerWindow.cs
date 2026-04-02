@@ -335,6 +335,9 @@ namespace BoomNetwork.GM.Editor
                                         EmptyAt = grd.EmptyAt,
                                         EmptyGraceSec = grd.EmptyGraceSec,
                                         DisconnectKeepSec = grd.DisconnectKeepSec,
+                                        CreatedAt = grd.CreatedAt,
+                                        HadPlayer = grd.HadPlayer,
+                                        RoomCleanupSec = grd.RoomCleanupSec,
                                     };
                                     if (grd.Players != null)
                                     {
@@ -1100,6 +1103,19 @@ namespace BoomNetwork.GM.Editor
                 {
                     long nowMs = System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                     float destroyIn = (room.EmptyGraceSec * 1000f - (nowMs - room.EmptyAt)) / 1000f;
+                    subPrev = GUI.contentColor;
+                    GUI.contentColor = new Color(1f, 0.5f, 0.1f);
+                    string destroyLabel = destroyIn > 0
+                        ? $"DESTROY IN {destroyIn:F0}s"
+                        : "DESTROY PENDING";
+                    EditorGUILayout.LabelField(destroyLabel, EditorStyles.miniLabel);
+                    GUI.contentColor = subPrev;
+                }
+                // 从未有玩家加入的空房间销毁倒计时（兜底清理）
+                else if (!room.HadPlayer && room.CreatedAt > 0 && room.RoomCleanupSec > 0)
+                {
+                    long nowMs = System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                    float destroyIn = (room.RoomCleanupSec * 1000f - (nowMs - room.CreatedAt)) / 1000f;
                     subPrev = GUI.contentColor;
                     GUI.contentColor = new Color(1f, 0.5f, 0.1f);
                     string destroyLabel = destroyIn > 0
