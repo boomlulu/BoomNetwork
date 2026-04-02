@@ -1,15 +1,23 @@
 // BoomNetwork VampireSurvivors Demo — Network Manager
 //
-// DESIGN PRINCIPLE: All GameState mutations happen through exactly two
-// deterministic paths, both driven by FrameData from the server:
-//
+// DESIGN PRINCIPLE 1 — Deterministic paths (GameState mutation):
+//   All GameState mutations go through exactly two paths driven by FrameData:
 //   1. Frame events (OnPlayerJoined/Left) — embedded in FrameData,
 //      dispatched BEFORE OnFrame, same frame on all clients.
 //   2. OnFrame → Tick → ApplyInputs — processes player inputs,
 //      auto-inits players on first input appearance.
+//   OnFrameSyncStart only sets up the deterministic seed and Dt.
+//   No InitPlayer, no direct GameState mutation outside frame processing.
 //
-// OnFrameSyncStart only sets up the deterministic seed and Dt.
-// No InitPlayer, no direct GameState mutation outside frame processing.
+// DESIGN PRINCIPLE 2 — Level-Triggered Pause Convergence:
+//   Game-pause state is managed via Level-Triggered State Convergence,
+//   NOT edge-triggered delta tracking. On every OnFrame, we compare:
+//     - wantsPause (game logic: IsAnyPlayerUpgrading)
+//     - isPaused   (network state: IsGamePaused)
+//   and drive toward convergence. This pattern is self-correcting and
+//   handles same-tick consecutive state changes without any local memory.
+//   The Update() path provides the deadlock-breaker (RequestGameResume)
+//   for when the server is paused and OnFrame never fires.
 
 using UnityEngine;
 using BoomNetwork.Client.FrameSync;
@@ -34,7 +42,6 @@ namespace BoomNetwork.Samples.VampireSurvivors
         uint _desyncFrame;
         byte _pendingUpgradeChoice;
         bool _firstInputSent;
-        bool _wasUpgrading;
 
         // Cached GUIStyles
         bool _stylesCached;
@@ -99,12 +106,11 @@ namespace BoomNetwork.Samples.VampireSurvivors
             VSInput.Encode(_inputBuf, h, v, ability);
             _network.SendInput(_inputBuf);
 
-            // 升级选择发出后，立即请求恢复帧推送（打破死锁：OnFrame 需要服务器推帧才触发）
-            // 同时重置 _wasUpgrading，确保下一帧能重新检测到新的升级状态（同帧可能再次触发升级）
+            // Deadlock-breaker: while server is paused, OnFrame never fires.
+            // RequestGameResume unblocks frame delivery after upgrade choice is sent.
             if (ability != 0)
             {
                 Debug.Log($"[VS] Upgrade choice sent: ability={ability}, IsGamePaused={_network.Client.IsGamePaused}");
-                _wasUpgrading = false;
                 _network.Client.RequestGameResume();
             }
         }
@@ -192,13 +198,15 @@ namespace BoomNetwork.Samples.VampireSurvivors
             uint hash = _sim.State.ComputeHash();
             _network.Client.SendFrameHash(frame.FrameNumber, hash);
 
-            // 检测升级暂停状态变化 → 请求服务器暂停/恢复帧推送
-            bool upgrading = _sim.IsAnyPlayerUpgrading();
-            if (upgrading && !_wasUpgrading)
+            // Level-Triggered Pause Convergence (see DESIGN PRINCIPLE 2 at top of file):
+            // Compare game's desired pause state vs network's actual pause state,
+            // and drive toward convergence every frame. No local memory needed.
+            // IsGamePaused is the authoritative source of truth for network state.
+            bool wantsPause = _sim.IsAnyPlayerUpgrading();
+            if (wantsPause && !_network.Client.IsGamePaused)
                 _network.Client.RequestGamePause();
-            else if (!upgrading && _wasUpgrading)
+            else if (!wantsPause && _network.Client.IsGamePaused)
                 _network.Client.RequestGameResume();
-            _wasUpgrading = upgrading;
         }
 
         void OnDesync(FrameHashMismatch mismatch)
