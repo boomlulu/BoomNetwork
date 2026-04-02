@@ -50,6 +50,28 @@ var connPlayerMap sync.Map // connID → int32(playerId)
 var playerRoomMap sync.Map // int32(playerId) → *Room
 var playerConnMap sync.Map // int32(playerId) → *transport.Conn
 
+// roomLifecycleDelegate 框架级生命周期委托
+// 处理 Reconciler 驱动的玩家超时驱逐和 panic 后的外层映射清理
+// 游戏玩法层可以在此基础上 embed 并覆盖所需方法
+type roomLifecycleDelegate struct {
+	framesync.NoopRoomDelegate
+}
+
+func (d *roomLifecycleDelegate) OnPlayerRemoved(room *framesync.Room, playerID int32) {
+	playerRoomMap.Delete(playerID)
+	slog.Info("player removed (disconnect timeout)", "roomId", room.ID, "playerId", playerID)
+}
+
+func (d *roomLifecycleDelegate) OnRoomPanicked(room *framesync.Room, playerIds []int32) {
+	for _, pid := range playerIds {
+		playerRoomMap.Delete(pid)
+	}
+	roomMgr.RemoveRoom(room.ID)
+	slog.Error("room cleaned up after panic", "roomId", room.ID, "evictedPlayers", len(playerIds))
+}
+
+var globalDelegate = &roomLifecycleDelegate{}
+
 var playerCounter int32
 var playerMu sync.Mutex
 
@@ -214,11 +236,21 @@ func main() {
 		go startAdminServer(ctx, *adminAddr, *adminToken)
 	}
 
-	// 空房间定期清理
+	// RoomReconciler：期望状态 vs 实际状态协调循环
+	// 替代散落的 edge-triggered 生命周期管理（30s 销毁 goroutine、tickLoop cleanupTicker）
 	cleanupSec := cfg.RoomCleanupSec
 	if cleanupSec <= 0 {
 		cleanupSec = 30
 	}
+	reconciler := framesync.NewRoomReconciler(
+		roomMgr,
+		globalDelegate,
+		time.Duration(cleanupSec)*time.Second, // emptyGrace
+		5*time.Second,                          // reconcile interval
+	)
+	go reconciler.Run(ctx)
+
+	// 兜底清理：从未有玩家加入的空房间（Reconciler 不处理 emptyAt 为零的房间）
 	go func() {
 		ticker := time.NewTicker(time.Duration(cleanupSec) * time.Second)
 		defer ticker.Stop()
@@ -366,25 +398,8 @@ func onClientDisconnect(conn *transport.Conn) {
 		slog.Info("entity authority released on disconnect", "entityId", eid, "playerId", playerId)
 	}
 
-	// 如果房间没有在线玩家了，延迟清理
-	if room.PlayerCount() == 0 {
-		roomID := room.ID
-		go func() {
-			time.Sleep(30 * time.Second) // 30 秒等待重连
-			if room.PlayerCount() == 0 {
-				room.Stop()
-				roomMgr.RemoveRoom(roomID)
-				// 清理 playerRoomMap 中指向该房间的映射
-				playerRoomMap.Range(func(key, val any) bool {
-					if r, ok := val.(*framesync.Room); ok && r.ID == roomID {
-						playerRoomMap.Delete(key)
-					}
-					return true
-				})
-				slog.Info("room cleaned up (empty after 30s)", "roomId", roomID)
-			}
-		}()
-	}
+	// 房间销毁由 RoomReconciler 负责：
+	// 当所有玩家 keepalive 到期后 emptyAt 会被设置，Reconciler 下一轮检测到 ShouldDestroy 后销毁
 }
 
 // ===================== 帧同步 Handler =====================
@@ -714,11 +729,9 @@ func handleLeaveRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 		broadcastToRoom(room, playerId, codec.NewExtMessage(framesync.ExtCmdPlayerLeft, framesync.EncodePlayerId(playerId)))
 	}
 
-	// 空房间立即清理
+	// 显式离开：立即销毁空房间（Reconciler 兜底相同效果，这里保持即时响应）
 	if room.TotalPlayerCount() == 0 {
-		room.Stop()
 		roomMgr.RemoveRoom(room.ID)
-		slog.Info("room removed (empty after leave)", "roomId", room.ID)
 	}
 
 	return codec.NewExtMessage(framesync.ExtCmdLeaveRoomRsp, nil)
@@ -825,20 +838,7 @@ func bindPlayerToRoom(playerId int32, conn *transport.Conn, room *framesync.Room
 	playerRoomMap.Store(playerId, room)
 	playerConnMap.Store(playerId, conn)
 	room.AddPlayer(playerId, &statsConn{inner: &simConn{inner: conn, cfg: GlobalNetSim}, pid: playerId})
-
-	// 确保 panic 恢复回调已设置（幂等）
-	if room.OnPanic == nil {
-		room.OnPanic = onRoomPanic
-	}
-}
-
-// onRoomPanic Room tickLoop panic 后清理全局映射并移除僵尸房间
-func onRoomPanic(room *framesync.Room, playerIds []int32) {
-	for _, pid := range playerIds {
-		playerRoomMap.Delete(pid)
-	}
-	roomMgr.RemoveRoom(room.ID)
-	slog.Error("room cleaned up after panic", "roomId", room.ID, "evictedPlayers", len(playerIds))
+	room.SetDelegate(globalDelegate) // 幂等：多次 SetDelegate 安全
 }
 
 func handleRequestStart(conn *transport.Conn, msg *codec.Message) *codec.Message {

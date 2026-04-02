@@ -57,6 +57,36 @@ func DefaultRoomConfig() RoomConfig {
 	}
 }
 
+// RoomDelegate Room 和 Player 生命周期回调接口
+// 由外层（应用层 / 游戏玩法层）实现并注入 Room
+type RoomDelegate interface {
+	// Room 生命周期
+	OnRoomStarted(room *Room)
+	OnRoomStopped(room *Room)
+	OnRoomPaused(room *Room, reason FrameSyncPauseReason)
+	OnRoomResumed(room *Room)
+	OnRoomPanicked(room *Room, playerIds []int32)
+
+	// Player 生命周期
+	OnPlayerJoined(room *Room, player *Player)
+	OnPlayerReconnected(room *Room, player *Player)
+	OnPlayerDisconnected(room *Room, player *Player)
+	OnPlayerRemoved(room *Room, playerID int32) // 彻底移除（keepalive 到期 / 主动离开）
+}
+
+// NoopRoomDelegate 空实现，游戏玩法层按需 embed 并覆盖所需方法
+type NoopRoomDelegate struct{}
+
+func (NoopRoomDelegate) OnRoomStarted(*Room)                      {}
+func (NoopRoomDelegate) OnRoomStopped(*Room)                      {}
+func (NoopRoomDelegate) OnRoomPaused(*Room, FrameSyncPauseReason) {}
+func (NoopRoomDelegate) OnRoomResumed(*Room)                      {}
+func (NoopRoomDelegate) OnRoomPanicked(*Room, []int32)            {}
+func (NoopRoomDelegate) OnPlayerJoined(*Room, *Player)            {}
+func (NoopRoomDelegate) OnPlayerReconnected(*Room, *Player)       {}
+func (NoopRoomDelegate) OnPlayerDisconnected(*Room, *Player)      {}
+func (NoopRoomDelegate) OnPlayerRemoved(*Room, int32)             {}
+
 // Room 帧同步房间
 type Room struct {
 	ID       int32
@@ -108,13 +138,14 @@ type Room struct {
 	frameHashes    map[uint32]map[int32]uint32 // frameNumber → playerId → hash
 	desyncDetected bool
 
-	// panic 恢复回调：通知外部清理 playerRoomMap 等全局状态
-	OnPanic func(room *Room, playerIds []int32)
+	// 生命周期委托：通知外层状态变更
+	delegate RoomDelegate
 
 	// 房间生命周期
 	createdAt time.Time // 创建时间
 	hadPlayer bool      // 是否有过玩家加入
 	startedAt time.Time // 指标：Start 时间
+	emptyAt   time.Time // 最近一次变空的时刻；有玩家时为零值
 }
 
 // NewRoom 创建帧同步房间
@@ -143,47 +174,86 @@ func NewRoomWithConfig(config RoomConfig) *Room {
 	}
 }
 
+// SetDelegate 注入生命周期委托（幂等，可在任意时刻设置）
+func (r *Room) SetDelegate(d RoomDelegate) {
+	r.mu.Lock()
+	r.delegate = d
+	r.mu.Unlock()
+}
+
+// removePlayerLocked 唯一的玩家移除出口（必须在持锁状态下调用）
+func (r *Room) removePlayerLocked(id int32) {
+	delete(r.players, id)
+	if r.hostPlayerId == id {
+		r.electHost()
+	}
+	if len(r.players) == 0 {
+		r.emptyAt = time.Now()
+	}
+}
+
 // AddPlayer 添加或重连玩家
 func (r *Room) AddPlayer(id int32, conn PlayerConn) {
 	r.mu.Lock()
+	isReconnect := false
+	var player *Player
 	if existing, ok := r.players[id]; ok {
 		existing.Conn = conn
 		existing.State = PlayerOnline
+		isReconnect = true
+		player = existing
 	} else {
-		r.players[id] = &Player{ID: id, Conn: conn, State: PlayerOnline}
+		player = &Player{ID: id, Conn: conn, State: PlayerOnline}
+		r.players[id] = player
 	}
 	r.hadPlayer = true
-	// 如果尚无房主，设置此玩家为房主（不入队事件，由加入流程负责通知）
+	r.emptyAt = time.Time{} // 有玩家，清零空房间计时
 	if r.hostPlayerId == 0 {
 		r.hostPlayerId = id
 	}
+	d := r.delegate
 	r.mu.Unlock()
+
+	if d != nil {
+		if isReconnect {
+			d.OnPlayerReconnected(r, player)
+		} else {
+			d.OnPlayerJoined(r, player)
+		}
+	}
 }
 
 // DisconnectPlayer 标记断线保留
 func (r *Room) DisconnectPlayer(id int32) {
 	r.mu.Lock()
+	var player *Player
 	if p, ok := r.players[id]; ok {
 		p.State = PlayerDisconnected
 		p.DisconnectTime = time.Now()
 		p.Conn = nil
+		player = p
 	}
-	// 房主断线时选举新房主（仅在同步中入队事件）
 	if r.hostPlayerId == id && r.running {
 		r.electHost()
 	}
+	d := r.delegate
 	r.mu.Unlock()
+
+	if d != nil && player != nil {
+		d.OnPlayerDisconnected(r, player)
+	}
 }
 
-// RemovePlayer 彻底移除
+// RemovePlayer 彻底移除玩家（通过 removePlayerLocked 统一路径）
 func (r *Room) RemovePlayer(id int32) {
 	r.mu.Lock()
-	delete(r.players, id)
-	// 房主被移除时选举新房主（仅在同步中入队事件）
-	if r.hostPlayerId == id && r.running {
-		r.electHost()
-	}
+	r.removePlayerLocked(id)
+	d := r.delegate
 	r.mu.Unlock()
+
+	if d != nil {
+		d.OnPlayerRemoved(r, id)
+	}
 }
 
 // EnqueueEvent 添加帧内事件（在同步中调用，事件随下一帧广播）
@@ -396,6 +466,9 @@ func (r *Room) UpdateSnapshot(frameNumber uint32, data []byte) bool {
 
 	if wasPaused {
 		r.broadcast(codec.NewExtMessage(ExtCmdFrameSyncResumed, nil))
+		if r.delegate != nil {
+			r.delegate.OnRoomResumed(r)
+		}
 	}
 
 	slog.Info("snapshot updated", "roomId", r.ID, "frame", frameNumber, "bytes", len(data))
@@ -475,6 +548,7 @@ func (r *Room) Start() {
 	r.snapshotStaleFrames = 0
 	r.snapshotPaused = false
 	r.stopCh = make(chan struct{})
+	d := r.delegate
 	r.mu.Unlock()
 
 	initData := &InitData{
@@ -485,8 +559,11 @@ func (r *Room) Start() {
 		QuickReconnectMaxMs: r.config.QuickReconnectMaxMs,
 	}
 	r.broadcast(codec.NewCoreMessage(CmdStartFrameSync, EncodeInitData(initData)))
-
 	go r.tickLoop()
+
+	if d != nil {
+		d.OnRoomStarted(r)
+	}
 }
 
 // Stop 停止帧同步
@@ -499,12 +576,17 @@ func (r *Room) Stop() {
 	r.running = false
 	startedAt := r.startedAt
 	close(r.stopCh)
+	d := r.delegate
 	r.mu.Unlock()
 
 	if !startedAt.IsZero() {
 		Metrics.RoomLifetimeSeconds.Observe(time.Since(startedAt).Seconds())
 	}
 	r.broadcast(codec.NewCoreMessage(CmdStopFrameSync, nil))
+
+	if d != nil {
+		d.OnRoomStopped(r)
+	}
 }
 
 // OnInput 收到玩家输入
@@ -523,10 +605,8 @@ func (r *Room) tickLoop() {
 			slog.Error("PANIC recovered", "roomId", r.ID, "panic", rec)
 			Metrics.RoomPanics.Inc()
 
-			// 广播 StopFrameSync 给所有在线玩家
 			r.broadcast(codec.NewCoreMessage(CmdStopFrameSync, nil))
 
-			// 收集玩家 ID 并清理房间状态
 			r.mu.Lock()
 			r.running = false
 			playerIds := make([]int32, 0, len(r.players))
@@ -534,12 +614,11 @@ func (r *Room) tickLoop() {
 				playerIds = append(playerIds, id)
 			}
 			r.players = make(map[int32]*Player)
-			onPanic := r.OnPanic
+			d := r.delegate
 			r.mu.Unlock()
 
-			// 通知外部清理全局映射（playerRoomMap 等）
-			if onPanic != nil {
-				onPanic(r, playerIds)
+			if d != nil {
+				d.OnRoomPanicked(r, playerIds)
 			}
 		}
 	}()
@@ -547,25 +626,12 @@ func (r *Room) tickLoop() {
 	ticker := time.NewTicker(r.frameInterval)
 	defer ticker.Stop()
 
-	cleanupTicker := time.NewTicker(5 * time.Second)
-	defer cleanupTicker.Stop()
-
 	for {
 		select {
 		case <-r.stopCh:
 			return
 		case <-ticker.C:
 			r.stepFrame()
-		case <-cleanupTicker.C:
-			removed := r.CleanupDisconnected()
-			for _, id := range removed {
-				if r.running {
-					r.EnqueueEvent(FrameEventPlayerLeft, id)
-				} else {
-					r.broadcast(codec.NewExtMessage(ExtCmdPlayerLeft, EncodePlayerId(id)))
-				}
-				slog.Info("player removed (disconnect timeout)", "roomId", r.ID, "playerId", id)
-			}
 		}
 	}
 }
@@ -580,8 +646,12 @@ func (r *Room) stepFrame() {
 		if r.snapshotStaleFrames >= staleLimit && !r.snapshotPaused {
 			r.snapshotPaused = true
 			slog.Warn("no snapshot received, pausing frame sync", "roomId", r.ID, "staleFrames", r.snapshotStaleFrames, "limit", staleLimit)
+			d := r.delegate
 			r.mu.Unlock()
 			r.broadcast(codec.NewExtMessage(ExtCmdFrameSyncPaused, []byte{byte(PauseReasonSnapshotStale)}))
+			if d != nil {
+				d.OnRoomPaused(r, PauseReasonSnapshotStale)
+			}
 			return
 		}
 		if r.snapshotPaused {
@@ -649,20 +719,42 @@ func (r *Room) stepFrame() {
 	Metrics.FrameBroadcastLatency.Observe(time.Since(broadcastStart).Seconds())
 }
 
-// CleanupDisconnected 清理超时断线玩家，返回被移除的玩家 ID
-func (r *Room) CleanupDisconnected() []int32 {
+// ReconcilePlayers 收敛玩家期望状态：通过 removePlayerLocked 移除所有超过 keepalive 的断线玩家
+// 同时入队帧事件通知同房玩家，返回被移除的玩家 ID（供 Reconciler 回调 delegate）
+func (r *Room) ReconcilePlayers() []int32 {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	var removed []int32
+	var evicted []int32
 	now := time.Now()
 	for id, p := range r.players {
 		if p.State == PlayerDisconnected && now.Sub(p.DisconnectTime) > r.config.DisconnectKeepAlive {
-			delete(r.players, id)
-			removed = append(removed, id)
+			r.removePlayerLocked(id)
+			evicted = append(evicted, id)
 		}
 	}
-	return removed
+	r.mu.Unlock()
+
+	for _, id := range evicted {
+		if r.IsRunning() {
+			r.EnqueueEvent(FrameEventPlayerLeft, id)
+		} else {
+			r.broadcast(codec.NewExtMessage(ExtCmdPlayerLeft, EncodePlayerId(id)))
+		}
+	}
+	return evicted
+}
+
+// ShouldDestroy 期望状态检查：房间是否空置超过 grace 时长，应当被销毁
+func (r *Room) ShouldDestroy(grace time.Duration) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return !r.emptyAt.IsZero() && time.Since(r.emptyAt) > grace
+}
+
+// EmptyAt 返回房间最近一次变空的时刻（零值表示当前有玩家）
+func (r *Room) EmptyAt() time.Time {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.emptyAt
 }
 
 // broadcast 广播（用于非热路径：Start/Stop）

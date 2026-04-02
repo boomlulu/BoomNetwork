@@ -80,6 +80,17 @@ func (rm *RoomManager) RemoveRoom(id int32) {
 	}
 }
 
+// Snapshot 返回当前所有房间的快照切片（供 Reconciler 安全遍历，不持锁）
+func (rm *RoomManager) Snapshot() []*Room {
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
+	rooms := make([]*Room, 0, len(rm.rooms))
+	for _, r := range rm.rooms {
+		rooms = append(rooms, r)
+	}
+	return rooms
+}
+
 // RoomCount 房间数量
 func (rm *RoomManager) RoomCount() int {
 	rm.mu.Lock()
@@ -123,8 +134,8 @@ func (rm *RoomManager) CreateRoomWithMaxPlayers(maxPlayers int) *Room {
 	return room
 }
 
-// CleanupEmptyRooms 清理空闲房间
-// 清理条件：无玩家 + 未运行 + (曾有过玩家 OR 创建超过 idleTimeout)
+// CleanupEmptyRooms 清理从未有玩家加入或长期空置的房间（兜底路径）
+// Reconciler 负责曾有玩家后变空的房间；此方法处理：无玩家 + 未运行 + (曾有过玩家 OR 创建超过 idleTimeout)
 func (rm *RoomManager) CleanupEmptyRooms(idleTimeout time.Duration) int {
 	now := time.Now()
 	rm.mu.Lock()
@@ -136,13 +147,12 @@ func (rm *RoomManager) CleanupEmptyRooms(idleTimeout time.Duration) int {
 			}
 		}
 	}
-	for _, id := range toRemove {
-		delete(rm.rooms, id)
-	}
 	rm.mu.Unlock()
 
+	for _, id := range toRemove {
+		rm.RemoveRoom(id) // 统一走 canonical 路径（含 Stop + metrics + log）
+	}
 	if len(toRemove) > 0 {
-		Metrics.RoomsCurrent.Sub(float64(len(toRemove)))
 		slog.Info("cleaned up empty rooms", "count", len(toRemove), "roomIds", toRemove)
 	}
 	return len(toRemove)
