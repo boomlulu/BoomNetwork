@@ -46,31 +46,31 @@
 
 ## 帧同步层
 
-### InputBuffer 存引用不存值
+### PlayerId→Slot 用 pid-1 越界
 ```
-现象: 预测永远不匹配，每帧都回滚
-原因: Set(frame, pid, input) 存了外部 buffer 的引用
-修复: Set 时 Buffer.BlockCopy 复制
-教训: 帧级数据必须值语义
-```
-
-### 预测帧率和服务器帧率不对齐
-```
-现象: 8 帧预测后停止，所有服务器帧触发回滚
-原因: PredictFrame 在 Unity Update 60fps 调用，服务器 20fps
-修复: PredictionManager 内部 _frameAccumulator 节流
-教训: 预测频率必须等于服务器帧率
+现象: 4 人房间 Players[4] 越界，或 slot 与玩家错位
+原因: 服务器 PID 全局递增（8,9,10...），pid-1 超出 Players[] 数组范围
+修复: 维护动态 PidToSlot 映射，按玩家首次出现顺序分配 slot 0..N
+教训: 不能假设 pid 连续或从 1 开始；slot 分配必须用映射表
 ```
 
-### 快照 + 补帧在同进程两客户端的去重冲突
+### InitPlayer 时序不一致导致不同步
 ```
-现象: 重连后其他玩家位置被重置
-原因: 两个 Person 的 OnFrame 用帧号去重
-      补帧（旧帧号）被 live 帧（新帧号）的去重计数器跳过
-修复: Demo01 不加载快照（接受小偏差）
-      正确方案属于 Demo02 预测模式
-教训: 快照恢复 + 补帧必须原子执行，不能和 live 帧交错
+现象: 多客户端玩家状态从第一帧开始就不同
+原因: OnFrameSyncStart / LoadSnapshot / OnJoinedRoom 各自 InitPlayer，
+      不同客户端回调时序不同 → GameState 在不同帧被初始化
+修复: InitPlayer 只走两条确定性路径：
+      1. 帧事件 OnPlayerJoined（同帧，所有客户端）
+      2. ApplyInputs auto-init（首次输入到达时）
+教训: OnFrameSyncStart 只调 Init(dt,seed)，不 InitPlayer
 ```
+
+### TakeSnapshot 在 Init 前执行
+```
+现象: late-joiner 加载快照后 RNG 流完全不同（seed=0）
+原因: RequestStart 在 OnFrameSyncStart 前调 TakeSnapshot，此时 Init 还没执行
+修复: TakeSnapshot 检查 _syncing==false 时返回 null，跳过初始快照
+教训: 第一个有效快照由正常快照上传周期提供，不在 RequestStart 时拍
 
 ## 房间管理
 

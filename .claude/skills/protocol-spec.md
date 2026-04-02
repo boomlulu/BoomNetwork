@@ -30,7 +30,7 @@ Request/Response:           FlagsCmd(1) + BodyLen(2) + Seq(4) = 7 bytes
 大包 Request:               FlagsCmd(1) + BodyLen(4) + Seq(4) = 9 bytes
 ```
 
-## Cmd 常量表
+## Cmd 常量表（Core Namespace）
 
 | Cmd | 值 | 方向 | 说明 |
 |-----|---|----|------|
@@ -39,9 +39,9 @@ Request/Response:           FlagsCmd(1) + BodyLen(2) + Seq(4) = 7 bytes
 | RequestStart | 3 | C→S | 请求开始帧同步 |
 | StartFrameSync | 4 | S→C | 帧同步开始（广播） |
 | FrameInput | 5 | C→S | 玩家输入 |
-| PushFrames | 6 | S→C | 推帧（广播） |
+| PushFrames | 6 | S→C | 推帧（含帧内嵌事件） |
 | Heartbeat | 7 | C→S | 心跳 |
-| HeartbeatRsp | 8 | S→C | 心跳响应 |
+| HeartbeatRsp | 8 | S→C | 心跳响应（含 RTT 时间戳） |
 | Reconnect | 9 | C→S | 重连（带旧 playerId） |
 | ReconnectRsp | 10 | S→C | 重连响应 |
 | StopFrameSync | 21 | S→C | 帧同步停止 |
@@ -55,6 +55,23 @@ Request/Response:           FlagsCmd(1) + BodyLen(2) + Seq(4) = 7 bytes
 | LeaveRoomRsp | 67 | S→C | 离开响应 |
 | UploadSnapshot | 70 | C→S | 上传快照 |
 | UploadSnapshotRsp | 71 | S→C | 上传确认 |
+| MatchRoom | 72 | C→S | 匹配房间（按 matchKey） |
+| MatchRoomRsp | 73 | S→C | 匹配响应（playerId + roomId） |
+
+## ExtCmd 常量表（Extended Namespace，框架扩展）
+
+| ExtCmd | 值 | 方向 | 说明 |
+|--------|---|----|------|
+| PlayerJoined | 20 | S→C | 玩家加入（非同步模式广播） |
+| PlayerLeft | 21 | S→C | 玩家离开（非同步模式广播） |
+| PlayerOffline | 22 | S→C | 玩家断线（非同步模式广播） |
+| PlayerOnline | 23 | S→C | 玩家重连（非同步模式广播） |
+| EntityState | 27 | S→C | 实体权威状态广播 |
+| AuthorityTransfer | 28 | S→C | 权威转移 |
+| StateSync | 30 | S→C | KV 轻量状态同步（任意键值对） |
+
+> 同步模式下（room.IsRunning==true），玩家事件通过**帧内嵌 FrameEvent** 随帧下发（见下方）；
+> 非同步模式下才走 ExtCmd 20-23 立即广播。两条路径互斥。
 
 ## 帧数据格式（PushFrames）
 
@@ -66,7 +83,21 @@ per input:
   [PlayerId: 4B int32]
   [DataLength: 2B uint16]
   [Data: N bytes]
+[EventCount: 1B uint8]          ← 向后兼容：老服务端无此段，Decode 检查 offset < len(buf)
+per event (5B each):
+  [EventType: 1B]
+  [PlayerId: 4B int32]
 ```
+
+### FrameEvent 类型常量
+
+| 值 | 常量 | 含义 |
+|----|------|------|
+| 1 | PlayerJoined | 玩家加入房间 |
+| 2 | PlayerLeft | 玩家离开房间 |
+| 3 | PlayerOffline | 玩家断线 |
+| 4 | PlayerOnline | 玩家重连恢复 |
+| 5 | HostChanged | Host 变更（PlayerId = 新 Host） |
 
 ## StartFrameSync 数据格式
 

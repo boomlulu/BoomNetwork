@@ -4,19 +4,21 @@
 
 ```
 /Users/boom/Demo/BoomNetwork
-github: luwenyiCC/BoomNetwork
+github: boomlulu/BoomNetwork
 branch: dev1.0
 ```
+
+> 完整 API 文档 → `.claude/skills/bn-cli/` (C# 客户端) 和 `.claude/skills/bn-svr/` (Go 服务器)
 
 ## 分层架构
 
 ```
-Layer 0: Transport    → 字节收发 + 连接管理
+Layer 0: Transport    → 字节收发 + 连接管理（TCP / KCP / WebGL WebSocket）
 Layer 1: Framing      → 粘包/拆包 (LengthPrefix + RingBuffer)
 Layer 2: Codec        → Message ↔ bytes (动态包头 FlagsCmd)
 Layer 3: Session      → seq/ack + SendAsync + 超时 + 消息路由
 Layer 4: Connection   → 心跳 + 重连策略 (IReconnectStrategy)
-Layer 5: FrameSync    → 帧同步客户端 + 预测回滚
+Layer 5: FrameSync    → 帧同步 + 实体权威同步 + 轻量状态同步
 ```
 
 ## 目录结构
@@ -30,30 +32,32 @@ cli/                               ← C# 客户端
 │   │   ├── LengthPrefixFraming.cs ← 粘包/拆包
 │   │   └── RingBuffer.cs          ← 环形缓冲区
 │   ├── FrameSync/
-│   │   └── FrameSyncProtocol.cs   ← Cmd 常量 + 帧数据编解码
-│   ├── Transport/
-│   │   └── ITransport.cs          ← 传输层接口
-│   └── Prediction/
-│       ├── ISimulation.cs         ← 游戏层实现的确定性模拟接口
-│       ├── PredictionManager.cs   ← 预测/对比/回滚编排
-│       ├── InputBuffer.cs         ← 帧输入环形缓冲区
-│       └── SnapshotBuffer.cs      ← 帧快照环形缓冲区
+│   │   ├── FrameSyncCmd.cs        ← Cmd/ExtCmd 常量
+│   │   ├── FrameDataCodec.cs      ← 帧数据编解码（含 FrameEvent）
+│   │   ├── RoomCodec.cs           ← 房间协议编解码
+│   │   ├── SnapshotCodec.cs       ← 快照编解码
+│   │   ├── EntityStateCodec.cs    ← 实体权威同步编解码
+│   │   ├── AuthorityTransferCodec.cs ← 权威转移编解码
+│   │   ├── StateSyncCodec.cs      ← KV 轻量状态同步编解码
+│   │   └── FrameEvent.cs          ← 帧内嵌事件（PlayerJoined/Left/HostChanged…）
+│   └── Transport/
+│       └── ITransport.cs          ← 传输层接口
 │
 ├── Client/                        ← 客户端实现
 │   ├── Transport/
 │   │   ├── TcpClientTransport.cs  ← TCP 传输
 │   │   ├── KcpClientTransport.cs  ← KCP 传输
-│   │   └── Kcp/                   ← KCP 协议实现（limpo1989/kcp-csharp）
+│   │   └── WebSocketClientTransport.cs ← WebGL WebSocket 传输
 │   ├── Session/
 │   │   └── NetworkSession.cs      ← 会话层
 │   ├── Connection/
-│   │   ├── ConnectionManager.cs   ← 连接生命周期 + 心跳
+│   │   ├── ConnectionManager.cs   ← 连接生命周期 + 心跳 + RTT
 │   │   ├── IReconnectStrategy.cs  ← 重连策略接口
 │   │   ├── QuickReconnectStrategy.cs
 │   │   ├── SnapshotReconnectStrategy.cs
 │   │   └── CompositeReconnectStrategy.cs
 │   ├── FrameSync/
-│   │   └── FrameSyncClient.cs     ← 帧同步客户端
+│   │   └── FrameSyncClient.cs     ← 帧同步客户端门面（含 OnHostChanged）
 │   └── Room/
 │       └── RoomClient.cs          ← 房间管理客户端
 │
@@ -65,25 +69,27 @@ cli/                               ← C# 客户端
 
 svr/                               ← Go 服务器
 ├── cmd/
-│   ├── echo/main.go
-│   ├── framesync/main.go
-│   ├── stress/main.go
-│   └── kcpstress/main.go
+│   └── framesync/
+│       ├── main.go                ← 启动入口 + Handler 注册
+│       ├── admin.go               ← Admin HTTP 14 端点
+│       ├── admin_ws.go            ← WebSocket GM Hub
+│       ├── netsim.go              ← 网络模拟（延迟/抖动/丢包）
+│       └── config.go              ← YAML 配置系统
 ├── codec/                         ← 消息编解码（和 C# 线格式一致）
 ├── framesync/                     ← 帧同步核心
-│   ├── protocol.go                ← Cmd 常量 + 编解码
-│   ├── room.go                    ← 房间（帧推送 + 快照 + 帧缓冲）
+│   ├── protocol.go                ← Cmd/ExtCmd 常量 + 编解码函数
+│   ├── room.go                    ← 房间（tickLoop + 帧事件 + Host 选举）
 │   └── room_manager.go            ← 房间管理
 ├── session/                       ← Router + Handler
 └── transport/                     ← TCP/KCP 服务器 + 安全
 
-unity/com.boom.boomnetwork/        ← UPM 包（Unity 导入用）
-├── package.json
-├── Runtime/
-│   ├── BoomNetwork.Runtime.asmdef
-│   ├── Core/                      ← 从 cli/Core 复制
-│   └── Client/                    ← 从 cli/Client 复制
-└── README.md
+unity/com.boom.boomnetwork/        ← 核心 UPM 包（从 cli/ 同步）
+├── Runtime/Core/                  ← ← cli/Core 镜像
+├── Runtime/Client/                ← ← cli/Client 镜像
+└── Samples~/                      ← Demo 样例（VampireSurvivors / MinecraftDemo…）
+
+unity/com.boom.boomnetwork.gm/     ← GM 工具 UPM 包（Unity Editor only）
+└── Editor/ServerWindow.cs         ← 5 Tab GM 面板
 ```
 
 ## 包头格式
@@ -103,12 +109,14 @@ FlagsCmd:
 
 ## UPM 包同步流程
 
-修改 cli/ 下的 C# 代码后：
-1. 复制到 unity/com.boom.boomnetwork/Runtime/
-2. git commit + push
-3. Unity 中 Package Manager → Update BoomNetwork
+修改 `cli/` 下的 C# 代码后：
+1. 复制到 `unity/com.boom.boomnetwork/Runtime/`（Core/ + Client/ 镜像）
+2. git commit + push dev1.0
+3. Unity 中 Package Manager → Update BoomNetwork（UPM 引用 git URL + #dev1.0）
 
-注意：unity/ 下的 .meta 文件必须保留（Python 脚本生成）
+注意：
+- `unity/` 下的 .meta 文件必须保留（Python 脚本生成）
+- GM 包 (`com.boom.boomnetwork.gm`) 独立，不需要同步 cli/
 
 ## 性能基线
 
@@ -127,5 +135,5 @@ MaxMessagesPerSec: 500
 BurstAllowance:    20
 Room cleanup:      120s after all offline
 Frame buffer:      200 frames (10s)
-Snapshot interval:  100 frames (5s)
+Snapshot interval: 100 frames (5s)
 ```

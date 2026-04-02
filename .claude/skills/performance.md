@@ -47,12 +47,10 @@
 - 无
 
 ### P1（影响性能）
-- InputBuffer.Set 每次 new byte[N] — 应改 ArrayPool（预测模式）
-- DemoSimulation.SaveState 每帧 new byte[] — 应复用 buffer（预测模式）
-- InputBuffer.GetAll 每次 new FrameInput[] — 应复用数组（预测模式）
+- VampireSurvivors Demo VSSnapshot.Serialize 仍有 byte[] 分配 — 应改静态 buffer
+- EntityStateCodec.Encode 传入 IList<IEntitySync> 已避免 ToArray()，但 Encode 内部可进一步复用
 
 ### P2（可以后做）
-- SnapshotBuffer 内部 byte[] 可复用
 - DecodeInput 的 static byte[8] 临时变量
 - Camera.main 缓存（Unity Demo）
 - OnGUI 字符串拼接
@@ -113,5 +111,5 @@ Goroutines: 不能持续增长
 
 优化空间:
   - FrameData 紧凑化 (PlayerId 4B→1B) → 下行降 ~15%
-  - 空帧合并（需预测支持）→ 下行降 ~70%（但需谨慎）
+  - Silent When Idle 已实现：无输入时不发 FrameInput
 ```
