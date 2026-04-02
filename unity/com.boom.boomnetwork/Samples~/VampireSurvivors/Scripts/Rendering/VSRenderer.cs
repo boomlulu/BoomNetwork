@@ -1,6 +1,6 @@
 // BoomNetwork VampireSurvivors Demo — Master 3D Renderer (Juice Edition)
 //
-// Isometric camera following local player. Kill explosions + screen shake.
+// Isometric camera following local player. Kill explosions.
 // Gem magnet visual. Floating damage numbers. Growth-curve weapon scaling.
 // Boss pulsing visual + warning banner.
 
@@ -68,13 +68,9 @@ namespace BoomNetwork.Samples.VampireSurvivors
         bool[] _prevEnemyAlive = new bool[GameState.MaxEnemies];
         int[] _prevPlayerHp = new int[GameState.MaxPlayers];
 
-        // ==================== Death Pop + Screen Shake (Feature 2) ====================
+        // ==================== Death Pop (Feature 2) ====================
         struct DeathPop { public bool Active; public int Frame; public Vector3 Origin; public bool IsBoss; }
         DeathPop[] _deathPops = new DeathPop[GameState.MaxEnemies];
-        Vector3 _shakeOffset;
-        float _shakeIntensity;
-        const float ShakePerKill = 0.08f;
-        const float ShakeMax = 0.6f;
 
         // ==================== Gem Magnet (Feature 3) ====================
         Vector3[] _gemVisualPos = new Vector3[GameState.MaxGems];
@@ -238,8 +234,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
                     + IsoOffset;
             }
 
-            UpdateShake();
-            _cam.transform.position = _camTarget + _shakeOffset;
+            _cam.transform.position = _camTarget;
             _cam.transform.rotation = IsoRotation;
         }
 
@@ -500,7 +495,6 @@ namespace BoomNetwork.Samples.VampireSurvivors
                     Vector3 lastPos = _enemyPool[i].transform.position;
                     bool isBoss = (e.Type == EnemyType.Boss);
                     _deathPops[i] = new DeathPop { Active = true, Frame = 0, Origin = lastPos, IsBoss = isBoss };
-                    _shakeIntensity = Mathf.Min(_shakeIntensity + (isBoss ? ShakeMax : ShakePerKill), ShakeMax);
                 }
 
                 if (!show) continue;
@@ -718,18 +712,6 @@ namespace BoomNetwork.Samples.VampireSurvivors
                     pop.Active = false;
                 }
             }
-        }
-
-        // ==================== Feature 2: Screen Shake ====================
-
-        void UpdateShake()
-        {
-            if (_shakeIntensity <= 0.001f) { _shakeOffset = Vector3.zero; _shakeIntensity = 0f; return; }
-            _shakeOffset = new Vector3(
-                (Random.value * 2f - 1f) * _shakeIntensity,
-                0f,
-                (Random.value * 2f - 1f) * _shakeIntensity);
-            _shakeIntensity *= 0.6f;
         }
 
         // ==================== Feature 4: Damage Numbers ====================
