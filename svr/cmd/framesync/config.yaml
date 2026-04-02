@@ -6,7 +6,7 @@ proto: "tcp"          # 传输协议: tcp 或 kcp
 
 # ===== 安全 =====
 authToken: ""         # 鉴权 token，空字符串 = 不鉴权
-adminToken: "84224155" # Admin/GM 鉴权 token
+adminToken: ""        # Admin/GM 鉴权 token，空 = 不鉴权（本地开发用）
 
 # ===== 监控 =====
 metricsAddr: ":9090"  # Prometheus metrics 地址，空 = 不启用
