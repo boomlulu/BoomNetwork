@@ -147,24 +147,26 @@ public class HelloWorld : MonoBehaviour
         text.normal.textColor = new Color(0.85f, 0.85f, 0.85f);
         var tip = new GUIStyle(GUI.skin.label) { fontSize = 12 };
         tip.normal.textColor = new Color(0.6f, 0.85f, 1f);
+        const int lh = 22; // line height
 
-        // 左上：状态面板
-        GUILayout.BeginArea(new Rect(10, 10, 280, 90), GUI.skin.box);
-        GUILayout.Label("BoomNetwork Hello World", title);
-        GUILayout.Space(2);
-        GUILayout.Label($"  State: {_network.Client.CurrentState}", text);
-        GUILayout.Label($"  Player: {_network.PlayerId}   Frame: {_lastFrame}   Online: {_players.Count}", text);
-        GUILayout.EndArea();
+        // 左上：状态面板（手动布局）
+        float lx = 10, ly = 10, lw = 290;
+        float lph = 10 + lh + 4 + lh + lh + 8;
+        GUI.Box(new Rect(lx, ly, lw, lph), GUIContent.none);
+        float lcy = ly + 8;
+        GUI.Label(new Rect(lx + 8, lcy, lw - 16, lh), "BoomNetwork Hello World", title); lcy += lh + 4;
+        GUI.Label(new Rect(lx + 8, lcy, lw - 16, lh), $"  State: {_network.Client.CurrentState}", text); lcy += lh;
+        GUI.Label(new Rect(lx + 8, lcy, lw - 16, lh), $"  Player: {_network.PlayerId}   Frame: {_lastFrame}   Online: {_players.Count}", text);
 
-        // 右上：操作说明
-        GUILayout.BeginArea(new Rect(Screen.width - 230, 10, 220, 145), GUI.skin.box);
-        GUILayout.Label("Controls", title);
-        GUILayout.Space(2);
-        GUILayout.Label("  WASD / Arrows = Move", tip);
-        GUILayout.Space(4);
-        GUILayout.Label("Quick Start:", text);
-        GUILayout.Label("  1. Start Go server", tip);
-        GUILayout.Label("  2. Play → auto connect", tip);
-        GUILayout.EndArea();
+        // 右上：操作说明（手动布局，避免 GUILayout 高度截断）
+        float rx = Screen.width - 230, ry = 10, rw = 220;
+        float rh = 12 + lh + 4 + lh + 4 + lh + lh + lh + 10; // padding+5行+间距
+        GUI.Box(new Rect(rx, ry, rw, rh), GUIContent.none);
+        float cy = ry + 8;
+        GUI.Label(new Rect(rx + 8, cy, rw - 16, lh), "Controls", title);        cy += lh + 4;
+        GUI.Label(new Rect(rx + 8, cy, rw - 16, lh), "  WASD / Arrows = Move", tip); cy += lh + 4;
+        GUI.Label(new Rect(rx + 8, cy, rw - 16, lh), "Quick Start:", text);           cy += lh;
+        GUI.Label(new Rect(rx + 8, cy, rw - 16, lh), "  1. Start Go server", tip);   cy += lh;
+        GUI.Label(new Rect(rx + 8, cy, rw - 16, lh), "  2. Play → auto connect", tip);
     }
 }
