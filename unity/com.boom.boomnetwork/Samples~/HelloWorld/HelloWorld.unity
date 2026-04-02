@@ -225,8 +225,8 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: a79441f348de89743a2939f4d699eac1, type: 3}
-  m_Name:
-  m_EditorClassIdentifier:
+  m_Name: 
+  m_EditorClassIdentifier: 
   m_RenderShadows: 1
   m_RequiresDepthTextureOption: 2
   m_RequiresOpaqueTextureOption: 2
@@ -302,8 +302,8 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 70bffb5ba2f54ae58bda3435d64fd184, type: 3}
-  m_Name:
-  m_EditorClassIdentifier:
+  m_Name: 
+  m_EditorClassIdentifier: 
   host: 124.220.6.174
   port: 9000
   heartbeatIntervalMs: 3000
@@ -321,9 +321,9 @@ MonoBehaviour:
   m_GameObject: {fileID: 200000001}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 79e0f186fb71a41e4b9bcc26823f6704, type: 3}
-  m_Name:
-  m_EditorClassIdentifier:
+  m_Script: {fileID: 11500000, guid: e0618b3696f7d4ccc84c402f0e8c8b8f, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
   moveSpeed: 1
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
