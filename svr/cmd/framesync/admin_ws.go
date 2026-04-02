@@ -168,19 +168,31 @@ func (h *GMHub) pushRooms() {
 		if room == nil {
 			continue
 		}
+		emptyAt := room.EmptyAt()
+		var emptyAtMs int64
+		if !emptyAt.IsZero() {
+			emptyAtMs = emptyAt.UnixMilli()
+		}
 		detail := RoomDetailWire{
-			ID:           room.ID,
-			Running:      room.IsRunning(),
-			Paused:       room.IsSnapshotPaused(),
-			FrameNumber:  room.CurrentFrameNumber(),
-			FrameRate:    room.FrameRate(),
-			MaxPlayers:   room.MaxPlayers(),
-			OnlineCount:  room.PlayerCount(),
-			TotalPlayers: room.TotalPlayerCount(),
-			MatchKey:     room.MatchKey,
+			ID:                room.ID,
+			Running:           room.IsRunning(),
+			Paused:            room.IsSnapshotPaused(),
+			FrameNumber:       room.CurrentFrameNumber(),
+			FrameRate:         room.FrameRate(),
+			MaxPlayers:        room.MaxPlayers(),
+			OnlineCount:       room.PlayerCount(),
+			TotalPlayers:      room.TotalPlayerCount(),
+			MatchKey:          room.MatchKey,
+			EmptyAt:           emptyAtMs,
+			EmptyGraceSec:     cfg.EmptyGraceSec,
+			DisconnectKeepSec: cfg.DisconnectKeepSec,
 		}
 		room.ForEachPlayer(func(p framesync.PlayerInfo) {
-			detail.Players = append(detail.Players, PlayerInfoWire{ID: p.ID, State: int(p.State)})
+			detail.Players = append(detail.Players, PlayerInfoWire{
+				ID:             p.ID,
+				State:          int(p.State),
+				DisconnectTime: p.DisconnectTime, // unix ms，在线时为 0（omitempty）
+			})
 		})
 		rooms = append(rooms, detail)
 	}
@@ -619,7 +631,11 @@ func buildRoomInspect(room *framesync.Room) RoomInspectWire {
 
 	// Players
 	room.ForEachPlayer(func(pi framesync.PlayerInfo) {
-		result.Players = append(result.Players, PlayerInfoWire{ID: pi.ID, State: int(pi.State)})
+		result.Players = append(result.Players, PlayerInfoWire{
+			ID:             pi.ID,
+			State:          int(pi.State),
+			DisconnectTime: pi.DisconnectTime,
+		})
 	})
 
 	// Entity authority

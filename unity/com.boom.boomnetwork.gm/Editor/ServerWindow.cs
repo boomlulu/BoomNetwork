@@ -1086,6 +1086,21 @@ namespace BoomNetwork.GM.Editor
                     EditorGUILayout.LabelField("SNAPSHOT PAUSED", EditorStyles.miniLabel);
                     GUI.contentColor = subPrev;
                 }
+
+                // 房间销毁倒计时（所有玩家已离开）
+                if (room.EmptyAt > 0 && room.EmptyGraceSec > 0)
+                {
+                    long nowMs = System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                    float destroyIn = (room.EmptyGraceSec * 1000f - (nowMs - room.EmptyAt)) / 1000f;
+                    subPrev = GUI.contentColor;
+                    GUI.contentColor = new Color(1f, 0.5f, 0.1f);
+                    string destroyLabel = destroyIn > 0
+                        ? $"DESTROY IN {destroyIn:F0}s"
+                        : "DESTROY PENDING";
+                    EditorGUILayout.LabelField(destroyLabel, EditorStyles.miniLabel);
+                    GUI.contentColor = subPrev;
+                }
+
                 EditorGUI.indentLevel--;
                 EditorGUILayout.EndHorizontal();
 
@@ -1160,14 +1175,34 @@ namespace BoomNetwork.GM.Editor
                 if (room.Players != null)
                 {
                     EditorGUI.indentLevel++;
+                    long nowMs = System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                     foreach (var p in room.Players)
                     {
                         EditorGUILayout.BeginHorizontal();
                         bool online = p.State == 0;
                         var pPrev = GUI.contentColor;
-                        GUI.contentColor = online ? Color.green : Color.red;
-                        EditorGUILayout.LabelField($"P{p.Id} {(online ? "online" : "OFFLINE")}",
-                            GUILayout.Width(120));
+
+                        string playerLabel;
+                        if (online)
+                        {
+                            GUI.contentColor = Color.green;
+                            playerLabel = $"P{p.Id} online";
+                        }
+                        else if (p.DisconnectTime > 0 && room.DisconnectKeepSec > 0)
+                        {
+                            float kickIn = (room.DisconnectKeepSec * 1000f - (nowMs - p.DisconnectTime)) / 1000f;
+                            GUI.contentColor = Color.red;
+                            playerLabel = kickIn > 0
+                                ? $"P{p.Id} OFFLINE  kick in {kickIn:F0}s"
+                                : $"P{p.Id} OFFLINE  kicking...";
+                        }
+                        else
+                        {
+                            GUI.contentColor = Color.red;
+                            playerLabel = $"P{p.Id} OFFLINE";
+                        }
+
+                        EditorGUILayout.LabelField(playerLabel, GUILayout.Width(190));
                         GUI.contentColor = pPrev;
 
                         // Kick button

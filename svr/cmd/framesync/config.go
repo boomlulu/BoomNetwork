@@ -47,7 +47,11 @@ type ServerConfig struct {
 	// 超过此时间未重连的玩家将被移除房间
 	DisconnectKeepSec int `yaml:"disconnectKeepSec"`
 
-	// 空房间清理延迟（秒）
+	// 空房间销毁宽限期（秒）— 所有玩家离开后等待此时间再销毁
+	// 控制 RoomReconciler 的 emptyGrace，默认 30s，开发环境建议 5s
+	EmptyGraceSec int `yaml:"emptyGraceSec"`
+
+	// 空房间清理延迟（秒）— 兜底清理（从未有玩家加入的房间）
 	RoomCleanupSec int `yaml:"roomCleanupSec"`
 
 	// 容量限制
@@ -82,6 +86,7 @@ func DefaultConfig() ServerConfig {
 		SnapshotIntervalFrames: 100,
 		QuickReconnectMaxMs:    5000,
 		DisconnectKeepSec:      120,
+		EmptyGraceSec:          30,
 		RoomCleanupSec:         30,
 
 		MaxMessageSize:    65536,

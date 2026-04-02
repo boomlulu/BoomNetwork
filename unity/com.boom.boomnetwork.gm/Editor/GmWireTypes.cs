@@ -157,20 +157,27 @@ namespace BoomNetwork.GM.Editor
         public int FrameRate, MaxPlayers, OnlineCount, TotalPlayers;
         public string MatchKey;
         public GmPlayerInfo[] Players;
+        // 生命周期倒计时
+        public long EmptyAt;           // 房间变空的时刻（unix ms）；有玩家时为 0
+        public int EmptyGraceSec;      // 销毁宽限期（秒）
+        public int DisconnectKeepSec;  // 玩家踢出宽限期（秒）
 
         public static GmRoomDetail From(Dictionary<string, object> m)
         {
             var r = new GmRoomDetail
             {
-                Id           = MsgPackLite.GetInt(m, "id"),
-                Running      = MsgPackLite.GetBool(m, "running"),
-                Paused       = MsgPackLite.GetBool(m, "paused"),
-                FrameNumber  = (uint)MsgPackLite.GetLong(m, "frame_number"),
-                FrameRate    = MsgPackLite.GetInt(m, "frame_rate"),
-                MaxPlayers   = MsgPackLite.GetInt(m, "max_players"),
-                OnlineCount  = MsgPackLite.GetInt(m, "online_count"),
-                TotalPlayers = MsgPackLite.GetInt(m, "total_players"),
-                MatchKey     = MsgPackLite.GetString(m, "match_key"),
+                Id                = MsgPackLite.GetInt(m, "id"),
+                Running           = MsgPackLite.GetBool(m, "running"),
+                Paused            = MsgPackLite.GetBool(m, "paused"),
+                FrameNumber       = (uint)MsgPackLite.GetLong(m, "frame_number"),
+                FrameRate         = MsgPackLite.GetInt(m, "frame_rate"),
+                MaxPlayers        = MsgPackLite.GetInt(m, "max_players"),
+                OnlineCount       = MsgPackLite.GetInt(m, "online_count"),
+                TotalPlayers      = MsgPackLite.GetInt(m, "total_players"),
+                MatchKey          = MsgPackLite.GetString(m, "match_key"),
+                EmptyAt           = MsgPackLite.GetLong(m, "empty_at"),
+                EmptyGraceSec     = MsgPackLite.GetInt(m, "empty_grace_sec"),
+                DisconnectKeepSec = MsgPackLite.GetInt(m, "disconnect_keep_sec"),
             };
             var players = MsgPackLite.GetArray(m, "players");
             if (players != null)
@@ -190,13 +197,15 @@ namespace BoomNetwork.GM.Editor
     public struct GmPlayerInfo
     {
         public int Id, State;
+        public long DisconnectTime;  // 断线时刻（unix ms）；在线时为 0
 
         public static GmPlayerInfo From(Dictionary<string, object> m)
         {
             return new GmPlayerInfo
             {
-                Id    = MsgPackLite.GetInt(m, "id"),
-                State = MsgPackLite.GetInt(m, "state"),
+                Id             = MsgPackLite.GetInt(m, "id"),
+                State          = MsgPackLite.GetInt(m, "state"),
+                DisconnectTime = MsgPackLite.GetLong(m, "disconnect_time"),
             };
         }
     }

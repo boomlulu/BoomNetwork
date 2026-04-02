@@ -136,21 +136,26 @@ func MsgEntryToWire(e MsgEntry) MsgEntryWire {
 
 // RoomDetailWire — topic: rooms
 type RoomDetailWire struct {
-	ID           int32            `msgpack:"id"`
-	Running      bool             `msgpack:"running"`
-	Paused       bool             `msgpack:"paused"`
-	FrameNumber  uint32           `msgpack:"frame_number"`
-	FrameRate    int32            `msgpack:"frame_rate"`
-	MaxPlayers   int              `msgpack:"max_players"`
-	OnlineCount  int              `msgpack:"online_count"`
-	TotalPlayers int              `msgpack:"total_players"`
-	MatchKey     string           `msgpack:"match_key,omitempty"`
-	Players      []PlayerInfoWire `msgpack:"players"`
+	ID               int32            `msgpack:"id"`
+	Running          bool             `msgpack:"running"`
+	Paused           bool             `msgpack:"paused"`
+	FrameNumber      uint32           `msgpack:"frame_number"`
+	FrameRate        int32            `msgpack:"frame_rate"`
+	MaxPlayers       int              `msgpack:"max_players"`
+	OnlineCount      int              `msgpack:"online_count"`
+	TotalPlayers     int              `msgpack:"total_players"`
+	MatchKey         string           `msgpack:"match_key,omitempty"`
+	Players          []PlayerInfoWire `msgpack:"players"`
+	// 房间生命周期倒计时字段
+	EmptyAt          int64            `msgpack:"empty_at,omitempty"`           // 房间变空的时刻（unix ms）；有玩家时为 0
+	EmptyGraceSec    int              `msgpack:"empty_grace_sec,omitempty"`    // 宽限期（秒），与服务器配置一致
+	DisconnectKeepSec int             `msgpack:"disconnect_keep_sec,omitempty"` // 玩家踢出宽限期（秒）
 }
 
 type PlayerInfoWire struct {
-	ID    int32 `msgpack:"id"`
-	State int   `msgpack:"state"`
+	ID             int32 `msgpack:"id"`
+	State          int   `msgpack:"state"`
+	DisconnectTime int64 `msgpack:"disconnect_time,omitempty"` // 断线时刻（unix ms）；在线时为 0
 }
 
 // PerfPush — topic: perf

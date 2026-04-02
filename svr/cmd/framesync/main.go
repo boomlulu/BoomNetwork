@@ -241,19 +241,23 @@ func main() {
 
 	// RoomReconciler：期望状态 vs 实际状态协调循环
 	// 替代散落的 edge-triggered 生命周期管理（30s 销毁 goroutine、tickLoop cleanupTicker）
-	cleanupSec := cfg.RoomCleanupSec
-	if cleanupSec <= 0 {
-		cleanupSec = 30
+	emptyGraceSec := cfg.EmptyGraceSec
+	if emptyGraceSec <= 0 {
+		emptyGraceSec = 30
 	}
 	reconciler := framesync.NewRoomReconciler(
 		roomMgr,
 		globalDelegate,
-		time.Duration(cleanupSec)*time.Second, // emptyGrace
-		5*time.Second,                          // reconcile interval
+		time.Duration(emptyGraceSec)*time.Second, // emptyGrace：所有玩家离开后的销毁宽限期
+		5*time.Second,                             // reconcile interval
 	)
 	go reconciler.Run(ctx)
 
 	// 兜底清理：从未有玩家加入的空房间（Reconciler 不处理 emptyAt 为零的房间）
+	cleanupSec := cfg.RoomCleanupSec
+	if cleanupSec <= 0 {
+		cleanupSec = 30
+	}
 	go func() {
 		ticker := time.NewTicker(time.Duration(cleanupSec) * time.Second)
 		defer ticker.Stop()
