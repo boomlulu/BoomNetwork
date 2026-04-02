@@ -332,12 +332,20 @@ namespace BoomNetwork.GM.Editor
                                         FrameNumber = grd.FrameNumber, FrameRate = grd.FrameRate,
                                         MaxPlayers = grd.MaxPlayers, OnlineCount = grd.OnlineCount,
                                         TotalPlayers = grd.TotalPlayers, MatchKey = grd.MatchKey ?? "",
+                                        EmptyAt = grd.EmptyAt,
+                                        EmptyGraceSec = grd.EmptyGraceSec,
+                                        DisconnectKeepSec = grd.DisconnectKeepSec,
                                     };
                                     if (grd.Players != null)
                                     {
                                         rd.Players = new AdminClient.PlayerInfo[grd.Players.Length];
                                         for (int i = 0; i < grd.Players.Length; i++)
-                                            rd.Players[i] = new AdminClient.PlayerInfo { Id = grd.Players[i].Id, State = grd.Players[i].State };
+                                            rd.Players[i] = new AdminClient.PlayerInfo
+                                            {
+                                                Id = grd.Players[i].Id,
+                                                State = grd.Players[i].State,
+                                                DisconnectTime = grd.Players[i].DisconnectTime,
+                                            };
                                     }
                                     else rd.Players = Array.Empty<AdminClient.PlayerInfo>();
                                     rooms.Add(rd);

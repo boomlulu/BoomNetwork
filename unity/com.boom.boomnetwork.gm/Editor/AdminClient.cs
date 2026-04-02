@@ -97,12 +97,17 @@ namespace BoomNetwork.GM.Editor
             public int FrameRate, MaxPlayers, OnlineCount, TotalPlayers;
             public string MatchKey;
             public PlayerInfo[] Players;
+            // 生命周期倒计时
+            public long EmptyAt;           // 房间变空时刻（unix ms）；有玩家时为 0
+            public int EmptyGraceSec;      // 销毁宽限期（秒）
+            public int DisconnectKeepSec;  // 玩家踢出宽限期（秒）
         }
 
         public struct PlayerInfo
         {
             public int Id;
-            public int State; // 0=online, 1=disconnected
+            public int State;           // 0=online, 1=disconnected
+            public long DisconnectTime; // 断线时刻（unix ms）；在线时为 0
         }
 
         public RoomDetail[] FetchRooms()
