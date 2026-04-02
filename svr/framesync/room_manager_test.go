@@ -28,7 +28,7 @@ func TestRoomManager_CreateAndGet(t *testing.T) {
 func TestRoomManager_CreateWithMaxPlayers(t *testing.T) {
 	rm := NewRoomManager()
 
-	room := rm.CreateRoomWithMaxPlayers(4)
+	room := rm.CreateRoomWithMaxPlayers(4, "")
 	if room.MaxPlayers() != 4 {
 		t.Errorf("expected MaxPlayers=4, got %d", room.MaxPlayers())
 	}

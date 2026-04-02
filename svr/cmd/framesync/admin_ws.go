@@ -562,7 +562,7 @@ func (c *GMConn) rpcCreateRoom(env *GMEnvelope) {
 		p.MaxPlayers = 2
 	}
 
-	room := roomMgr.CreateRoomWithMaxPlayers(p.MaxPlayers)
+	room := roomMgr.CreateRoomWithMaxPlayers(p.MaxPlayers, p.MatchKey)
 	if room == nil {
 		c.sendError(env.ID, "create_room", "max rooms reached")
 		return

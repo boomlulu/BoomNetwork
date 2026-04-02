@@ -303,9 +303,9 @@ namespace BoomNetwork.Client.FrameSync
             _roomClient?.GetRooms(onResult);
         }
 
-        public void CreateRoom(int maxPlayers, Action<int>? onCreated = null)
+        public void CreateRoom(int maxPlayers, string? matchKey = null, Action<int>? onCreated = null)
         {
-            _roomClient?.CreateRoom(maxPlayers, onCreated);
+            _roomClient?.CreateRoom(maxPlayers, matchKey, onCreated);
         }
 
         public void JoinRoom(int roomId)
@@ -324,10 +324,10 @@ namespace BoomNetwork.Client.FrameSync
             });
         }
 
-        public void CreateAndJoinRoom(int maxPlayers)
+        public void CreateAndJoinRoom(int maxPlayers, string? matchKey = null)
         {
             if (CurrentState != State.Connected) return;
-            CreateRoom(maxPlayers, roomId =>
+            CreateRoom(maxPlayers, matchKey, roomId =>
             {
                 Log($"Room {roomId} created");
                 JoinRoom(roomId);

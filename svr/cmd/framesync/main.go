@@ -594,7 +594,16 @@ func handleCreateRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 		maxPlayers = 100
 	}
 
-	room := roomMgr.CreateRoomWithMaxPlayers(maxPlayers)
+	// 解析可选 matchKey: [MaxPlayers:2][MatchKeyLen:2][MatchKey:N]（向后兼容旧客户端）
+	var matchKey string
+	if len(msg.Data) >= 4 {
+		keyLen := int(binary.LittleEndian.Uint16(msg.Data[2:4]))
+		if keyLen > 0 && len(msg.Data) >= 4+keyLen {
+			matchKey = string(msg.Data[4 : 4+keyLen])
+		}
+	}
+
+	room := roomMgr.CreateRoomWithMaxPlayers(maxPlayers, matchKey)
 	if room == nil {
 		slog.Warn("create room rejected: server at capacity", "maxPlayers", maxPlayers)
 		return codec.NewExtMessage(framesync.ExtCmdCreateRoomRsp, make([]byte, 4)) // roomId=0 signals failure
@@ -602,7 +611,7 @@ func handleCreateRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	rsp := make([]byte, 4)
 	binary.LittleEndian.PutUint32(rsp, uint32(room.ID))
 
-	slog.Info("room created", "roomId", room.ID, "maxPlayers", maxPlayers)
+	slog.Info("room created", "roomId", room.ID, "maxPlayers", maxPlayers, "matchKey", matchKey)
 	return codec.NewExtMessage(framesync.ExtCmdCreateRoomRsp, rsp)
 }
 

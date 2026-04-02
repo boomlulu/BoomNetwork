@@ -114,8 +114,8 @@ func (rm *RoomManager) GetAllRoomInfos() []RoomInfo {
 	return infos
 }
 
-// CreateRoomWithMaxPlayers 创建指定人数上限的房间
-func (rm *RoomManager) CreateRoomWithMaxPlayers(maxPlayers int) *Room {
+// CreateRoomWithMaxPlayers 创建指定人数上限的房间，matchKey 为空表示不限制匹配
+func (rm *RoomManager) CreateRoomWithMaxPlayers(maxPlayers int, matchKey string) *Room {
 	cfg := rm.config
 	cfg.MaxPlayers = maxPlayers
 	rm.mu.Lock()
@@ -128,9 +128,10 @@ func (rm *RoomManager) CreateRoomWithMaxPlayers(maxPlayers int) *Room {
 	id := rm.nextID
 	room := NewRoomWithConfig(cfg)
 	room.ID = id
+	room.MatchKey = matchKey
 	rm.rooms[id] = room
 	Metrics.RoomsCurrent.Inc()
-	slog.Info("room created", "roomId", id, "maxPlayers", maxPlayers)
+	slog.Info("room created", "roomId", id, "maxPlayers", maxPlayers, "matchKey", matchKey)
 	return room
 }
 

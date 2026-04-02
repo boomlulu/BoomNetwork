@@ -399,7 +399,7 @@ func handleAdminCreateRoom(w http.ResponseWriter, r *http.Request) {
 	}
 	matchKey := r.URL.Query().Get("match_key")
 
-	room := roomMgr.CreateRoomWithMaxPlayers(maxPlayers)
+	room := roomMgr.CreateRoomWithMaxPlayers(maxPlayers, matchKey)
 	if room == nil {
 		jsonError(w, http.StatusConflict, "max rooms reached")
 		return

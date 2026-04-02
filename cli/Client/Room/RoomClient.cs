@@ -59,9 +59,9 @@ namespace BoomNetwork.Client.Room
         /// <summary>
         /// 创建房间
         /// </summary>
-        public void CreateRoom(int maxPlayers, Action<int>? onCreated = null)
+        public void CreateRoom(int maxPlayers, string? matchKey = null, Action<int>? onCreated = null)
         {
-            var data = RoomCodec.EncodeCreateRoom(maxPlayers);
+            var data = RoomCodec.EncodeCreateRoom(maxPlayers, matchKey);
             _session.SendExtAsync(FrameSyncExtCmd.CreateRoom, data, 5000,
                 onResponse: msg =>
                 {

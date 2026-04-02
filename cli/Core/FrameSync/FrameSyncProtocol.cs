@@ -380,10 +380,17 @@ namespace BoomNetwork.Core.FrameSync
         // === CreateRoom ===
         // Wire: [MaxPlayers:2]
 
-        public static byte[] EncodeCreateRoom(int maxPlayers)
+        // Wire: [MaxPlayers:2][MatchKeyLen:2][MatchKey:N]（向后兼容：老服务器只读前2字节）
+        public static byte[] EncodeCreateRoom(int maxPlayers, string? matchKey = null)
         {
-            var buf = new byte[2];
+            var keyBytes = string.IsNullOrEmpty(matchKey)
+                ? Array.Empty<byte>()
+                : System.Text.Encoding.UTF8.GetBytes(matchKey);
+            var buf = new byte[2 + 2 + keyBytes.Length];
             BinaryPrimitives.WriteUInt16LittleEndian(buf, (ushort)maxPlayers);
+            BinaryPrimitives.WriteUInt16LittleEndian(buf.AsSpan(2), (ushort)keyBytes.Length);
+            if (keyBytes.Length > 0)
+                keyBytes.CopyTo(buf.AsSpan(4));
             return buf;
         }
 

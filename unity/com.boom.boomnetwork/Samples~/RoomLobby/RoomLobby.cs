@@ -204,7 +204,7 @@ public class RoomLobby : MonoBehaviour
             GUILayout.Space(5);
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("Refresh", btn)) RefreshRooms();
-            if (GUILayout.Button("Create Room", btn)) _network.Client.CreateAndJoinRoom(maxPlayers);
+            if (GUILayout.Button("Create Room", btn)) _network.Client.CreateAndJoinRoom(maxPlayers, string.IsNullOrEmpty(_network.MatchKey) ? null : _network.MatchKey);
             if (GUILayout.Button("Quick Match", btn))
             {
                 var key = string.IsNullOrEmpty(_network.MatchKey) ? null : _network.MatchKey;
