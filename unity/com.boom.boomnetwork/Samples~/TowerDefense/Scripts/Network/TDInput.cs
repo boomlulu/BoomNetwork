@@ -20,7 +20,6 @@ namespace BoomNetwork.Samples.TowerDefense
         public const byte UpgradeAction   = 11;
         public const byte SpeedAction     = 12; // gx = speed mode (0-3)
         public const byte StartWaveAction = 13; // trigger next wave immediately
-        public const byte RestartAction   = 14; // restart the game (any player)
 
         // Speed mode values (used as gx payload for SpeedAction)
         public const byte SpeedSlow   = 0; // 0.25x — tactical pause

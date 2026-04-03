@@ -19,11 +19,6 @@ namespace BoomNetwork.Samples.TowerDefense
         readonly int[] _pidSlotMap = new int[256];
         int _nextSlot;
 
-        bool _restartPending;
-        bool _restarted;
-
-        public bool ConsumeRestart() { bool r = _restarted; _restarted = false; return r; }
-
         // Allocating lookup — only call inside ApplyInputs (deterministic frame processing).
         public int PidToSlot(int pid)
         {
@@ -54,8 +49,6 @@ namespace BoomNetwork.Samples.TowerDefense
             _nextSlot = 0;
         }
 
-        // Resets game state for a new round without clearing the pid→slot mapping.
-        // Called on restart so existing players keep their slot assignments.
         void ResetGameState(uint rngSeed)
         {
             State.FrameNumber  = 0;
@@ -87,15 +80,6 @@ namespace BoomNetwork.Samples.TowerDefense
         {
             State.FrameNumber = frame.FrameNumber;
             bool flowDirty = ApplyInputs(frame);
-
-            if (_restartPending)
-            {
-                _restartPending = false;
-                ResetGameState(State.RngState == 0 ? 0xDEADBEEFu : State.RngState);
-                _restarted = true;
-                return; // skip this frame's simulation — start fresh next frame
-            }
-
             if (flowDirty) PathSystem.Rebuild(State);
             if (IsGameOver()) return;
 
@@ -212,13 +196,6 @@ namespace BoomNetwork.Samples.TowerDefense
                         && State.Wave.WaveNumber < GameState.MaxWaves)
                         State.Wave.InterWaveTimer = 1; // next Tick will start the wave
                     continue;
-                }
-
-                // ── Restart ───────────────────────────────────────────────
-                if ((byte)towerType == TDInput.RestartAction)
-                {
-                    _restartPending = true; // processed in Tick after ApplyInputs returns
-                    return false; // no path rebuild needed
                 }
 
                 // ── Place tower ───────────────────────────────────────────

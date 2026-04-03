@@ -34,6 +34,7 @@ namespace BoomNetwork.Samples.TowerDefense
         bool _desyncDetected;
         uint _desyncFrame;
         bool _gameOver;
+        bool _isRestarting;
 
         // Cell selection state
         int _selectedGx = -1, _selectedGy = -1;
@@ -157,10 +158,10 @@ namespace BoomNetwork.Samples.TowerDefense
             _network.SendInput(_inputBuf);
         }
 
-        void SendRestart()
+        void StartRestart()
         {
-            TDInput.Encode(_inputBuf, 0, 0, TDInput.RestartAction);
-            _network.SendInput(_inputBuf);
+            _isRestarting = true;
+            _network.Client.RequestStop(); // triggers OnFrameSyncStop on all clients
         }
 
         // ==================== Network Events ====================
@@ -182,7 +183,22 @@ namespace BoomNetwork.Samples.TowerDefense
             Debug.Log($"[TD] FrameSync started. Pid={_network.PlayerId}, snapshot={_snapshotLoaded}, fps={init.FrameRate}");
         }
 
-        void OnFrameSyncStop() { _syncing = false; }
+        void OnFrameSyncStop()
+        {
+            _syncing = false;
+            if (!_isRestarting) return;
+
+            // Reset all state — OnFrameSyncStart will call _sim.Init with a new seed
+            _isRestarting  = false;
+            _gameOver      = false;
+            _desyncDetected = false;
+            _snapshotLoaded = false;
+            _mySlot        = -1;
+            ClearSelection();
+
+            _network.Client.RequestStart(); // rejoin → OnFrameSyncStart on all clients
+            Debug.Log("[TD] Restart requested — waiting for OnFrameSyncStart");
+        }
 
         void OnJoinedRoom(int roomId, int[] existingPlayerIds)
         {
@@ -201,20 +217,9 @@ namespace BoomNetwork.Samples.TowerDefense
 
         void OnFrame(FrameData frame)
         {
-            if (_desyncDetected) return;
+            if (_desyncDetected || _gameOver) return;
 
             _sim.Tick(frame);
-
-            if (_sim.ConsumeRestart())
-            {
-                _gameOver = false;
-                _mySlot = -1;
-                _snapshotLoaded = false;
-                if (_renderer != null) _renderer.Init(_sim.State);
-                Debug.Log($"[TD] Game restarted at frame {frame.FrameNumber}");
-                return; // skip hash this frame — send from next frame onwards
-            }
-
             if (_mySlot < 0) _mySlot = _sim.LookupSlot(_network.PlayerId);
             if (_renderer != null) _renderer.SyncVisuals();
 
@@ -224,6 +229,7 @@ namespace BoomNetwork.Samples.TowerDefense
             if (_sim.IsGameOver() && !_gameOver)
             {
                 _gameOver = true;
+                _network.Client.RequestGamePause();
                 Debug.Log($"[TD] Game over at frame {frame.FrameNumber}. Victory={_sim.IsVictory()}");
             }
         }
@@ -511,7 +517,7 @@ namespace BoomNetwork.Samples.TowerDefense
             if (!victory)
             {
                 if (GUI.Button(new Rect(px + 50, py + 80, w - 100, 38), "再来一局", _btnStyle))
-                    SendRestart();
+                    StartRestart();
             }
         }
 
