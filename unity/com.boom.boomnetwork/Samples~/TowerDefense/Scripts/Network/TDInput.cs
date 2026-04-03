@@ -10,8 +10,16 @@ namespace BoomNetwork.Samples.TowerDefense
     public static class TDInput
     {
         public const int InputSize = 4;
-        public const byte SellAction    = 4;
-        public const byte UpgradeAction = 5;
+        public const byte SellAction      = 4;
+        public const byte UpgradeAction   = 5;
+        public const byte SpeedAction     = 8; // gx = speed mode (0-3)
+        public const byte StartWaveAction = 9; // trigger next wave immediately
+
+        // Speed mode values (used as gx payload for SpeedAction)
+        public const byte SpeedSlow   = 0; // 0.25x — tactical pause
+        public const byte SpeedNormal = 1; // 1x
+        public const byte Speed2x     = 2;
+        public const byte Speed3x     = 3;
 
         public static void Encode(byte[] buf, int gridX, int gridY, byte towerTypeByte)
         {

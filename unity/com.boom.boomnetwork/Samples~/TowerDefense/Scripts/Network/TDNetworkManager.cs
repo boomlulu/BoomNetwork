@@ -39,6 +39,7 @@ namespace BoomNetwork.Samples.TowerDefense
         int _selectedGx = -1, _selectedGy = -1;
         Rect _menuRect; // IMGUI coords (y from top), used to ignore menu clicks in Update
         int _mySlot = -1; // player's own slot index (resolved on FrameSyncStart)
+        bool _menuDidSlowDown; // true if we sent a SlowDown when opening the current menu
 
         // Cached GUIStyles
         bool _stylesCached;
@@ -89,6 +90,12 @@ namespace BoomNetwork.Samples.TowerDefense
                         _selectedGx = gx;
                         _selectedGy = gy;
                         if (_renderer != null) _renderer.SetCellHighlight(gx, gy);
+                        // Slow down for tactical menu — sync to all players
+                        if (!_menuDidSlowDown)
+                        {
+                            SendSpeedAction(TDInput.SpeedSlow);
+                            _menuDidSlowDown = true;
+                        }
                     }
                 }
                 else
@@ -100,6 +107,11 @@ namespace BoomNetwork.Samples.TowerDefense
 
         void ClearSelection()
         {
+            if (_menuDidSlowDown)
+            {
+                SendSpeedAction(TDInput.SpeedNormal);
+                _menuDidSlowDown = false;
+            }
             _selectedGx = _selectedGy = -1;
             if (_renderer != null) _renderer.SetCellHighlight(-1, -1);
         }
@@ -131,6 +143,18 @@ namespace BoomNetwork.Samples.TowerDefense
             TDInput.Encode(_inputBuf, gx, gy, TDInput.SellAction);
             _network.SendInput(_inputBuf);
             ClearSelection();
+        }
+
+        void SendSpeedAction(byte speedMode)
+        {
+            TDInput.Encode(_inputBuf, speedMode, 0, TDInput.SpeedAction);
+            _network.SendInput(_inputBuf);
+        }
+
+        void SendStartWave()
+        {
+            TDInput.Encode(_inputBuf, 0, 0, TDInput.StartWaveAction);
+            _network.SendInput(_inputBuf);
         }
 
         // ==================== Network Events ====================
@@ -216,6 +240,7 @@ namespace BoomNetwork.Samples.TowerDefense
             if (!_syncing) return;
             CacheStyles();
             DrawStatusHUD();
+            DrawTopRightHUD();
             if (_selectedGx >= 0) DrawCellMenu();
             DrawDesyncOverlay();
             DrawGameOverOverlay();
@@ -268,6 +293,49 @@ namespace BoomNetwork.Samples.TowerDefense
             y += 20;
             GUI.Label(new Rect(x + 5, y, w, 16),
                 $"屏幕上 {alive} 只敌人，帧包大小不变（纯帧同步）", _smallStyle);
+        }
+
+        void DrawTopRightHUD()
+        {
+            var state    = _sim.State;
+            byte curSpd  = state.SpeedMode;
+            bool betweenWaves = state.Wave.SpawnRemaining == 0 && !state.Wave.AllWavesDone
+                                && state.Wave.WaveNumber < GameState.MaxWaves;
+
+            const float BtnW  = 72f;
+            const float BtnH  = 30f;
+            const float Pad   = 6f;
+            float startX = Screen.width - Pad - (BtnW + Pad) * 3;
+            float y = Pad;
+
+            // ── 2x ────────────────────────────────────────────────────────
+            bool is2x = curSpd == TDInput.Speed2x;
+            if (GUI.Button(new Rect(startX, y, BtnW, BtnH), "<b>x2</b>",
+                    is2x ? _btnSelectedStyle : _btnStyle))
+            {
+                // Toggle: if already 2x, go back to Normal
+                SendSpeedAction(is2x ? TDInput.SpeedNormal : TDInput.Speed2x);
+            }
+
+            // ── 3x ────────────────────────────────────────────────────────
+            bool is3x = curSpd == TDInput.Speed3x;
+            float x3 = startX + BtnW + Pad;
+            if (GUI.Button(new Rect(x3, y, BtnW, BtnH), "<b>x3</b>",
+                    is3x ? _btnSelectedStyle : _btnStyle))
+            {
+                SendSpeedAction(is3x ? TDInput.SpeedNormal : TDInput.Speed3x);
+            }
+
+            // ── 提前开始 ──────────────────────────────────────────────────
+            float xW = x3 + BtnW + Pad;
+            string waveLabel = betweenWaves
+                ? $"▶ 开始第{state.Wave.WaveNumber + 1}波"
+                : "▶ 开始";
+            if (GUI.Button(new Rect(xW, y, BtnW, BtnH), waveLabel,
+                    betweenWaves ? _btnStyle : _btnDimStyle))
+            {
+                if (betweenWaves) SendStartWave();
+            }
         }
 
         void DrawCellMenu()

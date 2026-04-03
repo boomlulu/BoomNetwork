@@ -36,9 +36,11 @@ namespace BoomNetwork.Samples.TowerDefense
 
         public void Init(uint rngSeed)
         {
-            State.FrameNumber = 0;
-            State.RngState    = rngSeed == 0 ? 0xDEADBEEFu : rngSeed;
-            State.BaseHp      = 3;
+            State.FrameNumber  = 0;
+            State.RngState     = rngSeed == 0 ? 0xDEADBEEFu : rngSeed;
+            State.BaseHp       = 3;
+            State.SpeedMode    = TDInput.SpeedNormal;
+            State.SpeedCounter = 0;
 
             // Layered economy starting values
             for (int p = 0; p < GameState.MaxPlayers; p++)
@@ -69,9 +71,27 @@ namespace BoomNetwork.Samples.TowerDefense
             bool flowDirty = ApplyInputs(frame);
             if (flowDirty) PathSystem.Rebuild(State);
             if (IsGameOver()) return;
-            WaveSystem.Tick(State);
-            TowerSystem.Tick(State);
-            EnemySystem.Tick(State);
+
+            int steps = GetSimSteps();
+            for (int s = 0; s < steps; s++)
+            {
+                WaveSystem.Tick(State);
+                TowerSystem.Tick(State);
+                EnemySystem.Tick(State);
+            }
+        }
+
+        int GetSimSteps()
+        {
+            switch (State.SpeedMode)
+            {
+                case TDInput.SpeedSlow: // 0.25x: advance 1 step every 4 network frames
+                    State.SpeedCounter = (byte)((State.SpeedCounter + 1) & 3);
+                    return State.SpeedCounter == 0 ? 1 : 0;
+                case TDInput.Speed2x: return 2;
+                case TDInput.Speed3x: return 3;
+                default:              return 1; // SpeedNormal
+            }
         }
 
         public bool IsGameOver()
@@ -147,6 +167,23 @@ namespace BoomNetwork.Samples.TowerDefense
                         State.PlayerGold[slot] -= upgCost;
                     }
                     t.Level++;
+                    continue;
+                }
+
+                // ── Speed change ──────────────────────────────────────────
+                if ((byte)towerType == TDInput.SpeedAction)
+                {
+                    if (gx <= TDInput.Speed3x)
+                        State.SpeedMode = (byte)gx;
+                    continue;
+                }
+
+                // ── Start next wave immediately ───────────────────────────
+                if ((byte)towerType == TDInput.StartWaveAction)
+                {
+                    if (State.Wave.SpawnRemaining == 0 && !State.Wave.AllWavesDone
+                        && State.Wave.WaveNumber < GameState.MaxWaves)
+                        State.Wave.InterWaveTimer = 1; // next Tick will start the wave
                     continue;
                 }
 

@@ -148,6 +148,9 @@ namespace BoomNetwork.Samples.TowerDefense
         public uint FrameNumber;
         public uint RngState;
         public int BaseHp = 3;
+        // Speed control (synchronized via SpeedAction input)
+        public byte SpeedMode    = 1; // 0=0.25x 1=1x 2=2x 3=3x (mirrors TDInput.SpeedXxx)
+        public byte SpeedCounter;     // sub-frame counter for 0.25x mode
 
         // Layered economy
         public int[] PlayerGold = new int[MaxPlayers]; // personal, hashed
@@ -354,6 +357,8 @@ namespace BoomNetwork.Samples.TowerDefense
             h = Fnv(h, FrameNumber);
             h = Fnv(h, RngState);
             h = Fnv(h, (uint)BaseHp);
+            h = Fnv(h, SpeedMode);
+            h = Fnv(h, SpeedCounter);
             h = Fnv(h, (uint)SharedGold);
             for (int p = 0; p < MaxPlayers; p++)
                 h = Fnv(h, (uint)PlayerGold[p]);

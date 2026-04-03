@@ -22,6 +22,8 @@ namespace BoomNetwork.Samples.TowerDefense
             w.Write(state.FrameNumber);
             w.Write(state.RngState);
             w.Write(state.BaseHp);
+            w.Write(state.SpeedMode);
+            w.Write(state.SpeedCounter);
             // Layered economy
             for (int p = 0; p < GameState.MaxPlayers; p++)
                 w.Write(state.PlayerGold[p]);
@@ -87,6 +89,8 @@ namespace BoomNetwork.Samples.TowerDefense
             state.FrameNumber = r.ReadUInt32();
             state.RngState    = r.ReadUInt32();
             state.BaseHp      = r.ReadInt32();
+            state.SpeedMode    = r.ReadByte();
+            state.SpeedCounter = r.ReadByte();
             // Layered economy
             for (int p = 0; p < GameState.MaxPlayers; p++)
                 state.PlayerGold[p] = r.ReadInt32();
