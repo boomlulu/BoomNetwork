@@ -173,7 +173,9 @@ func NewRoomWithConfig(config RoomConfig) *Room {
 		frameRing:        make([]CachedFrame, config.FrameBufferSize),
 		frameBuf:         make([]byte, 4096),
 		broadcastSlice:   make([]*Player, 0, 16),
+		pendingInputs:    make([]PlayerInput, 0, 8),    // 双端预分配：swap 后两侧永远有 cap
 		pendingInputsBuf: make([]PlayerInput, 0, 8),
+		pendingEvents:    make([]FrameEvent, 0, 4),     // 同上
 		pendingEventsBuf: make([]FrameEvent, 0, 4),
 		entityAuthority:  make(map[int32]int32),
 		dataStore:        make(map[int64]DataEntry),
