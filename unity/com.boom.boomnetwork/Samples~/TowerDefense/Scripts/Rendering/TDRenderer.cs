@@ -33,6 +33,9 @@ namespace BoomNetwork.Samples.TowerDefense
         Renderer   _cellHighlightRend;
         Material   _matCellHighlight;
 
+        // ==================== World-space IMGUI bars ====================
+        Texture2D _barTex; // 1×1 white, tinted via GUI.color
+
         // ==================== Tower pool ====================
         // 每格：底座 + 顶部装饰（各有自己的 Renderer）
         GameObject[] _towerBase = new GameObject[GameState.GridSize];
@@ -1021,6 +1024,85 @@ namespace BoomNetwork.Samples.TowerDefense
             if (col != null) Destroy(col);
         }
 
+        // ==================== World-space IMGUI bars ====================
+
+        void OnGUI()
+        {
+            if (!_initialized || _state == null || _cam == null) return;
+
+            // Lazy-create 1×1 white texture used for all bars
+            if (_barTex == null)
+            {
+                _barTex = new Texture2D(1, 1);
+                _barTex.SetPixels(new[] { Color.white });
+                _barTex.Apply();
+            }
+
+            // ── Enemy HP bars ─────────────────────────────────────────────
+            for (int i = 0; i < GameState.MaxEnemies; i++)
+            {
+                ref var e = ref _state.Enemies[i];
+                if (!e.IsAlive) continue;
+
+                Vector3 sp = _cam.WorldToScreenPoint(
+                    new Vector3(e.PosX.ToFloat(), 0.75f, e.PosZ.ToFloat()));
+                if (sp.z < 0f) continue;
+
+                float cx = sp.x;
+                float cy = Screen.height - sp.y - 6f; // slightly above enemy center
+                int   maxHp = GameState.GetEnemyHp(e.Type);
+                float ratio = maxHp > 0 ? Mathf.Clamp01((float)e.Hp / maxHp) : 0f;
+
+                // Color: green (full) → yellow → red (low)
+                Color hpCol = ratio > 0.5f
+                    ? Color.Lerp(new Color(0.95f, 0.80f, 0.05f), new Color(0.15f, 0.90f, 0.10f), (ratio - 0.5f) * 2f)
+                    : Color.Lerp(new Color(0.90f, 0.10f, 0.05f), new Color(0.95f, 0.80f, 0.05f), ratio * 2f);
+
+                DrawBar(cx - 13f, cy, 26f, 4f, ratio, hpCol);
+            }
+
+            // ── Tower CD bars ─────────────────────────────────────────────
+            for (int i = 0; i < GameState.GridSize; i++)
+            {
+                ref var t = ref _state.Grid[i];
+                if (t.Type == TowerType.None) continue;
+
+                int cx2 = i % GameState.GridW;
+                int cy2 = i / GameState.GridW;
+                Vector3 sp = _cam.WorldToScreenPoint(
+                    new Vector3(cx2 + 0.5f, 2.1f, cy2 + 0.5f));
+                if (sp.z < 0f) continue;
+
+                float sx = sp.x;
+                float sy = Screen.height - sp.y - 6f;
+                int   maxCd = GameState.GetTowerCooldown(t.Type, t.Level);
+                // fill: 0 = just fired (empty), 1 = fully cooled down (ready)
+                float fill = maxCd > 0 ? 1f - Mathf.Clamp01((float)t.CooldownFrames / maxCd) : 1f;
+
+                // Color: dim yellow while cooling → bright green when ready
+                Color cdCol = fill >= 1f
+                    ? new Color(0.25f, 1.00f, 0.25f)
+                    : new Color(1.0f, Mathf.Lerp(0.45f, 0.85f, fill), 0.05f);
+
+                DrawBar(sx - 16f, sy, 32f, 4f, fill, cdCol);
+            }
+
+            GUI.color = Color.white; // restore
+        }
+
+        void DrawBar(float x, float y, float w, float h, float fill, Color fillColor)
+        {
+            // Dark background
+            GUI.color = new Color(0.06f, 0.06f, 0.06f, 0.82f);
+            GUI.DrawTexture(new Rect(x, y, w, h), _barTex);
+            // Colored fill
+            if (fill > 0.005f)
+            {
+                GUI.color = fillColor;
+                GUI.DrawTexture(new Rect(x, y, w * fill, h), _barTex);
+            }
+        }
+
         void OnDestroy()
         {
             Destroy(_matGround); Destroy(_matGridEven); Destroy(_matGridOdd);
@@ -1031,6 +1113,7 @@ namespace BoomNetwork.Samples.TowerDefense
             Destroy(_matFxMagic); Destroy(_matFxIce); Destroy(_matFxSniper);
             Destroy(_matFxFortressBall); Destroy(_matFxFortressExplosion); Destroy(_matFxStorm);
             Destroy(_matCellHighlight);
+            if (_barTex != null) Destroy(_barTex);
             for (int i = 0; i < _matOwner.Length; i++) Destroy(_matOwner[i]);
             for (int ti = 1; ti <= 7; ti++)
                 for (int lv = 1; lv <= 3; lv++)
