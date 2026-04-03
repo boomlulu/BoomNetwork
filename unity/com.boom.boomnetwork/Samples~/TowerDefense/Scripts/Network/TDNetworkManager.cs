@@ -228,7 +228,7 @@ namespace BoomNetwork.Samples.TowerDefense
         {
             _snapshotLoaded = true;
             TDSnapshot.Deserialize(data, _sim);
-            _mySlot = _sim.PidToSlot(_network.PlayerId);
+            _mySlot = _sim.LookupSlot(_network.PlayerId); // read-only; slot allocated later via ApplyInputs
             if (_renderer != null) _renderer.SyncVisuals();
             Debug.Log($"[TD] Snapshot loaded. Frame={_sim.State.FrameNumber}, Wave={_sim.State.Wave.WaveNumber}");
         }
