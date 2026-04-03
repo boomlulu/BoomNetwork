@@ -3,6 +3,7 @@ package framesync
 import (
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/boomlulu/boomnetwork/codec"
@@ -103,9 +104,14 @@ type Room struct {
 	running       bool
 	stopCh        chan struct{}
 
-	pendingInputs []PlayerInput
-	pendingEvents []FrameEvent // 帧内事件队列（同步中使用）
-	hostPlayerId  int32        // 房主 ID（0 = 无房主）
+	pendingInputs    []PlayerInput
+	pendingInputsBuf []PlayerInput // 双缓冲 swap，复用底层数组，减少每帧分配
+	pendingEvents    []FrameEvent  // 帧内事件队列（同步中使用）
+	pendingEventsBuf []FrameEvent  // 双缓冲 swap
+	hostPlayerId     int32         // 房主 ID（0 = 无房主）
+
+	// onlineCount 原子计数器，O(1) 替代每次遍历 players 的 PlayerCount()
+	onlineCount int32
 
 	// 环形帧缓冲区：固定大小，不会增长
 	frameRing    []CachedFrame
@@ -160,17 +166,19 @@ func NewRoom(frameRate int32) *Room {
 // NewRoomWithConfig 用配置创建房间
 func NewRoomWithConfig(config RoomConfig) *Room {
 	return &Room{
-		players:         make(map[int32]*Player),
-		config:          config,
-		frameRate:       config.FrameRate,
-		frameInterval:   time.Duration(1000/config.FrameRate) * time.Millisecond,
-		frameRing:       make([]CachedFrame, config.FrameBufferSize),
-		frameBuf:        make([]byte, 4096),
-		broadcastSlice:  make([]*Player, 0, 16),
-		entityAuthority: make(map[int32]int32),
-		dataStore:       make(map[int64]DataEntry),
-		frameHashes:     make(map[uint32]map[int32]uint32),
-		createdAt:       time.Now(),
+		players:          make(map[int32]*Player),
+		config:           config,
+		frameRate:        config.FrameRate,
+		frameInterval:    time.Duration(1000/config.FrameRate) * time.Millisecond,
+		frameRing:        make([]CachedFrame, config.FrameBufferSize),
+		frameBuf:         make([]byte, 4096),
+		broadcastSlice:   make([]*Player, 0, 16),
+		pendingInputsBuf: make([]PlayerInput, 0, 8),
+		pendingEventsBuf: make([]FrameEvent, 0, 4),
+		entityAuthority:  make(map[int32]int32),
+		dataStore:        make(map[int64]DataEntry),
+		frameHashes:      make(map[uint32]map[int32]uint32),
+		createdAt:        time.Now(),
 	}
 }
 
@@ -183,6 +191,9 @@ func (r *Room) SetDelegate(d RoomDelegate) {
 
 // removePlayerLocked 唯一的玩家移除出口（必须在持锁状态下调用）
 func (r *Room) removePlayerLocked(id int32) {
+	if p, ok := r.players[id]; ok && p.State == PlayerOnline {
+		atomic.AddInt32(&r.onlineCount, -1)
+	}
 	delete(r.players, id)
 	if r.hostPlayerId == id {
 		r.electHost()
@@ -198,11 +209,15 @@ func (r *Room) AddPlayer(id int32, conn PlayerConn) {
 	isReconnect := false
 	var player *Player
 	if existing, ok := r.players[id]; ok {
+		if existing.State != PlayerOnline {
+			atomic.AddInt32(&r.onlineCount, 1)
+		}
 		existing.Conn = conn
 		existing.State = PlayerOnline
 		isReconnect = true
 		player = existing
 	} else {
+		atomic.AddInt32(&r.onlineCount, 1)
 		player = &Player{ID: id, Conn: conn, State: PlayerOnline}
 		r.players[id] = player
 	}
@@ -228,6 +243,9 @@ func (r *Room) DisconnectPlayer(id int32) {
 	r.mu.Lock()
 	var player *Player
 	if p, ok := r.players[id]; ok {
+		if p.State == PlayerOnline {
+			atomic.AddInt32(&r.onlineCount, -1)
+		}
 		p.State = PlayerDisconnected
 		p.DisconnectTime = time.Now()
 		p.Conn = nil
@@ -287,17 +305,9 @@ func (r *Room) electHost() {
 	r.hostPlayerId = 0 // 无在线玩家
 }
 
-// PlayerCount 在线玩家数
+// PlayerCount 在线玩家数（原子读，无锁）
 func (r *Room) PlayerCount() int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	count := 0
-	for _, p := range r.players {
-		if p.State == PlayerOnline {
-			count++
-		}
-	}
-	return count
+	return int(atomic.LoadInt32(&r.onlineCount))
 }
 
 // TotalPlayerCount 总玩家数（含断线）
@@ -614,6 +624,7 @@ func (r *Room) tickLoop() {
 				playerIds = append(playerIds, id)
 			}
 			r.players = make(map[int32]*Player)
+			atomic.StoreInt32(&r.onlineCount, 0)
 			d := r.delegate
 			r.mu.Unlock()
 
@@ -669,11 +680,13 @@ func (r *Room) stepFrame() {
 	r.frameNumber++
 	frameNum := r.frameNumber
 
-	// 取走输入和事件
+	// 取走输入和事件（双缓冲 swap：复用底层数组，避免每帧重分配）
 	inputs := r.pendingInputs
-	r.pendingInputs = nil
+	r.pendingInputs = r.pendingInputsBuf[:0]
+	r.pendingInputsBuf = inputs
 	events := r.pendingEvents
-	r.pendingEvents = nil
+	r.pendingEvents = r.pendingEventsBuf[:0]
+	r.pendingEventsBuf = events
 
 	// 组帧 + 编码（在锁内复用 frameBuf）
 	frame := &FrameData{FrameNumber: frameNum, Inputs: inputs, Events: events}

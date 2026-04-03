@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -73,7 +74,15 @@ func (d *roomLifecycleDelegate) OnRoomPanicked(room *framesync.Room, playerIds [
 var globalDelegate = &roomLifecycleDelegate{}
 
 var playerCounter int32
-var playerMu sync.Mutex
+
+// connContext 缓存连接对应的玩家 ID 和房间，减少 handleFrameInput 热路径上的重复 sync.Map 查找
+type connContext struct {
+	playerId int32
+	room     *framesync.Room
+}
+
+// connContextMap 单次查找替代原来的 connPlayerMap + playerRoomMap 双查找
+var connContextMap sync.Map // connID → *connContext
 
 func main() {
 	jsonHandler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: &logLevel})
@@ -352,11 +361,7 @@ func sdNotifyReady() {
 }
 
 func nextPlayerId() int32 {
-	playerMu.Lock()
-	playerCounter++
-	id := playerCounter
-	playerMu.Unlock()
-	return id
+	return atomic.AddInt32(&playerCounter, 1)
 }
 
 func onClientDisconnect(conn *transport.Conn) {
@@ -366,6 +371,7 @@ func onClientDisconnect(conn *transport.Conn) {
 	if !ok {
 		return
 	}
+	connContextMap.Delete(conn.ID) // 清理热路径缓存
 	playerId := val.(int32)
 
 	// CAS 检查：只有当 playerConnMap 中仍指向当前 conn 时才删除
@@ -454,18 +460,12 @@ func handleSessionBind(conn *transport.Conn, msg *codec.Message) *codec.Message 
 }
 
 func handleFrameInput(conn *transport.Conn, msg *codec.Message) *codec.Message {
-	val, ok := connPlayerMap.Load(conn.ID)
+	val, ok := connContextMap.Load(conn.ID)
 	if !ok {
 		return nil
 	}
-	playerId := val.(int32)
-
-	roomVal, ok := playerRoomMap.Load(playerId)
-	if !ok {
-		return nil
-	}
-	room := roomVal.(*framesync.Room)
-	room.OnInput(playerId, msg.Data)
+	ctx := val.(*connContext)
+	ctx.room.OnInput(ctx.playerId, msg.Data)
 	framesync.Metrics.InputsReceived.Inc()
 	return nil
 }
@@ -532,6 +532,7 @@ func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	// 更新连接映射
 	connPlayerMap.Store(conn.ID, playerId)
 	playerConnMap.Store(playerId, conn)
+	connContextMap.Store(conn.ID, &connContext{playerId: playerId, room: room})
 	room.AddPlayer(playerId, &statsConn{inner: &simConn{inner: conn, cfg: GlobalNetSim}, pid: playerId})
 
 	// 决定从哪帧开始补帧
@@ -853,6 +854,7 @@ func bindPlayerToRoom(playerId int32, conn *transport.Conn, room *framesync.Room
 	connPlayerMap.Store(conn.ID, playerId)
 	playerRoomMap.Store(playerId, room)
 	playerConnMap.Store(playerId, conn)
+	connContextMap.Store(conn.ID, &connContext{playerId: playerId, room: room})
 	room.AddPlayer(playerId, &statsConn{inner: &simConn{inner: conn, cfg: GlobalNetSim}, pid: playerId})
 	room.SetDelegate(globalDelegate) // 幂等：多次 SetDelegate 安全
 }
