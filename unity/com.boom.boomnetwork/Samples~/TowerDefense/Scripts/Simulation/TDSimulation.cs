@@ -19,6 +19,11 @@ namespace BoomNetwork.Samples.TowerDefense
         readonly int[] _pidSlotMap = new int[256];
         int _nextSlot;
 
+        bool _restartPending;
+        bool _restarted;
+
+        public bool ConsumeRestart() { bool r = _restarted; _restarted = false; return r; }
+
         // Allocating lookup — only call inside ApplyInputs (deterministic frame processing).
         public int PidToSlot(int pid)
         {
@@ -44,13 +49,21 @@ namespace BoomNetwork.Samples.TowerDefense
 
         public void Init(uint rngSeed)
         {
+            ResetGameState(rngSeed);
+            for (int i = 0; i < _pidSlotMap.Length; i++) _pidSlotMap[i] = -1;
+            _nextSlot = 0;
+        }
+
+        // Resets game state for a new round without clearing the pid→slot mapping.
+        // Called on restart so existing players keep their slot assignments.
+        void ResetGameState(uint rngSeed)
+        {
             State.FrameNumber  = 0;
             State.RngState     = rngSeed == 0 ? 0xDEADBEEFu : rngSeed;
             State.BaseHp       = 3;
             State.SpeedMode    = TDInput.SpeedNormal;
             State.SpeedCounter = 0;
 
-            // Layered economy starting values
             for (int p = 0; p < GameState.MaxPlayers; p++)
                 State.PlayerGold[p] = GameState.InitialPersonalGold;
             State.SharedGold = GameState.InitialSharedGold;
@@ -68,15 +81,21 @@ namespace BoomNetwork.Samples.TowerDefense
 
             WaveSystem.SpawnTickCounter = 0;
             PathSystem.Rebuild(State);
-
-            for (int i = 0; i < _pidSlotMap.Length; i++) _pidSlotMap[i] = -1;
-            _nextSlot = 0;
         }
 
         public void Tick(FrameData frame)
         {
             State.FrameNumber = frame.FrameNumber;
             bool flowDirty = ApplyInputs(frame);
+
+            if (_restartPending)
+            {
+                _restartPending = false;
+                ResetGameState(State.RngState == 0 ? 0xDEADBEEFu : State.RngState);
+                _restarted = true;
+                return; // skip this frame's simulation — start fresh next frame
+            }
+
             if (flowDirty) PathSystem.Rebuild(State);
             if (IsGameOver()) return;
 
@@ -193,6 +212,13 @@ namespace BoomNetwork.Samples.TowerDefense
                         && State.Wave.WaveNumber < GameState.MaxWaves)
                         State.Wave.InterWaveTimer = 1; // next Tick will start the wave
                     continue;
+                }
+
+                // ── Restart ───────────────────────────────────────────────
+                if ((byte)towerType == TDInput.RestartAction)
+                {
+                    _restartPending = true; // processed in Tick after ApplyInputs returns
+                    return false; // no path rebuild needed
                 }
 
                 // ── Place tower ───────────────────────────────────────────

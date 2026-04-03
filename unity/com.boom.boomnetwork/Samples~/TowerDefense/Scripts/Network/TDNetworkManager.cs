@@ -157,6 +157,12 @@ namespace BoomNetwork.Samples.TowerDefense
             _network.SendInput(_inputBuf);
         }
 
+        void SendRestart()
+        {
+            TDInput.Encode(_inputBuf, 0, 0, TDInput.RestartAction);
+            _network.SendInput(_inputBuf);
+        }
+
         // ==================== Network Events ====================
 
         void OnFrameSyncStart(FrameSyncInitData init)
@@ -195,10 +201,21 @@ namespace BoomNetwork.Samples.TowerDefense
 
         void OnFrame(FrameData frame)
         {
-            if (_desyncDetected || _gameOver) return;
+            if (_desyncDetected) return;
 
             _sim.Tick(frame);
-            if (_mySlot < 0) _mySlot = _sim.LookupSlot(_network.PlayerId); // lazy update after first input
+
+            if (_sim.ConsumeRestart())
+            {
+                _gameOver = false;
+                _mySlot = -1;
+                _snapshotLoaded = false;
+                if (_renderer != null) _renderer.Init(_sim.State);
+                Debug.Log($"[TD] Game restarted at frame {frame.FrameNumber}");
+                return; // skip hash this frame — send from next frame onwards
+            }
+
+            if (_mySlot < 0) _mySlot = _sim.LookupSlot(_network.PlayerId);
             if (_renderer != null) _renderer.SyncVisuals();
 
             uint hash = _sim.State.ComputeHash();
@@ -207,7 +224,6 @@ namespace BoomNetwork.Samples.TowerDefense
             if (_sim.IsGameOver() && !_gameOver)
             {
                 _gameOver = true;
-                _network.Client.RequestGamePause();
                 Debug.Log($"[TD] Game over at frame {frame.FrameNumber}. Victory={_sim.IsVictory()}");
             }
         }
@@ -477,19 +493,26 @@ namespace BoomNetwork.Samples.TowerDefense
 
         void DrawGameOverOverlay()
         {
-            if (!_sim.IsGameOver()) return;
-            string msg = _sim.IsVictory()
+            if (!_gameOver) return;
+            bool victory = _sim.IsVictory();
+            string msg = victory
                 ? "<color=yellow><b>胜利！</b></color>\n所有波次已通关！"
                 : "<color=red><b>基地已失守</b></color>\n游戏结束";
 
-            float w = 400, h = 80;
+            float w = 400, h = victory ? 80 : 130;
             float px = (Screen.width - w) / 2f;
             float py = Screen.height * 0.35f;
             GUI.Box(new Rect(px, py, w, h), "", _boxStyle);
             var style = new GUIStyle(GUI.skin.label)
                 { fontSize = 22, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter,
                   normal = { textColor = Color.white }, richText = true };
-            GUI.Label(new Rect(px, py, w, h), msg, style);
+            GUI.Label(new Rect(px, py, w, 70), msg, style);
+
+            if (!victory)
+            {
+                if (GUI.Button(new Rect(px + 50, py + 80, w - 100, 38), "再来一局", _btnStyle))
+                    SendRestart();
+            }
         }
 
         int CountAliveEnemies()
