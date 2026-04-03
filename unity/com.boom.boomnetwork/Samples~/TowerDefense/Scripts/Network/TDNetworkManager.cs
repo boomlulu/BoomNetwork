@@ -166,7 +166,7 @@ namespace BoomNetwork.Samples.TowerDefense
             if (!_snapshotLoaded)
                 _sim.Init(seed);
 
-            _mySlot = _sim.PidToSlot(_network.PlayerId);
+            _mySlot = _sim.LookupSlot(_network.PlayerId); // read-only; slot allocated later via ApplyInputs
             _syncing = true;
 
             _renderer = GetComponent<TDRenderer>();
@@ -185,7 +185,6 @@ namespace BoomNetwork.Samples.TowerDefense
 
         void OnPlayerJoined(int pid)
         {
-            _sim.PidToSlot(pid);
             Debug.Log($"[TD] Player {pid} joined");
         }
 
@@ -199,6 +198,7 @@ namespace BoomNetwork.Samples.TowerDefense
             if (_desyncDetected || _gameOver) return;
 
             _sim.Tick(frame);
+            if (_mySlot < 0) _mySlot = _sim.LookupSlot(_network.PlayerId); // lazy update after first input
             if (_renderer != null) _renderer.SyncVisuals();
 
             uint hash = _sim.State.ComputeHash();

@@ -19,11 +19,19 @@ namespace BoomNetwork.Samples.TowerDefense
         readonly int[] _pidSlotMap = new int[256];
         int _nextSlot;
 
+        // Allocating lookup — only call inside ApplyInputs (deterministic frame processing).
         public int PidToSlot(int pid)
         {
             if (pid < 0 || pid >= _pidSlotMap.Length) return -1;
             if (_pidSlotMap[pid] < 0 && _nextSlot < GameState.MaxPlayers)
                 _pidSlotMap[pid] = _nextSlot++;
+            return _pidSlotMap[pid];
+        }
+
+        // Read-only lookup — safe to call from network callbacks.
+        public int LookupSlot(int pid)
+        {
+            if (pid < 0 || pid >= _pidSlotMap.Length) return -1;
             return _pidSlotMap[pid];
         }
 
