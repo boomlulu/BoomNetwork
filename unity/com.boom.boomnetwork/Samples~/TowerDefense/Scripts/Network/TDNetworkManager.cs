@@ -383,38 +383,52 @@ namespace BoomNetwork.Samples.TowerDefense
 
         void DrawLobbyUI()
         {
-            float w = 560, rowH = 36, headerH = 36, footerH = 48;
+            const float W      = 560f;
+            const float RowH   = 34f;
+            const float Pad    = 10f;
+
             int count = _rooms.Length;
-            float listH = Mathf.Max(count * rowH, rowH); // at least one row height
-            float totalH = headerH + listH + footerH + 16;
-            float px = (Screen.width - w) / 2f;
+
+            // ── Pre-calculate total height ────────────────────────────────
+            float titleH  = 32f;
+            float colH    = (!_fetchingRooms && count > 0) ? RowH : 0f; // column-header row
+            float bodyH   = RowH;                                         // empty/loading msg OR rows
+            if (!_fetchingRooms && count > 0) bodyH = count * RowH;
+            float footerH = 44f;
+            float totalH  = Pad + titleH + Pad + colH + bodyH + Pad + footerH + Pad;
+
+            float px = (Screen.width  - W) / 2f;
             float py = (Screen.height - totalH) / 2f;
 
-            GUI.Box(new Rect(px, py, w, totalH), "", _boxStyle);
+            GUI.Box(new Rect(px, py, W, totalH), "", _boxStyle);
 
-            float y = py + 8;
+            // ── Draw sequentially, advancing y after each element ─────────
+            float y = py + Pad;
 
             // Title
-            GUI.Label(new Rect(px + 10, y, w - 20, 28),
+            GUI.Label(new Rect(px + Pad, y, W - Pad * 2, titleH),
                 "<b>塔防守卫  —  房间列表</b>", _titleStyle);
-            y += headerH;
+            y += titleH + Pad;
 
+            // Body
             if (_fetchingRooms)
             {
-                GUI.Label(new Rect(px + 10, y, w - 20, rowH), "加载中…", _labelStyle);
+                GUI.Label(new Rect(px + Pad, y, W - Pad * 2, RowH), "加载中…", _labelStyle);
+                y += RowH;
             }
             else if (count == 0)
             {
-                GUI.Label(new Rect(px + 10, y, w - 20, rowH),
+                GUI.Label(new Rect(px + Pad, y, W - Pad * 2, RowH),
                     "<color=#888888>暂无房间，点「创建房间」开始</color>", _labelStyle);
+                y += RowH;
             }
             else
             {
                 // Column headers
-                GUI.Label(new Rect(px + 10,      y, 80,  rowH), "<b>房间 ID</b>",  _labelStyle);
-                GUI.Label(new Rect(px + 100,     y, 100, rowH), "<b>人数</b>",      _labelStyle);
-                GUI.Label(new Rect(px + 210,     y, 100, rowH), "<b>状态</b>",      _labelStyle);
-                y += rowH;
+                GUI.Label(new Rect(px + Pad,       y, 80,  RowH), "<b>房间</b>",  _labelStyle);
+                GUI.Label(new Rect(px + Pad + 90,  y, 100, RowH), "<b>人数</b>",  _labelStyle);
+                GUI.Label(new Rect(px + Pad + 200, y, 120, RowH), "<b>状态</b>",  _labelStyle);
+                y += RowH;
 
                 foreach (var room in _rooms)
                 {
@@ -424,26 +438,26 @@ namespace BoomNetwork.Samples.TowerDefense
                                   : full         ? "<color=#ff6666>已满</color>"
                                   :                "<color=#88ff88>等待中</color>";
 
-                    GUI.Label(new Rect(px + 10,  y, 80,  rowH), $"#{room.RoomId}",                   _labelStyle);
-                    GUI.Label(new Rect(px + 100, y, 100, rowH), $"{room.PlayerCount}/{room.MaxPlayers}", _labelStyle);
-                    GUI.Label(new Rect(px + 210, y, 120, rowH), status,                               _labelStyle);
+                    GUI.Label(new Rect(px + Pad,       y, 80,  RowH), $"#{room.RoomId}",                      _labelStyle);
+                    GUI.Label(new Rect(px + Pad + 90,  y, 100, RowH), $"{room.PlayerCount}/{room.MaxPlayers}", _labelStyle);
+                    GUI.Label(new Rect(px + Pad + 200, y, 120, RowH), status,                                  _labelStyle);
 
-                    if (GUI.Button(new Rect(px + w - 90, y + 3, 78, 30), "加入",
+                    if (GUI.Button(new Rect(px + W - Pad - 80, y + 2, 80, RowH - 4), "加入",
                             canJoin ? _btnStyle : _btnDimStyle))
                     {
                         if (canJoin) _network.Client.JoinRoom(room.RoomId);
                     }
-                    y += rowH;
+                    y += RowH;
                 }
             }
 
-            y = py + headerH + listH + 12;
+            y += Pad; // gap before footer
 
-            // Footer: create + refresh
-            if (GUI.Button(new Rect(px + 10, y, 160, 36), "＋ 创建房间", _btnStyle))
+            // Footer: create + refresh (always at computed y, never overlaps)
+            if (GUI.Button(new Rect(px + Pad, y, 160, footerH - 8), "＋ 创建房间", _btnStyle))
                 _network.Client.CreateAndJoinRoom(4);
 
-            if (GUI.Button(new Rect(px + w - 100, y, 88, 36), "刷新",
+            if (GUI.Button(new Rect(px + W - Pad - 90, y, 90, footerH - 8), "刷新",
                     _fetchingRooms ? _btnDimStyle : _btnStyle))
             {
                 if (!_fetchingRooms) FetchRooms();
