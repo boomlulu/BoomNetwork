@@ -1,19 +1,25 @@
 // BoomNetwork TowerDefense Demo — Input Encoding
 //
-// 4-byte input: [byte GridX] [byte GridY] [byte TowerType] [byte reserved]
-// TowerType = 0 → no-op (Silent When Idle — not sent)
-// TowerType = 1/2/3 → place Arrow/Cannon/Magic
-// TowerType = SellAction (4) → sell tower at (GridX, GridY)
+// 4-byte input: [byte GridX] [byte GridY] [byte Action] [byte reserved]
+// Action = 0              → no-op (Silent When Idle — not sent)
+// Action = 1-7            → place tower of that TowerType
+// Action = 10             → sell tower at (GridX, GridY)
+// Action = 11             → upgrade tower at (GridX, GridY)
+// Action = 12             → speed change (GridX = speed mode 0-3)
+// Action = 13             → start next wave immediately
+//
+// IMPORTANT: action byte values 1-7 map to TowerType enum values.
+// All special actions MUST use values > 7 to avoid collision.
 
 namespace BoomNetwork.Samples.TowerDefense
 {
     public static class TDInput
     {
         public const int InputSize = 4;
-        public const byte SellAction      = 4;
-        public const byte UpgradeAction   = 5;
-        public const byte SpeedAction     = 8; // gx = speed mode (0-3)
-        public const byte StartWaveAction = 9; // trigger next wave immediately
+        public const byte SellAction      = 10;
+        public const byte UpgradeAction   = 11;
+        public const byte SpeedAction     = 12; // gx = speed mode (0-3)
+        public const byte StartWaveAction = 13; // trigger next wave immediately
 
         // Speed mode values (used as gx payload for SpeedAction)
         public const byte SpeedSlow   = 0; // 0.25x — tactical pause
