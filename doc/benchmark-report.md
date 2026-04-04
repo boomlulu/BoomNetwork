@@ -314,7 +314,7 @@ for _, r := range rm.matchIndex[matchKey] { ... }
 
 ---
 
-### C2 修复（2026-04-05 · commit `待填`）
+### C2 修复（2026-04-05 · commit `807b6b4`）
 
 **问题：** `TcpClientTransport._stream` 和 `WebSocketClientTransport._ws` 在 `Send()` 中于 `_sendLock` **外**读取，`Disconnect()` 置 null 和关流时不持锁，三条竞态路径：
 
