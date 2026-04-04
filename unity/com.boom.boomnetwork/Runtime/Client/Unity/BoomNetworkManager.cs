@@ -1,5 +1,6 @@
 using UnityEngine;
 using BoomNetwork.Client.FrameSync;
+using BoomNetwork.Core.FrameSync;
 
 namespace BoomNetwork.Unity
 {
@@ -18,7 +19,7 @@ namespace BoomNetwork.Unity
     public class BoomNetworkManager : MonoBehaviour
     {
         [Header("Server")]
-        [SerializeField] private string host = "124.220.6.174";
+        [SerializeField] private string host = ""; // L5: 不预填生产地址，避免开发者误连线上
         [SerializeField] private int port = 9000;
 
         [Header("Heartbeat")]
@@ -71,6 +72,26 @@ namespace BoomNetwork.Unity
 
         private void OnDestroy()
         {
+            // M6: 取消所有事件订阅，防止 GC 无法回收 Client 和 MonoBehaviour
+            if (Client != null)
+            {
+                if (logEnabled)
+                {
+                    Client.OnConnected -= LogConnected;
+                    Client.OnJoinedRoom -= LogJoinedRoom;
+                    Client.OnFrameSyncStart -= LogFrameSyncStart;
+                    Client.OnFrameSyncStop -= LogFrameSyncStop;
+                    Client.OnReconnected -= LogReconnected;
+                    Client.OnDisconnected -= LogDisconnected;
+                    Client.OnError -= LogError;
+                    Client.OnLog -= LogMsg;
+                }
+                if (_quickStartWired)
+                {
+                    Client.OnConnected -= QuickStartOnConnected;
+                    Client.OnReady -= QuickStartOnReady;
+                }
+            }
             Client?.Disconnect();
         }
 
@@ -121,12 +142,18 @@ namespace BoomNetwork.Unity
             if (!_quickStartWired)
             {
                 _quickStartWired = true;
-                Client.OnConnected += () => Client.MatchRoom(maxPlayers, string.IsNullOrEmpty(matchKey) ? null : matchKey);
-                Client.OnReady += () => { if (autoStart) Client.RequestStart(); };
+                // M6: 命名方法，OnDestroy 可以 -= 取消订阅
+                Client.OnConnected += QuickStartOnConnected;
+                Client.OnReady += QuickStartOnReady;
             }
 
             Connect();
         }
+
+        // M6: named handlers for QuickStart (so OnDestroy can unsubscribe)
+        private void QuickStartOnConnected() =>
+            Client.MatchRoom(maxPlayers, string.IsNullOrEmpty(matchKey) ? null : matchKey);
+        private void QuickStartOnReady() { if (autoStart) Client.RequestStart(); }
 
         /// <summary>
         /// 发送玩家输入
@@ -142,17 +169,28 @@ namespace BoomNetwork.Unity
 
             if (logEnabled)
             {
-                Client.OnConnected += () => Debug.Log($"[BoomNetwork] Connected (Player {Client.PlayerId})");
-                Client.OnJoinedRoom += (roomId, existing) =>
-                    Debug.Log($"[BoomNetwork] Joined room {roomId} (existing: [{string.Join(",", existing)}])");
-                Client.OnFrameSyncStart += data =>
-                    Debug.Log($"[BoomNetwork] FrameSync started (rate={data.FrameRate}, interval={data.FrameInterval}ms)");
-                Client.OnFrameSyncStop += () => Debug.Log("[BoomNetwork] FrameSync stopped");
-                Client.OnReconnected += () => Debug.Log("[BoomNetwork] Reconnected");
-                Client.OnDisconnected += () => Debug.Log("[BoomNetwork] Disconnected");
-                Client.OnError += err => Debug.LogWarning($"[BoomNetwork] {err}");
-                Client.OnLog += msg => Debug.Log(msg);
+                // M6: 命名方法，OnDestroy 可以 -= 取消订阅，避免闭包持有 this 导致 GC 泄漏
+                Client.OnConnected += LogConnected;
+                Client.OnJoinedRoom += LogJoinedRoom;
+                Client.OnFrameSyncStart += LogFrameSyncStart;
+                Client.OnFrameSyncStop += LogFrameSyncStop;
+                Client.OnReconnected += LogReconnected;
+                Client.OnDisconnected += LogDisconnected;
+                Client.OnError += LogError;
+                Client.OnLog += LogMsg;
             }
         }
+
+        // M6: named log handlers
+        private void LogConnected() => Debug.Log($"[BoomNetwork] Connected (Player {Client.PlayerId})");
+        private void LogJoinedRoom(int roomId, int[] existing) =>
+            Debug.Log($"[BoomNetwork] Joined room {roomId} (existing: [{string.Join(",", existing)}])");
+        private void LogFrameSyncStart(FrameSyncInitData data) =>
+            Debug.Log($"[BoomNetwork] FrameSync started (rate={data.FrameRate}, interval={data.FrameInterval}ms)");
+        private void LogFrameSyncStop() => Debug.Log("[BoomNetwork] FrameSync stopped");
+        private void LogReconnected() => Debug.Log("[BoomNetwork] Reconnected");
+        private void LogDisconnected() => Debug.Log("[BoomNetwork] Disconnected");
+        private void LogError(string err) => Debug.LogWarning($"[BoomNetwork] {err}");
+        private void LogMsg(string msg) => Debug.Log(msg);
     }
 }

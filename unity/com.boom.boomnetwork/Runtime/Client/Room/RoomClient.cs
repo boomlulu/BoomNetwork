@@ -12,9 +12,10 @@ namespace BoomNetwork.Client.Room
     /// 职责: 房间的创建/加入/离开/列表查询
     /// 不管: 帧同步、连接管理
     /// </summary>
-    public class RoomClient
+    public class RoomClient : IDisposable
     {
         private readonly NetworkSession _session;
+        private bool _disposed;
 
         // === 事件 ===
 
@@ -36,6 +37,14 @@ namespace BoomNetwork.Client.Room
         {
             _session = session;
             _session.OnMessage += HandleMessage;
+        }
+
+        /// <summary>H3: 取消 OnMessage 订阅，防止 GC 泄漏（由 FrameSyncClient.DestroyNetworkStack 调用）</summary>
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+            _session.OnMessage -= HandleMessage;
         }
 
         /// <summary>

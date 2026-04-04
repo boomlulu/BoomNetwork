@@ -41,9 +41,17 @@ namespace BoomNetwork.Unity
 
         private Coroutine _pollCoroutine;
         private float _lastCheckTime = -999f;
+        private bool _destroyed; // H5: scene-unload guard
 
         void OnEnable()  => _pollCoroutine = StartCoroutine(PollLoop());
         void OnDisable() { if (_pollCoroutine != null) StopCoroutine(_pollCoroutine); }
+
+        // H5: 防止 OnDestroy 后 coroutine 回调继续触发 Unity 事件
+        void OnDestroy()
+        {
+            _destroyed = true;
+            StopAllCoroutines();
+        }
 
         void Update() => _lastCheckAge = Time.time - _lastCheckTime;
 
@@ -53,6 +61,7 @@ namespace BoomNetwork.Unity
         {
             while (true)
             {
+                if (_destroyed) yield break; // H5
                 yield return StartCoroutine(CheckOnce());
                 yield return new WaitForSeconds(pollIntervalSec);
             }
@@ -65,6 +74,8 @@ namespace BoomNetwork.Unity
             req.timeout = Mathf.Max(1, (int)timeoutSec);
 
             yield return req.SendWebRequest();
+
+            if (_destroyed) yield break; // H5: guard after async yield
 
             _lastCheckTime = Time.time;
             bool wasOnline = _isOnline;

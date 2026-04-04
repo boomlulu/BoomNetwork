@@ -143,7 +143,16 @@ func TestConnContextMap_HandleFrameInput_Miss(t *testing.T) {
 func TestConnContextMap_HandleFrameInput_Hit(t *testing.T) {
 	const testConnID = 9000004
 	const testPid = int32(77)
-	room := newBenchRoom()
+
+	// H6: 确保 room 在 roomMgr 中可被找到
+	if roomMgr == nil {
+		roomMgr = framesync.NewRoomManager(framesync.RoomConfig{FrameRate: 20, FrameBufferSize: 100})
+	}
+	room := roomMgr.CreateRoom()
+	if room == nil {
+		t.Fatal("failed to create room in roomMgr")
+	}
+	defer roomMgr.RemoveRoom(room.ID)
 
 	connContextMap.Store(testConnID, &connContext{playerId: testPid, room: room})
 	defer connContextMap.Delete(testConnID)

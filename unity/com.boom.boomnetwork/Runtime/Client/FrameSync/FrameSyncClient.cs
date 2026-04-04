@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Buffers.Binary;
 using BoomNetwork.Core;
 using BoomNetwork.Core.FrameSync;
@@ -102,7 +103,7 @@ namespace BoomNetwork.Client.FrameSync
         /// <summary>收到游戏自定义消息 (gameCmd, senderPid, data, offset)</summary>
         public event Action<uint, int, byte[], int>? OnGameMessage;
         private readonly System.Collections.Generic.List<IEntitySync> _authorityEntities = new();
-        private byte[]? _entityStateBuf;
+        // L6: _entityStateBuf 改为 ArrayPool 按需 Rent/Return，消除驻留分配
         // P1-5: 缓存 SendFrameHash 所需的 8 字节 buffer，消除每帧 new byte[8] 分配
         // Unity 每帧调用一次 SendFrameHash(frameNumber, hash)，20fps × N 玩家 = 高频路径
         private readonly byte[] _hashBuf = new byte[8];
@@ -116,8 +117,6 @@ namespace BoomNetwork.Client.FrameSync
                     return;
 
             _authorityEntities.Add(entity);
-            if (_entityStateBuf == null || _entityStateBuf.Length < 1 + _authorityEntities.Count * (6 + 64))
-                _entityStateBuf = new byte[1 + _authorityEntities.Count * (6 + 128)];
         }
 
         /// <summary>注销实体</summary>
@@ -410,14 +409,18 @@ namespace BoomNetwork.Client.FrameSync
         public void SendAuthorityEntityStates()
         {
             if (_authorityEntities.Count == 0 || _session == null) return;
-            // 确保 buffer 够大
+            // L6: 每次从 ArrayPool 租用，发完立即归还，避免字段长期驻留
             int maxSize = 1 + _authorityEntities.Count * (6 + 128);
-            if (_entityStateBuf == null || _entityStateBuf.Length < maxSize)
-                _entityStateBuf = new byte[maxSize];
-            int written = EntityStateCodec.Encode(
-                _entityStateBuf, 0,
-                _authorityEntities, _authorityEntities.Count);
-            _session.SendExt(FrameSyncExtCmd.SendEntityState, _entityStateBuf, written);
+            var buf = ArrayPool<byte>.Shared.Rent(maxSize);
+            try
+            {
+                int written = EntityStateCodec.Encode(buf, 0, _authorityEntities, _authorityEntities.Count);
+                _session.SendExt(FrameSyncExtCmd.SendEntityState, buf, written);
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buf);
+            }
         }
 
         /// <summary>
@@ -478,16 +481,33 @@ namespace BoomNetwork.Client.FrameSync
             _connMgr.OnConnected += HandleConnected;
             _connMgr.OnDisconnected += HandleDisconnected;
             _connMgr.OnReconnected += HandleReconnected;
-            _connMgr.OnError += err => OnError?.Invoke(err);
-            _connMgr.OnLog += msg => Log(msg);
+            _connMgr.OnError += HandleConnMgrError;  // H3: named method for unsubscription
+            _connMgr.OnLog += HandleConnMgrLog;      // H3: named method for unsubscription
 
             _session.OnMessage += HandleMessage;
 
             _roomClient = new RoomClient(_session);
         }
 
+        // H3: named handlers used so DestroyNetworkStack can unsubscribe with -=
+        private void HandleConnMgrError(NetworkError err) => OnError?.Invoke(err);
+        private void HandleConnMgrLog(string msg) => Log(msg);
+
         private void DestroyNetworkStack()
         {
+            // H3: 先取消订阅，防止 GC 无法回收 _connMgr / _session（event 持有 this 引用）
+            if (_connMgr != null)
+            {
+                _connMgr.OnConnected -= HandleConnected;
+                _connMgr.OnDisconnected -= HandleDisconnected;
+                _connMgr.OnReconnected -= HandleReconnected;
+                _connMgr.OnError -= HandleConnMgrError;
+                _connMgr.OnLog -= HandleConnMgrLog;
+            }
+            if (_session != null)
+                _session.OnMessage -= HandleMessage;
+
+            _roomClient?.Dispose(); // H3: unsubscribe RoomClient.HandleMessage
             _transport = null;
             _session = null;
             _connMgr = null;

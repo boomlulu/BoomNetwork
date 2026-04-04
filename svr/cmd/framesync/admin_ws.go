@@ -246,19 +246,29 @@ func (h *GMHub) pushNetsim() {
 // 空列表 = 允许所有 origin（向后兼容）。
 var wsAllowedOrigins []string
 
+// M5: map[string]struct{} 替代线性扫描，O(1) 查找；由 initWsOriginMap 在启动时构建
+var wsAllowedOriginsMap map[string]struct{}
+
+// initWsOriginMap 将 wsAllowedOrigins 转换为 set，供 CheckOrigin 使用
+func initWsOriginMap() {
+	m := make(map[string]struct{}, len(wsAllowedOrigins))
+	for _, o := range wsAllowedOrigins {
+		m[o] = struct{}{}
+	}
+	wsAllowedOriginsMap = m
+}
+
 var wsUpgrader = websocket.Upgrader{
 	ReadBufferSize:  4096,
 	WriteBufferSize: 4096,
 	CheckOrigin: func(r *http.Request) bool {
-		// S17: Origin 白名单检查
-		if len(wsAllowedOrigins) == 0 {
+		// S17+M5: Origin 白名单 O(1) 查找
+		if len(wsAllowedOriginsMap) == 0 {
 			return true // 向后兼容：未配置白名单时允许所有
 		}
 		origin := r.Header.Get("Origin")
-		for _, allowed := range wsAllowedOrigins {
-			if origin == allowed {
-				return true
-			}
+		if _, ok := wsAllowedOriginsMap[origin]; ok {
+			return true
 		}
 		slog.Warn("gm-ws origin rejected", "origin", origin)
 		return false
@@ -478,12 +488,11 @@ func (c *GMConn) rpcKick(env *GMEnvelope) {
 		return
 	}
 
-	roomVal, ok := playerRoomMap.Load(p.Pid)
+	room, ok := loadPlayerRoom(p.Pid) // L1: safe type assertion
 	if !ok {
 		c.sendError(env.ID, "kick", "player not in any room")
 		return
 	}
-	room := roomVal.(*framesync.Room)
 
 	room.RemovePlayer(p.Pid)
 	playerRoomMap.Delete(p.Pid)

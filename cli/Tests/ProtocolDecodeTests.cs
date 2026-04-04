@@ -331,10 +331,14 @@ namespace BoomNetwork.Tests
         [Test]
         public void RoomCodec_CreateRoom_Encode()
         {
+            // Wire format: [MaxPlayers:2][MatchKeyLen:2] = 4 bytes when no key
             var buf = RoomCodec.EncodeCreateRoom(8);
-            Assert.That(buf.Length, Is.EqualTo(2));
+            Assert.That(buf.Length, Is.EqualTo(4));
             int max = BinaryPrimitives.ReadUInt16LittleEndian(buf);
             Assert.That(max, Is.EqualTo(8));
+            // keyLen should be 0
+            int keyLen = BinaryPrimitives.ReadUInt16LittleEndian(buf.AsSpan(2));
+            Assert.That(keyLen, Is.EqualTo(0));
         }
 
         [Test]

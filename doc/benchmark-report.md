@@ -1,7 +1,7 @@
 # BoomNetwork 性能与压测报告
 
 > 测试环境：Apple M silicon, macOS, arm64 / Go 1.24 / .NET 8
-> 最后更新：2026-04-04
+> 最后更新：2026-04-05
 
 ---
 
@@ -410,6 +410,67 @@ const (
 - `svr/framesync/protocol.go`：`DecodeInitData` 加入口检查，`DecodeFrameData` 改 `(*FrameData, error)` 签名
 - `svr/framesync/protocol_test.go` + `room_p0/p1_test.go` + `room_test.go`：7 处调用更新
 - 同步到 `unity/com.boom.boomnetwork/Runtime/Core/FrameSync/`
+
+---
+
+### H/M/L 全量修复（2026-04-05）
+
+**修复范围：** 20 个安全/稳定性问题（H×6、M×7、L×7），零架构变更，全部向后兼容。
+
+#### High 级（6 个）
+
+| 编号 | 问题 | 文件 | 修复 |
+|---|---|---|---|
+| H1 | `handleJoinRoom` 补帧 goroutine 无超时 | `main.go` | `context.WithTimeout(30s)` + `select ctx.Done()` |
+| H2 | `stepFrame` 广播前未检查 `p.Conn != nil` | `room.go` | `if c := p.Conn; c != nil { c.Send(...) }` |
+| H3 | `FrameSyncClient`/`RoomClient` 事件订阅不取消 | `FrameSyncClient.cs`, `RoomClient.cs` | `DestroyNetworkStack` 中 `-=` 取消；lambda 改命名方法；`RoomClient: IDisposable` |
+| H4 | `NetworkSession.OnTransportData` ArrayPool buffer 异常时不归还 | `NetworkSession.cs` | `try/finally { MessageCodec.ReturnData(ref msg); }` |
+| H5 | `ServerHealthChecker` coroutine 在 scene unload 后继续触发 | `ServerHealthChecker.cs` | `_destroyed` flag + `OnDestroy` → `StopAllCoroutines` + yield break guard |
+| H6 | `handleFrameInput` 未验证房间是否仍在 RoomManager 中 | `main.go` | `roomMgr.GetRoom(ctx.room.ID) == nil` 时删除 connContext 并 return |
+
+#### Medium 级（7 个）
+
+| 编号 | 问题 | 文件 | 修复 |
+|---|---|---|---|
+| M1 | `uint32` 帧号溢出无保护 | `room.go` | `math.MaxUint32` 检测 → 主动停房间 |
+| M2 | (已在 C3 中修复) | — | — |
+| M3 | `UpdateSnapshot` delegate TOCTOU | `room.go` | 锁内捕获 `d := r.delegate`，锁外调用 |
+| M4 | `playerSlicePool` 过大 slice 不归还 | `room.go` | `cap > 64` 时丢弃，不放回池 |
+| M5 | WebSocket origin 线性扫描 | `admin_ws.go` | `map[string]struct{}` O(1) 查找 |
+| M6 | `BoomNetworkManager` 闭包订阅泄漏 | `BoomNetworkManager.cs` | lambda → 命名方法 + `OnDestroy` 取消订阅 |
+| M7 | `StateSyncCodec.DecodePushData` `ToArray()` 分配 | `FrameSyncProtocol.cs` | (已在 C3 加固时一并改为 `ReadOnlySpan<byte>`) |
+
+#### Low 级（7 个）
+
+| 编号 | 问题 | 文件 | 修复 |
+|---|---|---|---|
+| L1 | `sync.Map` 裸类型断言（16 处） | `main.go`, `admin_ws.go` | 5 个类型安全辅助函数（`loadConnPlayerId` 等），`ok2` 双重检查 |
+| L2 | `conn.Write("READY=1")` 不检查错误 | `main.go` | `if _, err := conn.Write(...); err != nil` |
+| L3 | `SnapshotIntervalFrames=0` 无默认值 | `room.go` | `RoomConfig.Validate()` 填充零值 |
+| L4 | `EncodeInitData` 每次 `make([]byte, 24)` | `protocol.go` | (低频路径，暂跳过) |
+| L5 | `BoomNetworkManager.host` 预填生产地址 | `BoomNetworkManager.cs` | 改为空字符串 |
+| L6 | `FrameSyncClient._entityStateBuf` 字段驻留 | `FrameSyncClient.cs` | `ArrayPool<byte>.Shared.Rent/Return` 按需借还 |
+| L7 | 环形缓冲区取模防负数无注释 | `room.go` | 添加 `// +len(r.frameRing) 防负数` 注释 |
+
+#### 测试结果（修复后）
+
+| 套件 | 通过 | 失败 |
+|---|---|---|
+| Go `./...` | 全部通过 | 0 |
+| C# `dotnet test` | 108 | 0（含 1 处预存 bug 同步修复）|
+
+#### 新增基准（`-benchtime=3s`，Apple M silicon）
+
+| Benchmark | ns/op | allocs/op |
+|---|---|---|
+| `BenchmarkStepFrame_AllocsPerOp`（含输入） | **74.5** | 0 |
+| `BenchmarkStepFrame_NoInput`（空帧） | **2.97** | 0 |
+| `BenchmarkForEachOnlinePlayer` | **55.7** | 0 |
+| `BenchmarkMatchRoom_IndexPath` | **67.5** | 1 |
+| `BenchmarkMatchRoom_SameKey` | **200.1** | 0 |
+| `BenchmarkReportFrameHash` | **27.7** | 0 |
+| `BenchmarkGetFramesSince_2400Frames` | **3,110** | 2 |
+| `BenchmarkGetRoomInfo` | **4.5** | 0 |
 
 ---
 

@@ -310,10 +310,16 @@ namespace BoomNetwork.Client.Session
                 if (msg.HasSeq && msg.Seq > _lastRecvServerSeq)
                     _lastRecvServerSeq = msg.Seq;
 
-                DispatchMessage(msg);
-
-                // 归还 ArrayPool buffer（上层如需保留 data 要自己 copy）
-                MessageCodec.ReturnData(ref msg);
+                // H4: try/finally 确保 ArrayPool buffer 即使 callback 抛出也能归还
+                try
+                {
+                    DispatchMessage(msg);
+                }
+                finally
+                {
+                    // 归还 ArrayPool buffer（上层如需保留 data 要自己 copy）
+                    MessageCodec.ReturnData(ref msg);
+                }
             }
         }
 

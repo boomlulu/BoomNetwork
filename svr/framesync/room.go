@@ -2,6 +2,7 @@ package framesync
 
 import (
 	"log/slog"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -173,8 +174,31 @@ func NewRoom(frameRate int32) *Room {
 	})
 }
 
+// Validate 填充 RoomConfig 中的零值为安全默认值（L3: SnapshotIntervalFrames=0 时逻辑失效防护）
+func (c *RoomConfig) Validate() {
+	if c.FrameRate <= 0 {
+		c.FrameRate = 20
+	}
+	if c.MaxPlayers <= 0 {
+		c.MaxPlayers = 4
+	}
+	if c.FrameBufferSize <= 0 {
+		c.FrameBufferSize = int(c.FrameRate) * 120
+	}
+	if c.DisconnectKeepAlive <= 0 {
+		c.DisconnectKeepAlive = 120 * time.Second
+	}
+	if c.SnapshotIntervalFrames <= 0 {
+		c.SnapshotIntervalFrames = 100
+	}
+	if c.QuickReconnectMaxMs <= 0 {
+		c.QuickReconnectMaxMs = 5000
+	}
+}
+
 // NewRoomWithConfig 用配置创建房间
 func NewRoomWithConfig(config RoomConfig) *Room {
+	config.Validate() // L3: 补全零值为安全默认值
 	return &Room{
 		players:          make(map[int32]*Player),
 		config:           config,
@@ -432,8 +456,11 @@ func (r *Room) ForEachOnlinePlayer(fn func(id int32, conn PlayerConn)) {
 	for i := range players {
 		players[i] = nil
 	}
-	*sp = players[:0]
-	playerSlicePool.Put(sp)
+	// M4: 超大切片不归还 Pool，避免 Pool 长期持有大内存（cap>64 直接丢弃）
+	if cap(players) <= 64 {
+		*sp = players[:0]
+		playerSlicePool.Put(sp)
+	}
 }
 
 // PlayerInfo GM 用的玩家信息快照
@@ -494,12 +521,13 @@ func (r *Room) UpdateSnapshot(frameNumber uint32, data []byte) bool {
 		r.snapshotPaused = false
 		slog.Info("snapshot received, resuming frame sync", "roomId", r.ID)
 	}
+	d := r.delegate // M3: 锁内捕获 delegate，消除锁外读取 r.delegate 的 TOCTOU
 	r.mu.Unlock()
 
 	if wasPaused {
 		r.broadcast(codec.NewExtMessage(ExtCmdFrameSyncResumed, nil))
-		if r.delegate != nil {
-			r.delegate.OnRoomResumed(r)
+		if d != nil {
+			d.OnRoomResumed(r)
 		}
 	}
 
@@ -565,6 +593,7 @@ func (r *Room) OldestBufferedFrame() uint32 {
 	if r.frameRingLen == 0 {
 		return 0
 	}
+	// L7: +len(r.frameRing) 防止 frameRingPos < frameRingLen 时模运算结果为负数
 	idx := (r.frameRingPos - r.frameRingLen + len(r.frameRing)) % len(r.frameRing)
 	return r.frameRing[idx].FrameNumber
 }
@@ -721,6 +750,19 @@ func (r *Room) stepFrame() {
 		return
 	}
 
+	// M1: uint32 帧号溢出保护，接近 MaxUint32 时主动停房间
+	if r.frameNumber == math.MaxUint32 {
+		slog.Error("frame number overflow, stopping room", "roomId", r.ID)
+		r.running = false
+		close(r.stopCh)
+		d := r.delegate
+		r.mu.Unlock()
+		r.broadcast(codec.NewCoreMessage(CmdStopFrameSync, nil))
+		if d != nil {
+			d.OnRoomStopped(r)
+		}
+		return
+	}
 	r.frameNumber++
 	frameNum := r.frameNumber
 
@@ -771,7 +813,9 @@ func (r *Room) stepFrame() {
 	broadcastStart := time.Now()
 	msg := codec.NewCoreMessage(CmdPushFrames, r.frameBuf[:size])
 	for _, p := range r.broadcastSlice {
-		p.Conn.Send(msg)
+		if c := p.Conn; c != nil { // H2: guard against concurrent DisconnectPlayer setting Conn=nil
+			c.Send(msg)
+		}
 	}
 	Metrics.FrameBroadcastLatency.Observe(time.Since(broadcastStart).Seconds())
 }
