@@ -16,10 +16,16 @@ namespace BoomNetwork.Client.Transport
     /// 和 TcpClientTransport 实现相同的 ITransport 接口，上层无感切换。
     ///
     /// 架构与 TCP 版一致：后台线程收发，Tick 取数据投递主线程。
+    ///
+    /// 线程安全说明（C2 修复，与 TcpClientTransport 对称）：
+    ///   _ws 声明为 volatile，RecvLoop（recv 线程）可立即感知 Disconnect() 写入的 null；
+    ///   Send() 将 _ws 捕获移入 _sendLock 内（消除 TOCTOU）；
+    ///   Disconnect() 在 lock(_sendLock) 内置空 _ws（极短临界区），CloseAsync+Dispose 在锁外执行。
     /// </summary>
     public class WebSocketClientTransport : ITransport
     {
-        private ClientWebSocket? _ws;
+        // C2 fix: volatile 保证跨线程可见性
+        private volatile ClientWebSocket? _ws;
         private Thread? _recvThread;
 
         private int _running;           // 0=stopped, 1=running
@@ -55,8 +61,13 @@ namespace BoomNetwork.Client.Transport
         {
             Interlocked.Exchange(ref _running, 0);
 
-            var ws = _ws;
-            _ws = null;
+            // C2 fix: 在 _sendLock 内置空 _ws，close 在锁外执行不阻塞 Send()
+            ClientWebSocket? ws;
+            lock (_sendLock)
+            {
+                ws = _ws;
+                _ws = null;
+            }
 
             if (ws != null)
             {
@@ -98,11 +109,12 @@ namespace BoomNetwork.Client.Transport
             if (State != TransportState.Connected)
                 return;
 
-            var ws = _ws;
-            if (ws == null) return;
-
+            // C2 fix: 将 _ws 捕获移入 _sendLock 内，消除 TOCTOU
             lock (_sendLock)
             {
+                var ws = _ws;
+                if (ws == null) return;
+
                 try
                 {
                     var segment = new ArraySegment<byte>(data, offset, length);
@@ -175,6 +187,7 @@ namespace BoomNetwork.Client.Transport
             var buffer = new byte[65536];
             try
             {
+                // _ws 为 volatile，Disconnect() 置 null 后此处立即可见
                 while (Interlocked.CompareExchange(ref _running, 1, 1) == 1)
                 {
                     var ws = _ws;

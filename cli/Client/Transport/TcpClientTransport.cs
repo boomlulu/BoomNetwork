@@ -23,11 +23,27 @@ namespace BoomNetwork.Client.Transport
     ///
     /// IO 线程负责 socket 读写，主线程通过 Tick() 取数据。
     /// 收到的数据使用 ArrayPool 租借，Tick 处理完后归还。
+    ///
+    /// 线程安全说明（C2 修复）：
+    ///   _stream 声明为 volatile，确保 RecvLoop（recv 线程）立即可见 Disconnect() 写入的 null，
+    ///   不依赖 stream.Read() 抛异常才能退出循环。
+    ///
+    ///   Send() 将 _stream 捕获移入 _sendLock 内（TOCTOU 消除）；
+    ///   Disconnect() 在 lock(_sendLock) 内置空 _stream（极短临界区，仅 swap），
+    ///   Close() 在锁外执行，不阻塞正在进行的 Send()。
+    ///
+    ///   保证：
+    ///     - Send 看到非 null → 在同一把锁保护下完成写，Disconnect 只能在写完后关流
+    ///     - Send 看到 null → 立即返回，无异常
+    ///     - RecvLoop 即时感知 null，无需依赖 IOException 兜底
     /// </summary>
     public class TcpClientTransport : ITransport
     {
         private TcpClient? _client;
-        private NetworkStream? _stream;
+
+        // C2 fix: volatile 保证跨线程可见性（RecvLoop 及时看到 Disconnect 置 null）
+        private volatile NetworkStream? _stream;
+
         private Thread? _recvThread;
 
         // 用 int + Interlocked 代替 volatile bool，避免竞态
@@ -64,10 +80,18 @@ namespace BoomNetwork.Client.Transport
         {
             Interlocked.Exchange(ref _running, 0);
 
-            var stream = _stream;
-            var client = _client;
-            _stream = null;
-            _client = null;
+            // C2 fix: 在 _sendLock 内置空 _stream，保证：
+            //   若 Send() 正持锁在写，则等写完后再置空，Close() 在锁外执行
+            //   若 Send() 还未进锁，置空后 Send() 捕获到 null 直接返回
+            NetworkStream? stream;
+            TcpClient? client;
+            lock (_sendLock)
+            {
+                stream = _stream;
+                client = _client;
+                _stream = null;
+                _client = null;
+            }
 
             try { stream?.Close(); } catch { }
             try { client?.Close(); } catch { }
@@ -95,11 +119,12 @@ namespace BoomNetwork.Client.Transport
             if (State != TransportState.Connected)
                 return;
 
-            var stream = _stream;
-            if (stream == null) return;
-
+            // C2 fix: 将 _stream 捕获移入 _sendLock 内，消除锁外读→锁内用的 TOCTOU 窗口
             lock (_sendLock)
             {
+                var stream = _stream;
+                if (stream == null) return;
+
                 try
                 {
                     stream.Write(data, offset, length);
@@ -167,6 +192,7 @@ namespace BoomNetwork.Client.Transport
             var buffer = new byte[8192];
             try
             {
+                // _stream 为 volatile，Disconnect() 置 null 后此处立即可见，无需依赖 IOException 退出
                 while (Interlocked.CompareExchange(ref _running, 1, 1) == 1)
                 {
                     var stream = _stream;

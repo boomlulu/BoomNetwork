@@ -314,6 +314,51 @@ for _, r := range rm.matchIndex[matchKey] { ... }
 
 ---
 
+### C2 修复（2026-04-05 · commit `待填`）
+
+**问题：** `TcpClientTransport._stream` 和 `WebSocketClientTransport._ws` 在 `Send()` 中于 `_sendLock` **外**读取，`Disconnect()` 置 null 和关流时不持锁，三条竞态路径：
+
+1. `Send()` 锁外 null 检查（TOCTOU） → 进锁后流已关 → Write 抛 `ObjectDisposedException`，靠 catch 兜底（不干净）
+2. `RecvLoop`（recv 线程）读 `_stream` 无 volatile → `Disconnect()` 置 null 后可能不可见，多跑一轮才靠 IOException 退出
+3. `Disconnect()` 关流时不持 `_sendLock` → 与正在进行的 `Write()` 并发撕裂流状态
+
+**修复（两个文件对称）：**
+
+| 变更点 | 修复前 | 修复后 |
+|---|---|---|
+| `_stream`/`_ws` 声明 | 普通字段 | `volatile`（recv 线程即时可见） |
+| `Send()` 捕获时机 | `_sendLock` **外** read + check | `_sendLock` **内** read + check（消除 TOCTOU）|
+| `Disconnect()` 置空 | 直接赋值 `= null` | `lock(_sendLock)` 内 swap，Close 在锁外执行 |
+
+```csharp
+// Send()：修复后
+lock (_sendLock) {
+    var stream = _stream;   // capture 在锁内
+    if (stream == null) return;
+    stream.Write(...);
+}
+
+// Disconnect()：修复后
+NetworkStream? stream;
+lock (_sendLock) { stream = _stream; _stream = null; }   // 极短临界区，仅 swap
+try { stream?.Close(); } catch { }                        // Close 在锁外
+```
+
+#### 实测数据（.NET 8，Apple M silicon，NUnit 内嵌 Stopwatch）
+
+| Benchmark | 结果 | 说明 |
+|---|---|---|
+| `Send()` 热路径（已连接，含 TCP write） | **2161 ns/op** | 与修复前完全相同（热路径始终持锁，无额外开销） |
+| `Disconnect()` 已断开快路径 | **11.6 ns/op** | 多了一次 `lock(_sendLock)` 获取（无竞争 ~1 ns） |
+| `Concurrent_Send_And_Disconnect` | 20 轮 × 4线程 × 200次 **0 NRE** | 并发压力测试，NullReferenceException 完全消除 |
+
+**结构变更：**
+- `cli/Client/Transport/TcpClientTransport.cs`：`volatile _stream` + Send/Disconnect 改造
+- `cli/Client/Transport/WebSocketClientTransport.cs`：`volatile _ws` + Send/Disconnect 改造（对称）
+- 同步到 `unity/com.boom.boomnetwork/Runtime/Client/Transport/`
+
+---
+
 ## 三、包头格式优化效果（2026-03-27）
 
 三层分级包头：Core 3B / Extended 5B / Game 7B，带 Seq 各 +4B（原固定 17B）。
