@@ -8,11 +8,12 @@ import (
 
 // RoomManager 房间管理器
 type RoomManager struct {
-	mu       sync.Mutex
-	rooms    map[int32]*Room
-	nextID   int32
-	config   RoomConfig
-	maxRooms int // 0 = unlimited
+	mu         sync.Mutex
+	rooms      map[int32]*Room
+	matchIndex map[string][]*Room // P2-5: matchKey → []*Room 二级索引，MatchRoom 从 O(n) 降至 O(1)
+	nextID     int32
+	config     RoomConfig
+	maxRooms   int // 0 = unlimited
 }
 
 // NewRoomManager 创建房间管理器
@@ -22,8 +23,32 @@ func NewRoomManager(config ...RoomConfig) *RoomManager {
 		cfg = config[0]
 	}
 	return &RoomManager{
-		rooms:  make(map[int32]*Room),
-		config: cfg,
+		rooms:      make(map[int32]*Room),
+		matchIndex: make(map[string][]*Room),
+		config:     cfg,
+	}
+}
+
+// matchIndexAddLocked 将 room 加入 matchIndex（需在持锁状态下调用）
+func (rm *RoomManager) matchIndexAddLocked(room *Room) {
+	rm.matchIndex[room.MatchKey] = append(rm.matchIndex[room.MatchKey], room)
+}
+
+// matchIndexRemoveLocked 将 room 从 matchIndex 移除（需在持锁状态下调用）
+func (rm *RoomManager) matchIndexRemoveLocked(room *Room) {
+	key := room.MatchKey
+	list := rm.matchIndex[key]
+	for i, r := range list {
+		if r == room {
+			last := len(list) - 1
+			list[i] = list[last]
+			list[last] = nil
+			rm.matchIndex[key] = list[:last]
+			if len(rm.matchIndex[key]) == 0 {
+				delete(rm.matchIndex, key)
+			}
+			return
+		}
 	}
 }
 
@@ -45,6 +70,7 @@ func (rm *RoomManager) createRoomLocked() *Room {
 	room := NewRoomWithConfig(rm.config)
 	room.ID = id
 	rm.rooms[id] = room
+	rm.matchIndexAddLocked(room)
 	Metrics.RoomsCurrent.Inc()
 	slog.Info("room created", "roomId", id)
 	return room
@@ -70,6 +96,7 @@ func (rm *RoomManager) RemoveRoom(id int32) {
 	room, ok := rm.rooms[id]
 	if ok {
 		delete(rm.rooms, id)
+		rm.matchIndexRemoveLocked(room)
 	}
 	rm.mu.Unlock()
 
@@ -130,6 +157,7 @@ func (rm *RoomManager) CreateRoomWithMaxPlayers(maxPlayers int, matchKey string)
 	room.ID = id
 	room.MatchKey = matchKey
 	rm.rooms[id] = room
+	rm.matchIndexAddLocked(room)
 	Metrics.RoomsCurrent.Inc()
 	slog.Info("room created", "roomId", id, "maxPlayers", maxPlayers, "matchKey", matchKey)
 	return room
@@ -167,6 +195,7 @@ func (rm *RoomManager) StopAll() {
 		rooms = append(rooms, r)
 	}
 	rm.rooms = make(map[int32]*Room)
+	rm.matchIndex = make(map[string][]*Room)
 	rm.mu.Unlock()
 
 	for _, r := range rooms {
@@ -177,12 +206,14 @@ func (rm *RoomManager) StopAll() {
 }
 
 // MatchRoom 匹配房间：找一个未满且 maxPlayers + matchKey 都匹配的房间，找不到就创建（原子操作）
+// P2-5: 使用 matchIndex[matchKey] 二级索引，将查找从 O(全部房间) 降至 O(同 key 房间数)。
 func (rm *RoomManager) MatchRoom(maxPlayers int, matchKey string) *Room {
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
 
-	for _, r := range rm.rooms {
-		if r.MatchKey == matchKey && r.MaxPlayers() == maxPlayers && r.TotalPlayerCount() < maxPlayers {
+	// 只在同 matchKey 的房间集合中查找，避免全量遍历
+	for _, r := range rm.matchIndex[matchKey] {
+		if r.MaxPlayers() == maxPlayers && r.TotalPlayerCount() < maxPlayers {
 			return r
 		}
 	}
@@ -200,6 +231,7 @@ func (rm *RoomManager) MatchRoom(maxPlayers int, matchKey string) *Room {
 	room.ID = id
 	room.MatchKey = matchKey
 	rm.rooms[id] = room
+	rm.matchIndexAddLocked(room)
 	Metrics.RoomsCurrent.Inc()
 	slog.Info("room created by match", "roomId", id, "maxPlayers", maxPlayers, "matchKey", matchKey)
 	return room

@@ -84,6 +84,14 @@ type connContext struct {
 // connContextMap 单次查找替代原来的 connPlayerMap + playerRoomMap 双查找
 var connContextMap sync.Map // connID → *connContext
 
+// replayBatchSize / replayBatchDelay 控制补帧发送速率。
+// P2-2: 分批发送防止一次性写入 2400 帧撑爆 TCP 发送缓冲区；每批 100 帧后短暂 yield，
+// 让 ticker goroutine 有机会发送实时帧，避免补帧流量挤占正常帧路径。
+const (
+	replayBatchSize  = 100
+	replayBatchDelay = 5 * time.Millisecond
+)
+
 func main() {
 	jsonHandler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: &logLevel})
 	slog.SetDefault(slog.New(WrapWithLogBuffer(jsonHandler)))
@@ -561,12 +569,15 @@ func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
 		broadcastToRoom(room, playerId, codec.NewExtMessage(framesync.ExtCmdPlayerOnline, framesync.EncodePlayerId(playerId)))
 	}
 
-	// 异步补帧
+	// 异步补帧（P2-2: 分批发送，每批 replayBatchSize 帧后 sleep replayBatchDelay，防止撑爆 TCP 缓冲区）
 	if replayFrom > 0 && replayFrom < currentFrame {
 		go func() {
 			frames := room.GetFramesSince(replayFrom)
-			for _, cf := range frames {
+			for i, cf := range frames {
 				sendMsg(conn, codec.NewCoreMessage(framesync.CmdPushFrames, cf.EncodedData))
+				if (i+1)%replayBatchSize == 0 && i+1 < len(frames) {
+					time.Sleep(replayBatchDelay)
+				}
 			}
 			slog.Info("player replayed frames on reconnect", "playerId", playerId, "count", len(frames), "fromFrame", replayFrom+1, "toFrame", currentFrame)
 		}()
@@ -655,63 +666,77 @@ func handleJoinRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 		broadcastToRoom(room, playerId, codec.NewExtMessage(framesync.ExtCmdPlayerJoined, framesync.EncodePlayerId(playerId)))
 	}
 
-	// 如果房间已在运行，给迟到者：快照 → StartFrameSync → 补帧
-	if room.IsRunning() {
-		snapshotFrame, snapshotData := room.GetSnapshot()
-		currentFrame := room.CurrentFrameNumber()
+	// P2-3: 先通过 sendMsg 直接发送 JoinRoomRsp（附上原始 Seq），再启动后续 goroutine。
+	// TCP/KCP 保证同一连接的 Send 调用严格 FIFO，后续消息一定在 JoinRoomRsp 之后到达客户端，
+	// 无需 time.Sleep 保序。
+	joinRsp := codec.NewExtMessage(framesync.ExtCmdJoinRoomRsp, framesync.EncodeJoinRoomRsp(playerId, room.ID, existingPlayers))
+	joinRsp.HasSeq = msg.HasSeq
+	joinRsp.Seq = msg.Seq
+	sendMsg(conn, joinRsp)
+
+	// 如果房间已在运行，给迟到者：快照 → StartFrameSync → 补帧 → KV 同步（合并为单 goroutine）
+	if room.IsRunning() || !room.DataStoreEmpty() {
+		isRunning := room.IsRunning()
+		var snapshotFrame uint32
+		var snapshotData []byte
+		var currentFrame uint32
+		if isRunning {
+			snapshotFrame, snapshotData = room.GetSnapshot()
+			currentFrame = room.CurrentFrameNumber()
+		}
+		hasKV := !room.DataStoreEmpty()
 
 		go func() {
-			time.Sleep(10 * time.Millisecond) // 确保 JoinRoomRsp 先到达
-
-			// 1. 下发快照（迟到者用来初始化世界状态）
-			var replayFrom uint32
-			if snapshotData != nil && len(snapshotData) > 0 {
-				snapshotMsg := framesync.EncodeSnapshot(snapshotFrame, snapshotData)
-				sendMsg(conn, codec.NewExtMessage(framesync.ExtCmdRoomSnapshot, snapshotMsg))
-				replayFrom = snapshotFrame
-				slog.Info("sent room snapshot to late-join player", "playerId", playerId, "snapshotFrame", snapshotFrame, "bytes", len(snapshotData))
-			} else {
-				// 无快照兜底：从缓冲区最旧帧开始补帧（最佳努力）
-				oldestFrame := room.OldestBufferedFrame()
-				if oldestFrame > 0 {
-					replayFrom = oldestFrame - 1 // GetFramesSince 是 afterFrame，所以 -1
+			// 1. 迟到者补帧（仅运行中才需要）
+			if isRunning {
+				var replayFrom uint32
+				if len(snapshotData) > 0 {
+					snapshotMsg := framesync.EncodeSnapshot(snapshotFrame, snapshotData)
+					sendMsg(conn, codec.NewExtMessage(framesync.ExtCmdRoomSnapshot, snapshotMsg))
+					replayFrom = snapshotFrame
+					slog.Info("sent room snapshot to late-join player", "playerId", playerId, "snapshotFrame", snapshotFrame, "bytes", len(snapshotData))
+				} else {
+					oldestFrame := room.OldestBufferedFrame()
+					if oldestFrame > 0 {
+						replayFrom = oldestFrame - 1
+					}
+					slog.Warn("no snapshot for late-join player, replaying from oldest buffered frame", "playerId", playerId, "oldestFrame", oldestFrame)
 				}
-				slog.Warn("no snapshot for late-join player, replaying from oldest buffered frame", "playerId", playerId, "oldestFrame", oldestFrame)
-			}
 
-			// 2. StartFrameSync
-			initData := framesync.InitData{
-				FrameRate:           room.FrameRate(),
-				FrameInterval:       1000 / room.FrameRate(),
-				StartTime:           room.StartTime(),
-				SnapshotInterval:    int32(cfg.SnapshotIntervalFrames),
-				QuickReconnectMaxMs: int32(cfg.QuickReconnectMaxMs),
-			}
-			sendMsg(conn, codec.NewCoreMessage(framesync.CmdStartFrameSync, framesync.EncodeInitData(&initData)))
-
-			// 3. 补帧
-			if replayFrom > 0 && replayFrom < currentFrame {
-				frames := room.GetFramesSince(replayFrom)
-				for _, cf := range frames {
-					sendMsg(conn, codec.NewCoreMessage(framesync.CmdPushFrames, cf.EncodedData))
+				initData := framesync.InitData{
+					FrameRate:           room.FrameRate(),
+					FrameInterval:       1000 / room.FrameRate(),
+					StartTime:           room.StartTime(),
+					SnapshotInterval:    int32(cfg.SnapshotIntervalFrames),
+					QuickReconnectMaxMs: int32(cfg.QuickReconnectMaxMs),
 				}
-				slog.Info("late-join player replayed frames", "playerId", playerId, "count", len(frames), "fromFrame", replayFrom+1, "toFrame", currentFrame)
+				sendMsg(conn, codec.NewCoreMessage(framesync.CmdStartFrameSync, framesync.EncodeInitData(&initData)))
+
+				// P2-2: 分批补帧，防止一次性发送 2400 帧撑爆 TCP 缓冲区
+				if replayFrom > 0 && replayFrom < currentFrame {
+					frames := room.GetFramesSince(replayFrom)
+					for i, cf := range frames {
+						sendMsg(conn, codec.NewCoreMessage(framesync.CmdPushFrames, cf.EncodedData))
+						if (i+1)%replayBatchSize == 0 && i+1 < len(frames) {
+							time.Sleep(replayBatchDelay)
+						}
+					}
+					slog.Info("late-join player replayed frames", "playerId", playerId, "count", len(frames), "fromFrame", replayFrom+1, "toFrame", currentFrame)
+				}
+
+				slog.Info("late-join player ready", "playerId", playerId, "roomId", room.ID, "frame", currentFrame)
 			}
 
-			slog.Info("late-join player ready", "playerId", playerId, "roomId", room.ID, "frame", currentFrame)
+			// 2. KV 全量同步（无论运行中与否，只要有数据）
+			if hasKV {
+				entries, version := room.GetDataSnapshot()
+				sendMsg(conn, codec.NewExtMessage(framesync.ExtCmdPushDataSync, framesync.EncodePushDataSync(version, entries)))
+			}
 		}()
 	}
 
-	// 新加入的玩家自动收到 KV 全量同步
-	if !room.DataStoreEmpty() {
-		go func() {
-			time.Sleep(15 * time.Millisecond) // 确保 JoinRoomRsp 先到达
-			entries, version := room.GetDataSnapshot()
-			sendMsg(conn, codec.NewExtMessage(framesync.ExtCmdPushDataSync, framesync.EncodePushDataSync(version, entries)))
-		}()
-	}
-
-	return codec.NewExtMessage(framesync.ExtCmdJoinRoomRsp, framesync.EncodeJoinRoomRsp(playerId, room.ID, existingPlayers))
+	// JoinRoomRsp 已在上方直接发送，此处返回 nil 避免 dispatch 层重复发送
+	return nil
 }
 
 func handleLeaveRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {

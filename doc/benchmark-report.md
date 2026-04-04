@@ -176,6 +176,86 @@ Room struct 新增 `broadcastBuf []*Player`（预分配 cap=16），与热路径
 
 ---
 
+### P2 优化（2026-04-04 · commit `待填`）
+
+> 测试文件：`svr/framesync/room_p2_test.go`、`svr/framesync/room_manager_p2_test.go`
+
+#### P2-1 · `ReportFrameHash` 每次 O(n) 清理 → 每 100 帧清理一次
+
+原实现在每次 `ReportFrameHash` 调用时都遍历全表删除旧 hash，N 玩家 × 每帧上报 = O(N×帧数) 的清理代价。
+
+```go
+// Before: 每次调用都清理
+if frameNumber > 200 { for fn := range r.frameHashes { ... } }
+
+// After: 每 100 帧才触发一次
+if frameNumber > 200 && frameNumber%100 == 0 { for fn := range r.frameHashes { ... } }
+```
+
+| Benchmark | ns/op | allocs/op | 说明 |
+|-----------|-------|-----------|------|
+| `BenchmarkReportFrameHash`（稳态，4 玩家，99:1 非清理:清理帧比） | **28.9** | 0 | 大多数帧跳过清理 |
+
+#### P2-2 · 重连补帧无流控 → 批量发送（100 帧/批，批间 5ms）
+
+原来一次性写入最多 2400 帧，可能撑爆 TCP 发送缓冲区。
+
+```go
+const replayBatchSize = 100
+const replayBatchDelay = 5 * time.Millisecond
+// 每 100 帧 sleep 5ms，让 ticker goroutine 有机会发实时帧
+```
+
+适用于 `handleReconnect` 和 `handleJoinRoom`（迟到者）两处补帧路径。
+
+#### P2-3 · `time.Sleep` 保序 hack → FIFO 顺序保证
+
+原来两个 goroutine 各自 `time.Sleep(10ms / 15ms)` 等待 `JoinRoomRsp` 先到，脆弱且有延迟。
+
+```go
+// Before: 两个独立 goroutine 各自 sleep
+go func() { time.Sleep(10ms); sendSnapshot(); sendStart(); sendFrames() }()
+go func() { time.Sleep(15ms); sendKV() }()
+
+// After: 直接 sendMsg(conn, joinRsp)，合并为单 goroutine 无 sleep
+sendMsg(conn, joinRsp)          // JoinRoomRsp 先入 FIFO 队列
+go func() {
+    sendSnapshot(); sendStart(); sendFrames()  // 后续消息保证在 joinRsp 之后
+    sendKV()
+}()
+return nil
+```
+
+TCP/KCP 的 per-connection FIFO 保证顺序，彻底消除 sleep。
+
+#### P2-4 · `GetRoomInfo()` 两次加锁 → 单次加锁
+
+`IsRunning()` 单独加锁；现改为在一次锁内同时读 `running` + `onlineCount`。
+
+| Benchmark | ns/op | allocs/op |
+|-----------|-------|-----------|
+| `BenchmarkGetRoomInfo`（串行） | **4.4** | 0 |
+| `BenchmarkGetRoomInfo_Parallel`（并发） | **80.8** | 0 |
+
+#### P2-5 · `MatchRoom` O(n) 线性扫描 → `matchIndex` 二级索引 O(1)
+
+`RoomManager` 新增 `matchIndex map[string][]*Room`，`createRoomLocked`/`CreateRoomWithMaxPlayers`/`MatchRoom`/`RemoveRoom`/`StopAll` 均维护索引一致性。
+
+```go
+// Before: 遍历全部 rooms
+for _, r := range rm.rooms { if r.MatchKey == matchKey ... }
+
+// After: 直接查索引
+for _, r := range rm.matchIndex[matchKey] { ... }
+```
+
+| Benchmark | ns/op | allocs/op | 说明 |
+|-----------|-------|-----------|------|
+| `BenchmarkMatchRoom_IndexPath`（1000 房间，指定 key） | **67.7** | 1 | 索引直接命中，不遍历全部 1000 房 |
+| `BenchmarkMatchRoom_SameKey`（同 key 50 满房间） | **200.6** | 0 | 最差情况：扫完 50 个才新建 |
+
+---
+
 ### 微优化汇总对比（Apple M silicon，`-benchtime=2s`）
 
 | Benchmark | ns/op | allocs/op | 优化批次 |
@@ -185,11 +265,14 @@ Room struct 新增 `broadcastBuf []*Player`（预分配 cap=16），与热路径
 | `BenchmarkDecodePooled_Parallel`（并发稳态） | **1.98** | 0 | P1-1 |
 | `BenchmarkNextPlayerId`（串行） | **1.75** | 0 | P0-1 |
 | `BenchmarkNextPlayerId_Parallel` | **44.9** | 0 | P0-1 |
+| `BenchmarkGetRoomInfo`（串行） | **4.4** | 0 | P2-4 |
 | `BenchmarkDecodePooled_Reuse`（串行稳态） | **8.7** | 0 | P1-1 |
 | `BenchmarkDecode_Allocating`（基线对照） | 15.2 | **1** | — |
+| `BenchmarkReportFrameHash`（稳态） | **28.9** | 0 | P2-1 |
 | `BenchmarkHandleFrameInput`（串行） | **54.6** | 0 | P0-2 |
 | `BenchmarkHandleFrameInput_Parallel` | **49.9** | 0 | P0-2 |
 | `BenchmarkForEachOnlinePlayer`（4 玩家） | **52.6** | 0 | P1-3 |
+| `BenchmarkMatchRoom_IndexPath`（1000 房间） | **67.7** | 1 | P2-5 |
 | `BenchmarkStepFrame_AllocsPerOp`（含输入） | **90.9** | 1 | P0-3 |
 | `BenchmarkStepFrame_NoInput`（空帧） | **87.5** | 1 | P0-3 |
 | `BenchmarkGetFramesSince_100Frames` | 743 ns | **2** | P1-4 |

@@ -395,12 +395,17 @@ func (r *Room) GameResume() bool {
 }
 
 // GetRoomInfo 获取房间信息快照
+// P2-4: 单次加锁同时读取 running + onlineCount，避免 IsRunning() 独立加锁。
 func (r *Room) GetRoomInfo() RoomInfo {
+	r.mu.Lock()
+	running := r.running
+	playerCount := int(atomic.LoadInt32(&r.onlineCount))
+	r.mu.Unlock()
 	return RoomInfo{
 		RoomId:      r.ID,
-		PlayerCount: r.PlayerCount(),
+		PlayerCount: playerCount,
 		MaxPlayers:  r.config.MaxPlayers,
-		Running:     r.IsRunning(),
+		Running:     running,
 		MatchKey:    r.MatchKey,
 	}
 }
@@ -961,8 +966,9 @@ func (r *Room) ReportFrameHash(playerId int32, frameNumber uint32, hash uint32) 
 		}
 	}
 
-	// Clean up old frame hashes (keep only last 200 frames)
-	if frameNumber > 200 {
+	// Clean up old frame hashes (keep only last 200 frames).
+	// 周期性清理：每 100 帧触发一次，避免每次 ReportFrameHash 都 O(n) 扫描全表。
+	if frameNumber > 200 && frameNumber%100 == 0 {
 		cutoff := frameNumber - 200
 		for fn := range r.frameHashes {
 			if fn < cutoff {
