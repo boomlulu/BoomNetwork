@@ -274,7 +274,10 @@ func TestPendingBuf_InputDataCorrectAfterSwap(t *testing.T) {
 	copy(data, room.frameRing[pos].EncodedData)
 	room.mu.Unlock()
 
-	decoded := DecodeFrameData(data)
+	decoded, err := DecodeFrameData(data)
+	if err != nil {
+		t.Fatalf("DecodeFrameData: %v", err)
+	}
 	if len(decoded.Inputs) != 1 {
 		t.Fatalf("expected 1 input, got %d", len(decoded.Inputs))
 	}

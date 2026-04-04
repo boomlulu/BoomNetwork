@@ -228,13 +228,19 @@ func TestGetFramesSince_DataCorrectAfterPack(t *testing.T) {
 	}
 
 	// 验证第一帧内容
-	d1 := DecodeFrameData(frames[0].EncodedData)
+	d1, err := DecodeFrameData(frames[0].EncodedData)
+	if err != nil {
+		t.Fatalf("DecodeFrameData frame[0]: %v", err)
+	}
 	if len(d1.Inputs) != 1 || d1.Inputs[0].PlayerId != 7 {
 		t.Errorf("frame[0] data corrupted: %+v", d1)
 	}
 
 	// 验证第二帧内容
-	d2 := DecodeFrameData(frames[1].EncodedData)
+	d2, err := DecodeFrameData(frames[1].EncodedData)
+	if err != nil {
+		t.Fatalf("DecodeFrameData frame[1]: %v", err)
+	}
 	if len(d2.Inputs) != 1 || d2.Inputs[0].PlayerId != 8 {
 		t.Errorf("frame[1] data corrupted: %+v", d2)
 	}

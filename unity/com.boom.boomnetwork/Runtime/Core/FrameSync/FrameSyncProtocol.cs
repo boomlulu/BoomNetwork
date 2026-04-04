@@ -1,9 +1,26 @@
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
+using System.IO;
 
 namespace BoomNetwork.Core.FrameSync
 {
+    /// <summary>
+    /// 协议安全限制常量（C3 修复）
+    ///
+    /// 所有解码方法对变长字段使用这些上限，防止恶意或截断数据造成 OOM / panic。
+    /// </summary>
+    internal static class ProtocolLimits
+    {
+        public const int MaxFrameInputs  = 256;    // 单帧最多 256 个玩家输入
+        public const int MaxInputDataLen = 4096;   // 单条输入数据最大 4KB
+        public const int MaxFrameEvents  = 32;     // 单帧最多 32 个帧内事件
+        public const int MaxRooms        = 1000;   // 房间列表最多 1000 个
+        public const int MaxRoomKeyLen   = 256;    // matchKey 最长 256 字节
+        public const int MaxValueLen     = 65_536; // KV value 最大 64KB
+        public const int MaxEntries      = 1000;   // KV 全量快照最多 1000 条
+    }
+
     /// <summary>
     /// 帧同步协议 Cmd 定义 — 三层分级
     ///
@@ -109,16 +126,30 @@ namespace BoomNetwork.Core.FrameSync
         public uint FrameNumber;
         public (int PlayerId, uint Hash)[] PlayerHashes;
 
+        /// <summary>
+        /// C3: 所有读取前验证长度，count×8 越界 → InvalidDataException。
+        /// Wire: [FrameNumber:4][PlayerCount:1][PlayerId:4+Hash:4]×N
+        /// </summary>
         public static FrameHashMismatch Decode(ReadOnlySpan<byte> buf)
         {
+            if (buf.Length < 5)
+                throw new InvalidDataException(
+                    $"FrameHashMismatch too short: need 5, got {buf.Length}");
+
             var result = new FrameHashMismatch();
             result.FrameNumber = BinaryPrimitives.ReadUInt32LittleEndian(buf);
             int count = buf[4];
+
+            int needed = 5 + count * 8;
+            if (buf.Length < needed)
+                throw new InvalidDataException(
+                    $"FrameHashMismatch truncated: need {needed} for {count} players, got {buf.Length}");
+
             result.PlayerHashes = new (int, uint)[count];
             int offset = 5;
             for (int i = 0; i < count; i++)
             {
-                int pid = BinaryPrimitives.ReadInt32LittleEndian(buf.Slice(offset));
+                int pid  = BinaryPrimitives.ReadInt32LittleEndian(buf.Slice(offset));
                 uint hash = BinaryPrimitives.ReadUInt32LittleEndian(buf.Slice(offset + 4));
                 result.PlayerHashes[i] = (pid, hash);
                 offset += 8;
@@ -151,17 +182,24 @@ namespace BoomNetwork.Core.FrameSync
             BinaryPrimitives.WriteInt32LittleEndian(buf.Slice(20), QuickReconnectMaxMs);
         }
 
+        /// <summary>
+        /// C3: 入口检查至少 LegacySize(16) 字节。
+        /// </summary>
         public static FrameSyncInitData ReadFrom(ReadOnlySpan<byte> buf)
         {
+            if (buf.Length < LegacySize)
+                throw new InvalidDataException(
+                    $"FrameSyncInitData too short: need {LegacySize}, got {buf.Length}");
+
             var data = new FrameSyncInitData
             {
-                FrameRate = BinaryPrimitives.ReadInt32LittleEndian(buf),
+                FrameRate     = BinaryPrimitives.ReadInt32LittleEndian(buf),
                 FrameInterval = BinaryPrimitives.ReadInt32LittleEndian(buf.Slice(4)),
-                StartTime = BinaryPrimitives.ReadInt64LittleEndian(buf.Slice(8)),
+                StartTime     = BinaryPrimitives.ReadInt64LittleEndian(buf.Slice(8)),
             };
             if (buf.Length >= Size)
             {
-                data.SnapshotInterval = BinaryPrimitives.ReadInt32LittleEndian(buf.Slice(16));
+                data.SnapshotInterval    = BinaryPrimitives.ReadInt32LittleEndian(buf.Slice(16));
                 data.QuickReconnectMaxMs = BinaryPrimitives.ReadInt32LittleEndian(buf.Slice(20));
             }
             return data;
@@ -228,7 +266,7 @@ namespace BoomNetwork.Core.FrameSync
 
             for (int i = 0; i < inputCount; i++)
             {
-                ref readonly var input = ref frame.Inputs[i];
+                ref readonly var input = ref frame.Inputs![i];
                 BinaryPrimitives.WriteInt32LittleEndian(buf.Slice(offset), input.PlayerId);
                 offset += 4;
 
@@ -262,30 +300,60 @@ namespace BoomNetwork.Core.FrameSync
         }
 
         /// <summary>
-        /// 解码 FrameData
+        /// 解码 FrameData。
+        ///
+        /// C3: 完整边界检查：
+        ///   - 入口至少 6B（FrameNumber + InputCount）
+        ///   - inputCount 上限 MaxFrameInputs=256（防 OOM）
+        ///   - 每条 Input 读取前验证剩余长度
+        ///   - dataLen 上限 MaxInputDataLen=4096（防单条 OOM）
+        ///   - eventCount 上限 MaxFrameEvents=32
+        ///   - 每条 Event 读取前验证剩余长度
+        ///
+        /// 任何违规均抛出 InvalidDataException（不发生越界访问）。
         /// </summary>
         public static FrameData Decode(ReadOnlySpan<byte> buf)
         {
-            int offset = 0;
+            if (buf.Length < 6)
+                throw new InvalidDataException(
+                    $"FrameData too short: need 6, got {buf.Length}");
 
+            int offset = 0;
             var frame = new FrameData();
+
             frame.FrameNumber = BinaryPrimitives.ReadUInt32LittleEndian(buf.Slice(offset));
             offset += 4;
 
-            ushort inputCount = BinaryPrimitives.ReadUInt16LittleEndian(buf.Slice(offset));
+            int inputCount = BinaryPrimitives.ReadUInt16LittleEndian(buf.Slice(offset));
             offset += 2;
+
+            if (inputCount > ProtocolLimits.MaxFrameInputs)
+                throw new InvalidDataException(
+                    $"FrameData inputCount {inputCount} exceeds limit {ProtocolLimits.MaxFrameInputs}");
 
             frame.Inputs = new FrameData.PlayerInput[inputCount];
             for (int i = 0; i < inputCount; i++)
             {
+                if (offset + 6 > buf.Length)
+                    throw new InvalidDataException(
+                        $"FrameData truncated reading input[{i}] header at offset {offset}");
+
                 frame.Inputs[i].PlayerId = BinaryPrimitives.ReadInt32LittleEndian(buf.Slice(offset));
                 offset += 4;
 
-                ushort dataLen = BinaryPrimitives.ReadUInt16LittleEndian(buf.Slice(offset));
+                int dataLen = BinaryPrimitives.ReadUInt16LittleEndian(buf.Slice(offset));
                 offset += 2;
+
+                if (dataLen > ProtocolLimits.MaxInputDataLen)
+                    throw new InvalidDataException(
+                        $"FrameData input[{i}].dataLen {dataLen} exceeds limit {ProtocolLimits.MaxInputDataLen}");
 
                 if (dataLen > 0)
                 {
+                    if (offset + dataLen > buf.Length)
+                        throw new InvalidDataException(
+                            $"FrameData truncated reading input[{i}].data: need {offset + dataLen}, got {buf.Length}");
+
                     frame.Inputs[i].Data = buf.Slice(offset, dataLen).ToArray();
                     frame.Inputs[i].DataLength = dataLen;
                     offset += dataLen;
@@ -297,14 +365,26 @@ namespace BoomNetwork.Core.FrameSync
                 }
             }
 
-            // Events (appended after inputs)
+            // Events（向后兼容：旧格式无此字段）
             if (offset < buf.Length)
             {
+                if (offset + 1 > buf.Length)
+                    throw new InvalidDataException("FrameData truncated reading eventCount");
+
                 int eventCount = buf[offset];
                 offset++;
+
+                if (eventCount > ProtocolLimits.MaxFrameEvents)
+                    throw new InvalidDataException(
+                        $"FrameData eventCount {eventCount} exceeds limit {ProtocolLimits.MaxFrameEvents}");
+
                 frame.Events = new FrameEvent[eventCount];
                 for (int i = 0; i < eventCount; i++)
                 {
+                    if (offset + 5 > buf.Length)
+                        throw new InvalidDataException(
+                            $"FrameData truncated reading event[{i}] at offset {offset}");
+
                     frame.Events[i].EventType = buf[offset];
                     offset++;
                     frame.Events[i].PlayerId = BinaryPrimitives.ReadInt32LittleEndian(buf.Slice(offset));
@@ -336,29 +416,48 @@ namespace BoomNetwork.Core.FrameSync
         // === GetRoomsRsp ===
         // Wire: [RoomCount:2] + N × [RoomId:4][PlayerCount:2][MaxPlayers:2][Running:1][MatchKeyLen:2][MatchKey:N]
 
+        /// <summary>
+        /// C3: count 上限 MaxRooms，每房间固定 9B 字段读取前验证剩余长度。
+        /// </summary>
         public static RoomInfo[] DecodeRoomList(ReadOnlySpan<byte> buf)
         {
             if (buf.Length < 2) return Array.Empty<RoomInfo>();
+
             int offset = 0;
-            ushort count = BinaryPrimitives.ReadUInt16LittleEndian(buf.Slice(offset));
+            int count = BinaryPrimitives.ReadUInt16LittleEndian(buf.Slice(offset));
             offset += 2;
+
+            if (count > ProtocolLimits.MaxRooms)
+                throw new InvalidDataException(
+                    $"DecodeRoomList count {count} exceeds limit {ProtocolLimits.MaxRooms}");
 
             var rooms = new RoomInfo[count];
             for (int i = 0; i < count; i++)
             {
-                rooms[i].RoomId = BinaryPrimitives.ReadInt32LittleEndian(buf.Slice(offset));
+                // 固定字段：RoomId(4)+PlayerCount(2)+MaxPlayers(2)+Running(1) = 9B
+                if (offset + 9 > buf.Length)
+                    throw new InvalidDataException(
+                        $"DecodeRoomList truncated at room[{i}] fixed fields, offset={offset}");
+
+                rooms[i].RoomId      = BinaryPrimitives.ReadInt32LittleEndian(buf.Slice(offset));
                 offset += 4;
                 rooms[i].PlayerCount = BinaryPrimitives.ReadUInt16LittleEndian(buf.Slice(offset));
                 offset += 2;
-                rooms[i].MaxPlayers = BinaryPrimitives.ReadUInt16LittleEndian(buf.Slice(offset));
+                rooms[i].MaxPlayers  = BinaryPrimitives.ReadUInt16LittleEndian(buf.Slice(offset));
                 offset += 2;
-                rooms[i].Running = buf[offset] != 0;
+                rooms[i].Running     = buf[offset] != 0;
                 offset += 1;
+
                 // MatchKey（向后兼容：老服务器不发此字段）
                 if (offset + 2 <= buf.Length)
                 {
                     int keyLen = BinaryPrimitives.ReadUInt16LittleEndian(buf.Slice(offset));
                     offset += 2;
+
+                    if (keyLen > ProtocolLimits.MaxRoomKeyLen)
+                        throw new InvalidDataException(
+                            $"DecodeRoomList room[{i}].keyLen {keyLen} exceeds limit {ProtocolLimits.MaxRoomKeyLen}");
+
                     if (keyLen > 0 && offset + keyLen <= buf.Length)
                     {
                         rooms[i].MatchKey = System.Text.Encoding.UTF8.GetString(buf.Slice(offset, keyLen));
@@ -367,6 +466,7 @@ namespace BoomNetwork.Core.FrameSync
                     else
                     {
                         rooms[i].MatchKey = "";
+                        if (keyLen > 0) offset += Math.Min(keyLen, buf.Length - offset);
                     }
                 }
                 else
@@ -378,8 +478,6 @@ namespace BoomNetwork.Core.FrameSync
         }
 
         // === CreateRoom ===
-        // Wire: [MaxPlayers:2]
-
         // Wire: [MaxPlayers:2][MatchKeyLen:2][MatchKey:N]（向后兼容：老服务器只读前2字节）
         public static byte[] EncodeCreateRoom(int maxPlayers, string? matchKey = null)
         {
@@ -413,8 +511,12 @@ namespace BoomNetwork.Core.FrameSync
         // === CreateRoomRsp ===
         // Wire: [RoomId:4]
 
+        /// <summary>C3: 入口检查 ≥4B。</summary>
         public static int DecodeCreateRoomRsp(ReadOnlySpan<byte> buf)
         {
+            if (buf.Length < 4)
+                throw new InvalidDataException(
+                    $"DecodeCreateRoomRsp too short: need 4, got {buf.Length}");
             return BinaryPrimitives.ReadInt32LittleEndian(buf);
         }
 
@@ -431,10 +533,15 @@ namespace BoomNetwork.Core.FrameSync
         // === JoinRoomRsp ===
         // Wire: [PlayerId:4][RoomId:4][PlayerCount:2][PlayerIds:4×N]
 
+        /// <summary>C3: 入口检查 ≥8B（PlayerId + RoomId）。</summary>
         public static (int playerId, int roomId, int[] existingPlayers) DecodeJoinRoomRsp(ReadOnlySpan<byte> buf)
         {
+            if (buf.Length < 8)
+                throw new InvalidDataException(
+                    $"DecodeJoinRoomRsp too short: need 8, got {buf.Length}");
+
             int playerId = BinaryPrimitives.ReadInt32LittleEndian(buf);
-            int roomId = BinaryPrimitives.ReadInt32LittleEndian(buf.Slice(4));
+            int roomId   = BinaryPrimitives.ReadInt32LittleEndian(buf.Slice(4));
 
             int[] existingPlayers = Array.Empty<int>();
             if (buf.Length >= 10)
@@ -455,8 +562,12 @@ namespace BoomNetwork.Core.FrameSync
         // === PlayerJoined / PlayerLeft (服务器推送) ===
         // Wire: [PlayerId:4]
 
+        /// <summary>C3: 入口检查 ≥4B。</summary>
         public static int DecodePlayerId(ReadOnlySpan<byte> buf)
         {
+            if (buf.Length < 4)
+                throw new InvalidDataException(
+                    $"DecodePlayerId too short: need 4, got {buf.Length}");
             return BinaryPrimitives.ReadInt32LittleEndian(buf);
         }
     }
@@ -490,8 +601,8 @@ namespace BoomNetwork.Core.FrameSync
             if (buf.Length < 13)
                 return (result, 0, 0, 0, null);
 
-            int roomId = BinaryPrimitives.ReadInt32LittleEndian(buf.Slice(1));
-            uint serverFrame = BinaryPrimitives.ReadUInt32LittleEndian(buf.Slice(5));
+            int roomId        = BinaryPrimitives.ReadInt32LittleEndian(buf.Slice(1));
+            uint serverFrame  = BinaryPrimitives.ReadUInt32LittleEndian(buf.Slice(5));
             uint snapshotFrame = BinaryPrimitives.ReadUInt32LittleEndian(buf.Slice(9));
 
             byte[]? snapshotData = null;
@@ -556,10 +667,11 @@ namespace BoomNetwork.Core.FrameSync
             return offset - start;
         }
 
-        /// <summary>解码推送的实体状态（客户端接收用）</summary>
         /// <summary>
         /// 解码 PushEntityState (ExtCmd 41)
         /// onEntity(senderPid, entityId, data, offset, length)
+        ///
+        /// 已有边界检查：entry-level ≥5B，循环内每项 ≥6B + stateLen 验证。
         /// </summary>
         public static void Decode(ReadOnlySpan<byte> data, Action<int, int, byte[], int, int> onEntity)
         {
@@ -607,8 +719,12 @@ namespace BoomNetwork.Core.FrameSync
             return buf;
         }
 
+        /// <summary>已有入口检查 ≥5B。</summary>
         public static (int entityId, bool release) DecodeRequest(ReadOnlySpan<byte> buf)
         {
+            if (buf.Length < RequestSize)
+                throw new InvalidDataException(
+                    $"DecodeRequest too short: need {RequestSize}, got {buf.Length}");
             int entityId = BinaryPrimitives.ReadInt32LittleEndian(buf);
             bool release = buf[4] != 0;
             return (entityId, release);
@@ -622,9 +738,13 @@ namespace BoomNetwork.Core.FrameSync
             return buf;
         }
 
+        /// <summary>C3: 入口检查 ≥ResultSize(8)B。</summary>
         public static (int entityId, int newOwnerPlayerId) DecodeResult(ReadOnlySpan<byte> buf)
         {
-            int entityId = BinaryPrimitives.ReadInt32LittleEndian(buf);
+            if (buf.Length < ResultSize)
+                throw new InvalidDataException(
+                    $"DecodeResult too short: need {ResultSize}, got {buf.Length}");
+            int entityId       = BinaryPrimitives.ReadInt32LittleEndian(buf);
             int newOwnerPlayerId = BinaryPrimitives.ReadInt32LittleEndian(buf.Slice(4));
             return (entityId, newOwnerPlayerId);
         }
@@ -661,8 +781,12 @@ namespace BoomNetwork.Core.FrameSync
         // === PushStateMsg (S→C) ===
         // Wire: [PlayerId:4][Data:N]
 
+        /// <summary>C3: 入口检查 ≥4B。</summary>
         public static (int playerId, byte[] data) DecodePushStateMsg(ReadOnlySpan<byte> buf)
         {
+            if (buf.Length < 4)
+                throw new InvalidDataException(
+                    $"DecodePushStateMsg too short: need 4, got {buf.Length}");
             int playerId = BinaryPrimitives.ReadInt32LittleEndian(buf);
             byte[] data = buf.Slice(4).ToArray();
             return (playerId, data);
@@ -692,12 +816,28 @@ namespace BoomNetwork.Core.FrameSync
         // === PushData (S→C) — 增量 ===
         // Wire: [Version:4][PlayerId:4][Key:4][ValueLen:2][Value:N]
 
+        /// <summary>
+        /// C3: 入口检查 ≥14B（固定头），valueLen 读取后验证剩余长度。
+        /// </summary>
         public static (uint version, int playerId, int key, byte[] value) DecodePushData(ReadOnlySpan<byte> buf)
         {
-            uint version = BinaryPrimitives.ReadUInt32LittleEndian(buf);
-            int playerId = BinaryPrimitives.ReadInt32LittleEndian(buf.Slice(4));
-            int key = BinaryPrimitives.ReadInt32LittleEndian(buf.Slice(8));
-            ushort valueLen = BinaryPrimitives.ReadUInt16LittleEndian(buf.Slice(12));
+            if (buf.Length < 14)
+                throw new InvalidDataException(
+                    $"DecodePushData too short: need 14, got {buf.Length}");
+
+            uint version  = BinaryPrimitives.ReadUInt32LittleEndian(buf);
+            int playerId  = BinaryPrimitives.ReadInt32LittleEndian(buf.Slice(4));
+            int key       = BinaryPrimitives.ReadInt32LittleEndian(buf.Slice(8));
+            int valueLen  = BinaryPrimitives.ReadUInt16LittleEndian(buf.Slice(12));
+
+            if (valueLen > ProtocolLimits.MaxValueLen)
+                throw new InvalidDataException(
+                    $"DecodePushData valueLen {valueLen} exceeds limit {ProtocolLimits.MaxValueLen}");
+
+            if (valueLen > 0 && 14 + valueLen > buf.Length)
+                throw new InvalidDataException(
+                    $"DecodePushData truncated: need {14 + valueLen}, got {buf.Length}");
+
             byte[] value = valueLen > 0 ? buf.Slice(14, valueLen).ToArray() : Array.Empty<byte>();
             return (version, playerId, key, value);
         }
@@ -705,22 +845,54 @@ namespace BoomNetwork.Core.FrameSync
         // === PushDataSync (S→C) — 全量快照 ===
         // Wire: [Version:4][EntryCount:2] + N × [PlayerId:4][Key:4][ValueLen:2][Value:N]
 
+        /// <summary>
+        /// C3: 入口检查 ≥6B，count 上限 MaxEntries，每项固定 10B 读取前验证，valueLen 读后验证。
+        /// </summary>
         public static (uint version, DataEntry[] entries) DecodePushDataSync(ReadOnlySpan<byte> buf)
         {
+            if (buf.Length < 6)
+                throw new InvalidDataException(
+                    $"DecodePushDataSync too short: need 6, got {buf.Length}");
+
             uint version = BinaryPrimitives.ReadUInt32LittleEndian(buf);
-            ushort count = BinaryPrimitives.ReadUInt16LittleEndian(buf.Slice(4));
+            int count    = BinaryPrimitives.ReadUInt16LittleEndian(buf.Slice(4));
+
+            if (count > ProtocolLimits.MaxEntries)
+                throw new InvalidDataException(
+                    $"DecodePushDataSync count {count} exceeds limit {ProtocolLimits.MaxEntries}");
+
             var entries = new DataEntry[count];
             int offset = 6;
             for (int i = 0; i < count; i++)
             {
+                // 每项固定字段：PlayerId(4)+Key(4)+ValueLen(2) = 10B
+                if (offset + 10 > buf.Length)
+                    throw new InvalidDataException(
+                        $"DecodePushDataSync truncated at entry[{i}] fixed fields, offset={offset}");
+
                 entries[i].PlayerId = BinaryPrimitives.ReadInt32LittleEndian(buf.Slice(offset));
                 offset += 4;
-                entries[i].Key = BinaryPrimitives.ReadInt32LittleEndian(buf.Slice(offset));
+                entries[i].Key      = BinaryPrimitives.ReadInt32LittleEndian(buf.Slice(offset));
                 offset += 4;
-                ushort valueLen = BinaryPrimitives.ReadUInt16LittleEndian(buf.Slice(offset));
+                int valueLen = BinaryPrimitives.ReadUInt16LittleEndian(buf.Slice(offset));
                 offset += 2;
-                entries[i].Value = valueLen > 0 ? buf.Slice(offset, valueLen).ToArray() : Array.Empty<byte>();
-                offset += valueLen;
+
+                if (valueLen > ProtocolLimits.MaxValueLen)
+                    throw new InvalidDataException(
+                        $"DecodePushDataSync entry[{i}].valueLen {valueLen} exceeds limit {ProtocolLimits.MaxValueLen}");
+
+                if (valueLen > 0)
+                {
+                    if (offset + valueLen > buf.Length)
+                        throw new InvalidDataException(
+                            $"DecodePushDataSync truncated reading entry[{i}].value");
+                    entries[i].Value = buf.Slice(offset, valueLen).ToArray();
+                    offset += valueLen;
+                }
+                else
+                {
+                    entries[i].Value = Array.Empty<byte>();
+                }
             }
             return (version, entries);
         }

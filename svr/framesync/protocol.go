@@ -2,6 +2,14 @@ package framesync
 
 import (
 	"encoding/binary"
+	"fmt"
+)
+
+// Protocol decode limits — prevent OOM / panic from malformed input
+const (
+	maxFrameInputs  = 256
+	maxInputDataLen = 4096
+	maxFrameEvents  = 32
 )
 
 // === Cmd 定义（三层分级）===
@@ -124,6 +132,10 @@ func EncodeInitData(d *InitData) []byte {
 }
 
 func DecodeInitData(buf []byte) *InitData {
+	const legacySize = 16 // FrameRate(4)+FrameInterval(4)+StartTime(8)
+	if len(buf) < legacySize {
+		return nil
+	}
 	d := &InitData{
 		FrameRate:     int32(binary.LittleEndian.Uint32(buf[0:])),
 		FrameInterval: int32(binary.LittleEndian.Uint32(buf[4:])),
@@ -213,7 +225,11 @@ func EncodeFrameData(f *FrameData, buf []byte) int {
 }
 
 // DecodeFrameData 解码帧数据
-func DecodeFrameData(buf []byte) *FrameData {
+// C3 fix: 全量边界检查，防止越界 panic 和 OOM
+func DecodeFrameData(buf []byte) (*FrameData, error) {
+	if len(buf) < 6 {
+		return nil, fmt.Errorf("FrameData too short: need 6, got %d", len(buf))
+	}
 	offset := 0
 	f := &FrameData{}
 
@@ -223,15 +239,28 @@ func DecodeFrameData(buf []byte) *FrameData {
 	inputCount := int(binary.LittleEndian.Uint16(buf[offset:]))
 	offset += 2
 
+	if inputCount > maxFrameInputs {
+		return nil, fmt.Errorf("FrameData inputCount %d exceeds limit %d", inputCount, maxFrameInputs)
+	}
+
 	f.Inputs = make([]PlayerInput, inputCount)
 	for i := 0; i < inputCount; i++ {
+		if offset+6 > len(buf) {
+			return nil, fmt.Errorf("FrameData truncated reading input[%d] header at offset %d", i, offset)
+		}
 		f.Inputs[i].PlayerId = int32(binary.LittleEndian.Uint32(buf[offset:]))
 		offset += 4
 
 		dataLen := int(binary.LittleEndian.Uint16(buf[offset:]))
 		offset += 2
 
+		if dataLen > maxInputDataLen {
+			return nil, fmt.Errorf("FrameData input[%d].dataLen %d exceeds limit %d", i, dataLen, maxInputDataLen)
+		}
 		if dataLen > 0 {
+			if offset+dataLen > len(buf) {
+				return nil, fmt.Errorf("FrameData truncated reading input[%d].data: need %d, got %d", i, offset+dataLen, len(buf))
+			}
 			f.Inputs[i].Data = make([]byte, dataLen)
 			copy(f.Inputs[i].Data, buf[offset:offset+dataLen])
 			offset += dataLen
@@ -240,10 +269,21 @@ func DecodeFrameData(buf []byte) *FrameData {
 
 	// Events（向后兼容：旧格式无此字段）
 	if offset < len(buf) {
+		if offset+1 > len(buf) {
+			return nil, fmt.Errorf("FrameData truncated reading eventCount")
+		}
 		eventCount := int(buf[offset])
 		offset++
+
+		if eventCount > maxFrameEvents {
+			return nil, fmt.Errorf("FrameData eventCount %d exceeds limit %d", eventCount, maxFrameEvents)
+		}
+
 		f.Events = make([]FrameEvent, eventCount)
 		for i := 0; i < eventCount; i++ {
+			if offset+5 > len(buf) {
+				return nil, fmt.Errorf("FrameData truncated reading event[%d] at offset %d", i, offset)
+			}
 			f.Events[i].EventType = buf[offset]
 			offset++
 			f.Events[i].PlayerId = int32(binary.LittleEndian.Uint32(buf[offset:]))
@@ -251,7 +291,7 @@ func DecodeFrameData(buf []byte) *FrameData {
 		}
 	}
 
-	return f
+	return f, nil
 }
 
 // FrameDataSize 计算编码后大小

@@ -357,6 +357,60 @@ try { stream?.Close(); } catch { }                        // Close 在锁外
 - `cli/Client/Transport/WebSocketClientTransport.cs`：`volatile _ws` + Send/Disconnect 改造（对称）
 - 同步到 `unity/com.boom.boomnetwork/Runtime/Client/Transport/`
 
+### C3 修复（2026-04-04）
+
+**问题：** `FrameSyncProtocol` 的 11 个解码方法均无边界检查：直接按字节偏移读取，截断数据触发 `IndexOutOfRangeException`；`inputCount`（ushort）× `dataLen`（ushort）最大可构造 4 GB 单包导致 OOM。
+
+**攻击面（修复前）：**
+- 任意网络节点发送截断帧 → 服务器/客户端 panic
+- 构造 `inputCount=65535, dataLen=65535` → 4 GB 单包 OOM（Go 和 C# 两端均受影响）
+- `FrameHashMismatch`, `StateSyncCodec`, `RoomCodec` 等所有解码路径均裸访问
+
+**修复方案（C# 和 Go 对称）：**
+
+| 防护点 | 方法 |
+|---|---|
+| 入口最小长度检查 | 所有 11 个 C# 解码方法 + Go `DecodeInitData`/`DecodeFrameData` |
+| 循环内每次迭代前检查 | `FrameData` inputs 循环、events 循环、`RoomList` 循环、`PushDataSync` entries 循环 |
+| 上限常量（OOM 防护） | C#: `ProtocolLimits`（`MaxFrameInputs=256`, `MaxInputDataLen=4096`, `MaxFrameEvents=32`）<br>Go: 包级常量（对称） |
+| 错误类型 | C# → `InvalidDataException`（不改返回类型，调用方无感），Go → `(*T, error)` |
+
+```csharp
+// C# ProtocolLimits（集中定义，防 OOM）
+internal static class ProtocolLimits
+{
+    public const int MaxFrameInputs  = 256;
+    public const int MaxInputDataLen = 4096;
+    public const int MaxFrameEvents  = 32;
+    public const int MaxRooms        = 1000;
+    // ...
+}
+```
+
+```go
+// Go 对称常量
+const (
+    maxFrameInputs  = 256
+    maxInputDataLen = 4096
+    maxFrameEvents  = 32
+)
+```
+
+**测试覆盖（新增）：**
+
+| 测试文件 | 测试数 | 覆盖内容 |
+|---|---|---|
+| `cli/Tests/ProtocolBoundsTests.cs` | 24 | 合法 roundtrip、空缓冲区、截断、上限拒绝 |
+| `svr/framesync/protocol_bounds_test.go` | 12 | DecodeInitData + DecodeFrameData 全场景 |
+
+全部 24 C# 测试通过，全部 Go framesync 测试通过（含新增 12 个）。
+
+**结构变更：**
+- `cli/Core/FrameSync/FrameSyncProtocol.cs`：新增 `ProtocolLimits` 类，11 方法全量加固
+- `svr/framesync/protocol.go`：`DecodeInitData` 加入口检查，`DecodeFrameData` 改 `(*FrameData, error)` 签名
+- `svr/framesync/protocol_test.go` + `room_p0/p1_test.go` + `room_test.go`：7 处调用更新
+- 同步到 `unity/com.boom.boomnetwork/Runtime/Core/FrameSync/`
+
 ---
 
 ## 三、包头格式优化效果（2026-03-27）

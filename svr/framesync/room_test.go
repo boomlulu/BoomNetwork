@@ -253,7 +253,10 @@ func TestGamePause_InputsBuffered(t *testing.T) {
 	data := room.frameRing[pos].EncodedData
 	room.mu.Unlock()
 
-	frame := DecodeFrameData(data)
+	frame, err := DecodeFrameData(data)
+	if err != nil {
+		t.Fatalf("DecodeFrameData: %v", err)
+	}
 	if frame.FrameNumber != 2 {
 		t.Errorf("decoded frame should be 2, got %d", frame.FrameNumber)
 	}

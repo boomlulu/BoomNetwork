@@ -271,7 +271,10 @@ func TestFrameDataWithEvents_EncodeDecode(t *testing.T) {
 		t.Fatalf("EncodeFrameData: wrote %d, expected %d", written, size)
 	}
 
-	decoded := DecodeFrameData(buf)
+	decoded, err := DecodeFrameData(buf)
+	if err != nil {
+		t.Fatalf("DecodeFrameData: %v", err)
+	}
 	if decoded.FrameNumber != 42 {
 		t.Errorf("FrameNumber: got %d, want 42", decoded.FrameNumber)
 	}
@@ -306,7 +309,10 @@ func TestFrameDataNoEvents_BackwardCompat(t *testing.T) {
 	binary.LittleEndian.PutUint16(buf[10:], 4)
 	copy(buf[12:], []byte{1, 2, 3, 4})
 
-	decoded := DecodeFrameData(buf)
+	decoded, err := DecodeFrameData(buf)
+	if err != nil {
+		t.Fatalf("DecodeFrameData: %v", err)
+	}
 	if decoded.FrameNumber != 99 {
 		t.Errorf("FrameNumber: got %d", decoded.FrameNumber)
 	}
@@ -324,7 +330,10 @@ func TestFrameDataEmptyEvents(t *testing.T) {
 	buf := make([]byte, size)
 	EncodeFrameData(frame, buf)
 
-	decoded := DecodeFrameData(buf)
+	decoded, err := DecodeFrameData(buf)
+	if err != nil {
+		t.Fatalf("DecodeFrameData: %v", err)
+	}
 	if decoded.FrameNumber != 1 {
 		t.Errorf("FrameNumber: got %d", decoded.FrameNumber)
 	}
@@ -358,7 +367,10 @@ func TestFrameData_StressEncodeDecode(t *testing.T) {
 			t.Fatalf("frame %d: wrote %d != size %d", frameNum, written, size)
 		}
 
-		decoded := DecodeFrameData(buf[:written])
+		decoded, err := DecodeFrameData(buf[:written])
+		if err != nil {
+			t.Fatalf("frame %d: DecodeFrameData: %v", frameNum, err)
+		}
 		if decoded.FrameNumber != frameNum {
 			t.Fatalf("frame %d: decoded %d", frameNum, decoded.FrameNumber)
 		}
