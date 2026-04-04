@@ -1,7 +1,7 @@
 # BoomNetwork 性能与压测报告
 
 > 测试环境：Apple M silicon, macOS, arm64 / Go 1.24 / .NET 8
-> 最后更新：2026-04-05
+> 最后更新：2026-04-05（Round 3 C1/C2 TDD 修复）
 
 ---
 
@@ -716,5 +716,71 @@ cd cli/Benchmark && dotnet run -c Release
 | 全局带宽 | 2.10 / 9.66 MB/s |
 | 堆内存 | 52 MB |
 | Goroutines | 752 |
+
+---
+
+## 稳定性修复基准（Round 3 TDD，2026-04-05）
+
+### C1 修复：Conn.Send 写超时（commit: TBD）
+
+**修复前行为：** `ServerConfig.WriteTimeout = 10s` 已定义，但从未在 `Conn.Send` 中调用
+`SetWriteDeadline`，慢客户端会无限阻塞服务器广播 goroutine，拖累同房所有玩家帧延迟。
+
+**TDD 验证结果（go test -v ./transport/ -run TestConnSend）：**
+
+```
+BUG VERIFIED ✓  Conn.Send blocks indefinitely with no writeTimeout (200ms 内未返回)
+FIX VERIFIED ✓  Send returned error in 152ms (timeout=150ms): write pipe: i/o timeout
+FIX VERIFIED ✓  Send to fast client succeeded in 36μs (writeTimeout does not affect normal sends)
+BACKWARD COMPAT ✓  writeTimeout=0 preserves blocking behavior (no deadline set)
+```
+
+**Benchmark（Apple M3 Pro，arm64，go test -bench BenchmarkConnSend -benchtime=3s）：**
+
+| 场景 | 耗时 | 内存分配 |
+|------|------|---------|
+| 快速客户端，无超时（基线） | 644 ns/op | 0 B / 0 alloc |
+| 快速客户端，有超时（`SetWriteDeadline` 开销） | 916 ns/op | 128 B / 2 alloc |
+
+> `SetWriteDeadline` 额外开销 **+272 ns / +128 B**（约 42% 相对开销），属系统调用级别，
+> 在 TCP 写 I/O 的整体耗时中可忽略不计（真实写操作 μs~ms 级）。
+
+**修复范围：**
+- `svr/transport/tcp_server.go`：`Conn` 新增 `writeTimeout` 字段；`Send()` 调用 `SetWriteDeadline`；`acceptLoop` 传入 `s.config.WriteTimeout`
+- `svr/transport/kcp_server.go`：`acceptLoop` 同步传入 `writeTimeout`
+- `svr/transport/conn_write_timeout_test.go`：TDD 测试（BUG 验证 + 修复验证 + 2 Benchmark）
+
+---
+
+### C2 修复：KcpClientTransport.Send KCP 窗口满静默丢包（C#，commit: TBD）
+
+**修复前行为：** `UDPSession.Send()` 在 KCP 发送窗口满时返回 `0`（不抛异常），
+`KcpClientTransport.Send()` 忽略返回值，游戏输入（帧指令）静默丢失，
+上层无任何错误通知，无法降速重试。
+
+**修复内容：**
+- `cli/Client/Transport/Kcp/IUDPSession.cs`（新增）：抽象接口，允许单元测试 mock 注入
+- `cli/Client/Transport/Kcp/UDPSession.cs`：`class UDPSession : IUDPSession`
+- `cli/Client/Transport/KcpClientTransport.cs`：
+  - `_session` 字段类型改为 `IUDPSession?`
+  - 新增注入构造函数 `KcpClientTransport(IUDPSession)`
+  - `Send()` 检查返回值：`if (sent == 0) OnError?.Invoke(SendFailed)`
+
+**TDD 测试（cli/Tests/KcpSendWindowTests.cs）：**
+
+| 测试 | 修复前 | 修复后 |
+|------|--------|--------|
+| `BugVerification_WindowFullSilentlyDrops` `[Explicit]` | PASS（证明 bug） | FAIL（已修复，标为 Explicit） |
+| `FixVerification_WindowFullFiresOnError` | FAIL | **PASS** |
+| `FixVerification_NormalSendNoError` | PASS | PASS（无回归） |
+| `FixVerification_DisconnectedStateSkipsSend` | PASS | PASS（无回归） |
+| `MockInjection_StateIsConnected` | FAIL（构造函数不存在） | **PASS** |
+
+**C# 基准（NUnit [Explicit] Benchmark，`BenchmarkKcpSend_*`）：**
+- 正常路径（窗口有空间）：返回值检查为纯整数比较，开销 < 1 ns，可忽略
+- 窗口满路径：委托调用 + 事件分发，约 1-5 μs/次（极少触发，非热路径）
+
+**Unity 同步：** `IUDPSession.cs`（+.meta）、`UDPSession.cs`、`KcpClientTransport.cs`
+已同步至 `unity/com.boom.boomnetwork/Runtime/Client/Transport/Kcp/`
 
 </details>

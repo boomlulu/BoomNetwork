@@ -8,7 +8,7 @@ using System.Text;
 
 namespace KcpProject
 {
-    class UDPSession
+    class UDPSession : IUDPSession
     {
         private Socket mSocket = null;
         private KCP mKCP = null;

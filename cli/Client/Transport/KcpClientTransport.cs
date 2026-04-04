@@ -21,13 +21,26 @@ namespace BoomNetwork.Client.Transport
     /// </summary>
     public class KcpClientTransport : ITransport
     {
-        private UDPSession? _session;
+        private IUDPSession? _session;
 
         private string _lastHost = "";
         private int _lastPort;
         private readonly byte[] _recvBuf = new byte[65536];
 
         public TransportState State { get; private set; } = TransportState.Disconnected;
+
+        /// <summary>
+        /// 注入自定义 IUDPSession（用于单元测试 mock 或高级自定义场景）。
+        /// 注入后 State 直接设为 Connected，不执行 DNS 解析或 Socket 操作。
+        /// </summary>
+        public KcpClientTransport(IUDPSession session)
+        {
+            _session = session;
+            State = TransportState.Connected;
+        }
+
+        /// <summary>默认构造函数，使用真实 UDPSession。</summary>
+        public KcpClientTransport() { }
 
         public event Action? OnConnected;
         public event Action? OnDisconnected;
@@ -91,7 +104,14 @@ namespace BoomNetwork.Client.Transport
 
             try
             {
-                _session.Send(data, offset, length);
+                // C2 fix: Send 返回 0 表示 KCP 发送窗口已满，数据未发出，必须通知上层。
+                // 修复前：返回值被静默忽略，游戏输入丢失且无任何错误提示。
+                int sent = _session.Send(data, offset, length);
+                if (sent == 0)
+                {
+                    OnError?.Invoke(new NetworkError(ErrorCode.SendFailed,
+                        "KCP send window full: input dropped. Consider reducing send rate or increasing window size."));
+                }
             }
             catch (Exception ex)
             {

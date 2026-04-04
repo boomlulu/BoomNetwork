@@ -137,10 +137,11 @@ func (s *KcpServer) acceptLoop() {
 		}
 		s.nextID++
 		c := &Conn{
-			ID:          s.nextID,
-			conn:        raw,
-			writer:      codec.NewFrameWriter(raw),
-			rateLimiter: NewRateLimiter(s.security.MaxMessagesPerSec),
+			ID:           s.nextID,
+			conn:         raw,
+			writer:       codec.NewFrameWriter(raw),
+			rateLimiter:  NewRateLimiter(s.security.MaxMessagesPerSec),
+			writeTimeout: s.config.WriteTimeout, // C1 fix: KCP 连接同样需要写超时保护
 		}
 		s.conns[c.ID] = c
 		s.mu.Unlock()
