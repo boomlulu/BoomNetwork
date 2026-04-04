@@ -100,6 +100,23 @@ var bufPool = sync.Pool{
 	},
 }
 
+// msgPool 复用 *Message 对象，减少高并发解码路径的 GC 压力
+// 使用方式: msg := DecodePooled(buf); ... ; PutMessage(msg)
+var msgPool = sync.Pool{
+	New: func() any { return &Message{} },
+}
+
+// GetMessage 从 Pool 取出一个已清零的 *Message（需配合 PutMessage 归还）
+func GetMessage() *Message {
+	return msgPool.Get().(*Message)
+}
+
+// PutMessage 将 *Message 归还 Pool（调用后禁止继续使用该对象及其 Data 字段）
+func PutMessage(m *Message) {
+	*m = Message{} // 清零所有字段，防止 Data 引用外部 buffer 造成 GC 泄漏
+	msgPool.Put(m)
+}
+
 // Encode 编码 Message
 func Encode(msg *Message) []byte {
 	totalLen := EncodedSize(msg)
@@ -209,23 +226,21 @@ func EncodeTo(msg *Message, buf []byte) int {
 	return offset
 }
 
-// Decode 解码（Data 零拷贝引用原 buffer）
-func Decode(buf []byte) (*Message, error) {
-	if len(buf) < MinHeaderSize {
-		return nil, fmt.Errorf("buffer too short: %d", len(buf))
-	}
-
+// decodeInto 将 buf 解码到已有的 Message 对象（供 Decode 和 DecodePooled 共享逻辑）
+// 调用前须确保 len(buf) >= MinHeaderSize，且 msg 已清零
+func decodeInto(buf []byte, msg *Message) error {
 	flagsCmd := buf[0]
 	largeLen := flagsCmd&FlagLenSize4 != 0
 	hasSeq := flagsCmd&FlagHasSeq != 0
-	cmdType := (flagsCmd >> 2) & 0x03
+	msg.CmdType = (flagsCmd >> 2) & 0x03
+	msg.HasSeq = hasSeq
 	offset := 1
 
 	// BodyLen
 	var bodyLen int
 	if largeLen {
 		if len(buf) < offset+4 {
-			return nil, fmt.Errorf("buffer too short for 4B len")
+			return fmt.Errorf("buffer too short for 4B len")
 		}
 		bodyLen = int(binary.LittleEndian.Uint32(buf[offset:]))
 		offset += 4
@@ -234,17 +249,12 @@ func Decode(buf []byte) (*Message, error) {
 		offset += 2
 	}
 
-	msg := &Message{
-		CmdType: cmdType,
-		HasSeq:  hasSeq,
-	}
-
 	remainLen := bodyLen
 
 	// Seq
 	if hasSeq {
 		if len(buf) < offset+4 {
-			return nil, fmt.Errorf("buffer too short for seq")
+			return fmt.Errorf("buffer too short for seq")
 		}
 		msg.Seq = int32(binary.LittleEndian.Uint32(buf[offset:]))
 		offset += 4
@@ -252,30 +262,59 @@ func Decode(buf []byte) (*Message, error) {
 	}
 
 	// Cmd / ExtCmd / GameCmd
-	switch cmdType {
+	switch msg.CmdType {
 	case CmdTypeCore:
 		msg.Cmd = flagsCmd >> 4
 	case CmdTypeExtended:
 		if len(buf) < offset+2 {
-			return nil, fmt.Errorf("buffer too short for ExtCmd")
+			return fmt.Errorf("buffer too short for ExtCmd")
 		}
 		msg.ExtCmd = binary.LittleEndian.Uint16(buf[offset:])
 		offset += 2
 		remainLen -= 2
 	case CmdTypeGame:
 		if len(buf) < offset+4 {
-			return nil, fmt.Errorf("buffer too short for GameCmd")
+			return fmt.Errorf("buffer too short for GameCmd")
 		}
 		msg.GameCmd = binary.LittleEndian.Uint32(buf[offset:])
 		offset += 4
 		remainLen -= 4
 	}
 
-	// Data
+	// Data 零拷贝引用原 buffer
 	if remainLen > 0 {
 		msg.Data = buf[offset : offset+remainLen]
 	}
 
+	return nil
+}
+
+// Decode 解码（Data 零拷贝引用原 buffer）
+// 每次调用分配新 *Message；不需要归还，GC 自动回收。
+func Decode(buf []byte) (*Message, error) {
+	if len(buf) < MinHeaderSize {
+		return nil, fmt.Errorf("buffer too short: %d", len(buf))
+	}
+	msg := &Message{}
+	if err := decodeInto(buf, msg); err != nil {
+		return nil, err
+	}
+	return msg, nil
+}
+
+// DecodePooled 从 msgPool 取 *Message 并解码（Data 零拷贝引用原 buffer）
+// 调用方用完后须调用 PutMessage(msg) 归还，归还后禁止再访问 msg 及 msg.Data。
+// 适用于高频解码路径（例如每帧收到的帧输入消息）。
+func DecodePooled(buf []byte) (*Message, error) {
+	if len(buf) < MinHeaderSize {
+		return nil, fmt.Errorf("buffer too short: %d", len(buf))
+	}
+	msg := msgPool.Get().(*Message)
+	*msg = Message{} // pool 对象可能有上次的残留字段，先清零
+	if err := decodeInto(buf, msg); err != nil {
+		msgPool.Put(msg) // 解码失败也要归还，避免泄漏
+		return nil, err
+	}
 	return msg, nil
 }
 

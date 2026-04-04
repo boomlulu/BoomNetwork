@@ -52,7 +52,10 @@ namespace BoomNetwork.Client.Session
         private int _lastRecvServerSeq;
 
         // --- 已发送消息缓冲区（快速重连用）---
-        private readonly LinkedList<SentMessage> _sentBuffer = new();
+        // P1-6: 改用 Queue<T>（循环数组）替代 LinkedList<T>
+        //   LinkedList: 每个节点独立堆分配 + 指针追踪，缓存不友好
+        //   Queue<T>:    连续循环数组，Enqueue/Dequeue O(1)，缓存局部性优秀
+        private readonly Queue<SentMessage> _sentBuffer = new();
 
         /// <summary>
         /// 已发送缓冲区最大容量（超过后丢弃最早的）
@@ -184,16 +187,16 @@ namespace BoomNetwork.Client.Session
             {
                 var copy = new byte[written];
                 Buffer.BlockCopy(_encodeBuf, 0, copy, 0, written);
-                _sentBuffer.AddLast(new SentMessage
+                _sentBuffer.Enqueue(new SentMessage
                 {
                     Seq = msg.Seq,
                     EncodedData = copy,
                     EncodedLength = written,
                 });
 
-                // 控制缓冲区大小
+                // 控制缓冲区大小：超容时从队头移除最旧的消息
                 while (_sentBuffer.Count > SentBufferCapacity)
-                    _sentBuffer.RemoveFirst();
+                    _sentBuffer.Dequeue();
             }
         }
 

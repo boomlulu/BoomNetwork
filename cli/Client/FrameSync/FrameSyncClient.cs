@@ -103,6 +103,9 @@ namespace BoomNetwork.Client.FrameSync
         public event Action<uint, int, byte[], int>? OnGameMessage;
         private readonly System.Collections.Generic.List<IEntitySync> _authorityEntities = new();
         private byte[]? _entityStateBuf;
+        // P1-5: 缓存 SendFrameHash 所需的 8 字节 buffer，消除每帧 new byte[8] 分配
+        // Unity 每帧调用一次 SendFrameHash(frameNumber, hash)，20fps × N 玩家 = 高频路径
+        private readonly byte[] _hashBuf = new byte[8];
 
         /// <summary>注册本地管理的实体（每帧自动发送其状态），幂等</summary>
         public void RegisterAuthorityEntity(IEntitySync entity)
@@ -425,10 +428,10 @@ namespace BoomNetwork.Client.FrameSync
         public void SendFrameHash(uint frameNumber, uint hash)
         {
             if (CurrentState != State.Syncing || IsGamePaused) return;
-            var buf = new byte[8];
-            BinaryPrimitives.WriteUInt32LittleEndian(buf, frameNumber);
-            BinaryPrimitives.WriteUInt32LittleEndian(buf.AsSpan(4), hash);
-            _session?.SendExt(FrameSyncExtCmd.FrameHash, buf);
+            // P1-5: 复用类字段 _hashBuf，消除每帧 new byte[8] 分配（20fps × N 玩家高频路径）
+            BinaryPrimitives.WriteUInt32LittleEndian(_hashBuf, frameNumber);
+            BinaryPrimitives.WriteUInt32LittleEndian(_hashBuf.AsSpan(4), hash);
+            _session?.SendExt(FrameSyncExtCmd.FrameHash, _hashBuf);
         }
 
         /// <summary>请求服务器暂停帧同步（停推帧，零游戏流量）。暂停期间输入仍缓存，恢复后第一帧带上。

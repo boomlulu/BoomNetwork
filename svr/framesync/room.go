@@ -14,6 +14,15 @@ type PlayerConn interface {
 	Send(msg *codec.Message) error
 }
 
+// playerSlicePool 复用 []*Player 临时切片，供 ForEachOnlinePlayer 等非热路径使用
+// sync.Pool 本身线程安全，可替代 make([]*Player,...) 避免 per-call GC 分配
+var playerSlicePool = sync.Pool{
+	New: func() any {
+		s := make([]*Player, 0, 16)
+		return &s
+	},
+}
+
 // PlayerState 玩家状态
 type PlayerState int
 
@@ -120,7 +129,8 @@ type Room struct {
 
 	// 复用的编码缓冲区和广播玩家列表
 	frameBuf       []byte
-	broadcastSlice []*Player
+	broadcastSlice []*Player // stepFrame() 专用，ticker goroutine 独占
+	broadcastBuf   []*Player // broadcast() 专用，非热路径（Start/Stop/Pause），调用方已通过 running 状态机串行化
 
 	// 快照存储
 	snapshotFrame uint32
@@ -173,6 +183,7 @@ func NewRoomWithConfig(config RoomConfig) *Room {
 		frameRing:        make([]CachedFrame, config.FrameBufferSize),
 		frameBuf:         make([]byte, 4096),
 		broadcastSlice:   make([]*Player, 0, 16),
+		broadcastBuf:     make([]*Player, 0, 16),
 		pendingInputs:    make([]PlayerInput, 0, 8),    // 双端预分配：swap 后两侧永远有 cap
 		pendingInputsBuf: make([]PlayerInput, 0, 8),
 		pendingEvents:    make([]FrameEvent, 0, 4),     // 同上
@@ -395,25 +406,29 @@ func (r *Room) GetRoomInfo() RoomInfo {
 }
 
 // ForEachOnlinePlayer 遍历在线玩家（用于广播推送）
+// 使用 playerSlicePool 复用临时切片，消除每次调用的匿名 struct slice 分配。
 func (r *Room) ForEachOnlinePlayer(fn func(id int32, conn PlayerConn)) {
+	sp := playerSlicePool.Get().(*[]*Player)
+	players := (*sp)[:0]
+
 	r.mu.Lock()
-	players := make([]struct {
-		id   int32
-		conn PlayerConn
-	}, 0, len(r.players))
 	for _, p := range r.players {
 		if p.State == PlayerOnline && p.Conn != nil {
-			players = append(players, struct {
-				id   int32
-				conn PlayerConn
-			}{p.ID, p.Conn})
+			players = append(players, p)
 		}
 	}
 	r.mu.Unlock()
 
 	for _, p := range players {
-		fn(p.id, p.conn)
+		fn(p.ID, p.Conn)
 	}
+
+	// 归还前清零指针，防止 Pool 持有 Player 对象阻碍 GC
+	for i := range players {
+		players[i] = nil
+	}
+	*sp = players[:0]
+	playerSlicePool.Put(sp)
 }
 
 // PlayerInfo GM 用的玩家信息快照
@@ -495,22 +510,44 @@ func (r *Room) GetSnapshot() (frameNumber uint32, data []byte) {
 }
 
 // GetFramesSince 获取 afterFrame 之后的所有缓冲帧
+// 优化：两次遍历环形缓冲区，将所有帧数据合并到单个大 backing buffer，
+// 将独立分配从 O(N帧) 降至 O(1)（1 次 backing + 1 次 result slice）。
 func (r *Room) GetFramesSince(afterFrame uint32) []CachedFrame {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	var result []CachedFrame
-	// 从环形缓冲区读取
+	// 第一次遍历：统计总字节数和帧数
+	totalBytes := 0
+	count := 0
 	for i := 0; i < r.frameRingLen; i++ {
 		idx := (r.frameRingPos - r.frameRingLen + i + len(r.frameRing)) % len(r.frameRing)
 		cf := &r.frameRing[idx]
 		if cf.FrameNumber > afterFrame {
-			data := make([]byte, len(cf.EncodedData))
-			copy(data, cf.EncodedData)
+			totalBytes += len(cf.EncodedData)
+			count++
+		}
+	}
+	if count == 0 {
+		return nil
+	}
+
+	// 一次性分配所有数据所需的大 buffer + 结果 slice
+	backing := make([]byte, totalBytes)
+	result := make([]CachedFrame, 0, count)
+
+	// 第二次遍历：将帧数据连续拷贝到 backing，子切片引用其中各段
+	offset := 0
+	for i := 0; i < r.frameRingLen; i++ {
+		idx := (r.frameRingPos - r.frameRingLen + i + len(r.frameRing)) % len(r.frameRing)
+		cf := &r.frameRing[idx]
+		if cf.FrameNumber > afterFrame {
+			n := len(cf.EncodedData)
+			copy(backing[offset:], cf.EncodedData)
 			result = append(result, CachedFrame{
 				FrameNumber: cf.FrameNumber,
-				EncodedData: data,
+				EncodedData: backing[offset : offset+n],
 			})
+			offset += n
 		}
 	}
 	return result
@@ -772,18 +809,19 @@ func (r *Room) EmptyAt() time.Time {
 	return r.emptyAt
 }
 
-// broadcast 广播（用于非热路径：Start/Stop）
+// broadcast 广播（用于非热路径：Start/Stop/Pause/Resume）
+// 复用 broadcastBuf 避免每次 make([]*Player, ...)；调用方通过 running 状态机保证串行化。
 func (r *Room) broadcast(msg *codec.Message) {
 	r.mu.Lock()
-	players := make([]*Player, 0, len(r.players))
+	r.broadcastBuf = r.broadcastBuf[:0]
 	for _, p := range r.players {
 		if p.State == PlayerOnline && p.Conn != nil {
-			players = append(players, p)
+			r.broadcastBuf = append(r.broadcastBuf, p)
 		}
 	}
 	r.mu.Unlock()
 
-	for _, p := range players {
+	for _, p := range r.broadcastBuf {
 		p.Conn.Send(msg)
 	}
 }
