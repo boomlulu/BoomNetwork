@@ -280,7 +280,7 @@ for _, r := range rm.matchIndex[matchKey] { ... }
 
 ---
 
-### C1 修复（2026-04-05 · commit `待填`）
+### C1 修复（2026-04-05 · commit `1efb9fa`）
 
 **问题：** `NetworkSession._pendingRequests`（`Dictionary<int,PendingRequest>`）被主线程（`CheckTimeouts`）和收包线程（`DispatchMessage`）并发读写，无任何同步 → 未定义行为。
 
