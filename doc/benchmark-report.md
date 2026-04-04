@@ -176,7 +176,7 @@ Room struct 新增 `broadcastBuf []*Player`（预分配 cap=16），与热路径
 
 ---
 
-### P2 优化（2026-04-04 · commit `待填`）
+### P2 优化（2026-04-04 · commit `185de96`）
 
 > 测试文件：`svr/framesync/room_p2_test.go`、`svr/framesync/room_manager_p2_test.go`
 
