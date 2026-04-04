@@ -37,13 +37,24 @@ namespace BoomNetwork.Client.Session
     ///   - Tick 驱动超时检测
     ///
     /// 不管: 心跳、重连策略、帧同步
+    ///
+    /// 线程安全说明：
+    ///   _pendingRequests 由 PendingRequestTable 封装，内部使用 SpinLock。
+    ///   主线程负责 Add / DrainTimeouts；收包线程负责 TryComplete。
+    ///   所有 callback 均在持锁状态外调用。
     /// </summary>
     public class NetworkSession
     {
         private readonly ITransport _transport;
         private readonly LengthPrefixFraming _framing;
-        private readonly Dictionary<int, PendingRequest> _pendingRequests = new();
-        private readonly List<int> _timeoutKeys = new();
+
+        // C1 fix: 替换为 SpinLock 封装的 PendingRequestTable，主线程+收包线程安全并发
+        private readonly PendingRequestTable _pendingRequests = new();
+
+        // 超时 callback 暂存列表（仅主线程 CheckTimeouts 使用，无需同步）
+        private readonly List<PendingRequest> _timedOutRequests = new();
+        // CancelAll 暂存列表（调用方临时使用，用后清空）
+        private readonly List<PendingRequest> _cancelledRequests = new();
 
         private int _nextSeq = 1;
         private byte[] _encodeBuf;
@@ -217,13 +228,13 @@ namespace BoomNetwork.Client.Session
                 DataLength = data?.Length ?? 0,
             };
 
-            _pendingRequests[seq] = new PendingRequest
+            _pendingRequests.Add(seq, new PendingRequest
             {
                 TimeoutMs = timeoutMs,
                 ElapsedMs = 0,
                 OnResponse = onResponse,
                 OnTimeout = onTimeout,
-            };
+            });
 
             SendRaw(msg);
             return seq;
@@ -246,21 +257,18 @@ namespace BoomNetwork.Client.Session
                 DataLength = data?.Length ?? 0,
             };
 
-            _pendingRequests[seq] = new PendingRequest
+            _pendingRequests.Add(seq, new PendingRequest
             {
                 TimeoutMs = timeoutMs,
                 ElapsedMs = 0,
                 OnResponse = onResponse,
                 OnTimeout = onTimeout,
-            };
+            });
 
             SendRaw(msg);
             return seq;
         }
 
-        /// <summary>
-        /// 服务器确认已收到的 Seq，清理缓冲区中已确认的消息
-        /// </summary>
         /// <summary>
         /// 清空已发送缓冲区（重连成功后调用）
         /// </summary>
@@ -309,9 +317,10 @@ namespace BoomNetwork.Client.Session
             }
         }
 
+        // 收包线程：原子取出 pending → 锁外调用 callback
         private void DispatchMessage(Message msg)
         {
-            if (msg.HasSeq && _pendingRequests.Remove(msg.Seq, out var pending))
+            if (msg.HasSeq && _pendingRequests.TryComplete(msg.Seq, out var pending))
             {
                 pending.OnResponse?.Invoke(msg);
                 return;
@@ -319,42 +328,25 @@ namespace BoomNetwork.Client.Session
             OnMessage?.Invoke(msg);
         }
 
+        // 主线程：推进计时，锁外触发已超时 callback
         private void CheckTimeouts(float deltaTimeMs)
         {
-            _timeoutKeys.Clear();
+            _timedOutRequests.Clear();
+            _pendingRequests.DrainTimeouts(deltaTimeMs, _timedOutRequests);
 
-            // 阶段 1：收集所有 key（不在遍历中修改字典）
-            foreach (var kvp in _pendingRequests)
-                _timeoutKeys.Add(kvp.Key);
-
-            // 阶段 2：更新计时 + 检查超时
-            for (int i = _timeoutKeys.Count - 1; i >= 0; i--)
-            {
-                int key = _timeoutKeys[i];
-                if (!_pendingRequests.TryGetValue(key, out var req))
-                {
-                    _timeoutKeys.RemoveAt(i);
-                    continue;
-                }
-                req.ElapsedMs += deltaTimeMs;
-                _pendingRequests[key] = req;
-                if (req.ElapsedMs < req.TimeoutMs)
-                    _timeoutKeys.RemoveAt(i); // 没超时，从列表移除
-            }
-
-            // 阶段 3：处理超时的
-            foreach (var key in _timeoutKeys)
-            {
-                if (_pendingRequests.Remove(key, out var req))
-                    req.OnTimeout?.Invoke(new NetworkError(ErrorCode.RequestTimeout, $"seq={key} timed out after {req.TimeoutMs}ms"));
-            }
+            foreach (var req in _timedOutRequests)
+                req.OnTimeout?.Invoke(new NetworkError(ErrorCode.RequestTimeout,
+                    $"request timed out after {req.TimeoutMs}ms"));
         }
 
+        // 主线程或收包线程：取出所有 pending → 锁外触发 callback
         private void CancelAllPending(ErrorCode code, string reason)
         {
-            foreach (var kvp in _pendingRequests)
-                kvp.Value.OnTimeout?.Invoke(new NetworkError(code, reason));
-            _pendingRequests.Clear();
+            _cancelledRequests.Clear();
+            _pendingRequests.CancelAll(_cancelledRequests);
+
+            foreach (var req in _cancelledRequests)
+                req.OnTimeout?.Invoke(new NetworkError(code, reason));
         }
 
         private void HandleDisconnected()

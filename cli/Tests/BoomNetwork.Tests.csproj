@@ -11,5 +11,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Core\BoomNetwork.Core.csproj" />
+    <ProjectReference Include="..\Client\BoomNetwork.Client.csproj" />
   </ItemGroup>
 </Project>

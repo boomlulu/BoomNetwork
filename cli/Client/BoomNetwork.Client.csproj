@@ -6,4 +6,9 @@
   <ItemGroup>
     <ProjectReference Include="..\Core\BoomNetwork.Core.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+      <_Parameter1>BoomNetwork.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
 </Project>

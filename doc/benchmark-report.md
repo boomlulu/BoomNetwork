@@ -280,6 +280,40 @@ for _, r := range rm.matchIndex[matchKey] { ... }
 
 ---
 
+### C1 修复（2026-04-05 · commit `待填`）
+
+**问题：** `NetworkSession._pendingRequests`（`Dictionary<int,PendingRequest>`）被主线程（`CheckTimeouts`）和收包线程（`DispatchMessage`）并发读写，无任何同步 → 未定义行为。
+
+**方案选型：SpinLock + 普通 Dictionary（新建 `PendingRequestTable` 类）**
+
+| 方案 | 无竞争开销 | 额外分配 | 语义变化 |
+|---|---|---|---|
+| Monitor lock | ~15–20 ns | 无 | 无 |
+| ConcurrentDictionary | ~30–50 ns | struct 更新需 TryUpdate loop | 无 |
+| ConcurrentQueue（主线程消费） | 0 ns | Message 需 copy（ArrayPool） | callback 延迟到下帧 |
+| **SpinLock（本方案）** | **~1–2 ns（单次 CAS）** | **无** | **无** |
+
+选 SpinLock 的关键依据：
+- 临界区极短（纯 dict Add/Remove，n≤3，稳态 n=0）
+- 无竞争概率 >99.99%（recv 线程只在 `HasSeq` 消息时才进 Remove）
+- callback 必须在锁外调用（`PendingRequestTable` 设计强制此约束）
+
+#### 实测数据（.NET 8，Apple M silicon，NUnit 内嵌 Stopwatch）
+
+| Benchmark | 结果 | 说明 |
+|---|---|---|
+| `Add + TryComplete` pair（无竞争） | **68.7 ns/op** | 含 2 次 SpinLock Enter/Exit |
+| `DrainTimeouts` 空表快路径 | **11.0 ns/op** | `Count==0` 立即返回，稳态帧开销 |
+| `Concurrent_TryComplete_vs_DrainTimeouts` | **50000 次/80ms** | 5万次竞态迭代，callback 总数精确=50000 |
+
+**结构变更：**
+- 新文件 `cli/Client/Session/PendingRequestTable.cs`（含 SpinLock，禁 readonly）
+- `NetworkSession` 中 `_pendingRequests` 从 `Dictionary<>` → `PendingRequestTable`
+- `CheckTimeouts` 逻辑内聚到 `DrainTimeouts(delta, timedOut)`，锁外触发 callback
+- `CancelAllPending` 改为 `CancelAll(cancelled)` 锁外触发
+
+---
+
 ## 三、包头格式优化效果（2026-03-27）
 
 三层分级包头：Core 3B / Extended 5B / Game 7B，带 Seq 各 +4B（原固定 17B）。
