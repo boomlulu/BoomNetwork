@@ -1,6 +1,6 @@
 ---
 name: bn-desync
-description: "帧同步不同步（Desync）防御知识库。覆盖 14 类不同步根因、排查清单、Snapshot 完整性校验、ComputeHash 覆盖率、FInt 定点数安全规范。用于审计 Sample / Demo 或新增帧同步代码时防止引入不同步 bug。"
+description: "帧同步不同步（Desync）防御知识库。覆盖 16 类不同步根因（C4+H5+M4+L3）、18 项排查清单、Snapshot 完整性校验、ComputeHash 覆盖率、FInt 定点数安全规范。用于审计 Sample / Demo 或新增帧同步代码时防止引入不同步 bug。"
 allowed-tools: ["Read", "Grep", "Glob", "Agent"]
 ---
 
@@ -14,7 +14,7 @@ allowed-tools: ["Read", "Grep", "Glob", "Agent"]
 - 审计 ComputeHash 覆盖率
 - 新增 FInt 运算或调用
 
-## 不同步根因分类（14 类）
+## 不同步根因分类（16 类）
 
 ### CRITICAL — 必然不同步
 
