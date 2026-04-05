@@ -1,5 +1,6 @@
 using UnityEngine;
 using BoomNetwork.Client.FrameSync;
+using BoomNetwork.Core;
 using BoomNetwork.Core.FrameSync;
 
 namespace BoomNetwork.Unity
@@ -190,7 +191,7 @@ namespace BoomNetwork.Unity
         private void LogFrameSyncStop() => Debug.Log("[BoomNetwork] FrameSync stopped");
         private void LogReconnected() => Debug.Log("[BoomNetwork] Reconnected");
         private void LogDisconnected() => Debug.Log("[BoomNetwork] Disconnected");
-        private void LogError(string err) => Debug.LogWarning($"[BoomNetwork] {err}");
+        private void LogError(NetworkError err) => Debug.LogWarning($"[BoomNetwork] [{err.Code}] {err.Message}");
         private void LogMsg(string msg) => Debug.Log(msg);
     }
 }
