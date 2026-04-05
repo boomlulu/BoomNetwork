@@ -32,6 +32,12 @@ func (fr *FrameReader) SetMaxMessageSize(size int) {
 	fr.maxMessageSize = size
 }
 
+// Reset 将 FrameReader 切换到新的 io.Reader（复用内部 frameBuf，避免重新分配）
+// 适用于 benchmark 及连接复用场景：reader 对象一次创建，多次 Reset 重用。
+func (fr *FrameReader) Reset(r io.Reader) {
+	fr.reader.Reset(r)
+}
+
 // ReadFrame 读取一个完整帧（复用内部 buffer，零分配热路径）
 // 新格式: [FlagsCmd:1][BodyLen:2/4][Body...]
 func (fr *FrameReader) ReadFrame() ([]byte, error) {

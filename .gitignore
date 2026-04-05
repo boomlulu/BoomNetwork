@@ -15,3 +15,8 @@ BenchmarkDotNet.Artifacts/
 svr/dist/
 svr/configs/config.prod.yaml
 dist/
+
+# benchcmp: build artifact and run history are machine-local
+tools/benchcmp/benchcmp
+tools/benchcmp/benchcmp.exe
+tools/benchcmp/history.json

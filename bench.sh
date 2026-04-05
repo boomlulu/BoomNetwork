@@ -1,50 +1,116 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+# BoomNetwork Benchmark Runner
+# Usage:
+#   ./bench.sh          — run Go benchmarks and show colored table (default)
+#   ./bench.sh all      — run Go + C# and compare
+#   ./bench.sh md       — output Markdown table (paste into benchmark-report.md)
+#   ./bench.sh diff     — run and compare with last run
+#   ./bench.sh help     — show this message
+set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BENCHCMP_SRC="$SCRIPT_DIR/tools/benchcmp"
+BENCHCMP_BIN="$BENCHCMP_SRC/benchcmp"
 
-echo "=========================================="
-echo "  BoomNetwork Performance Report"
-echo "  $(date '+%Y-%m-%d %H:%M:%S')"
-echo "  $(uname -m) / $(sw_vers -productName 2>/dev/null || echo Linux) $(sw_vers -productVersion 2>/dev/null || uname -r)"
-echo "=========================================="
+MODE="${1:-}"
 
-# --- Go Benchmark ---
-echo ""
-echo "[ Go Benchmark ]"
-echo "------------------------------------------"
-cd "$ROOT/svr"
-go test ./codec/ -bench=. -benchmem -count=1 2>&1 | grep -E "^Benchmark|^goos|^goarch|^cpu"
+# ── help ──────────────────────────────────────────────────────────────────────
+if [[ "$MODE" == "help" || "$MODE" == "--help" || "$MODE" == "-h" ]]; then
+  cat <<'EOF'
+BoomNetwork Benchmark Runner
 
-# --- C# Benchmark ---
-echo ""
-echo "[ C# Benchmark ]"
-echo "------------------------------------------"
-cd "$ROOT/cli"
-# BenchmarkDotNet 输出很多，只提取表格
-OUTPUT=$(dotnet run --project Benchmark -c Release 2>&1)
-echo "$OUTPUT" | grep -E "^\| |^\|[-]"
+Usage:
+  ./bench.sh          Run Go benchmarks, show colored table (default)
+  ./bench.sh all      Run Go + C# and compare
+  ./bench.sh md       Output Markdown table (paste into benchmark-report.md)
+  ./bench.sh diff     Run Go benchmarks and compare with last run
+  ./bench.sh help     Show this message
 
-# --- Save report ---
-REPORT_DIR="$ROOT/reports"
-mkdir -p "$REPORT_DIR"
-REPORT_FILE="$REPORT_DIR/bench_$(date '+%Y%m%d_%H%M%S').txt"
+Environment:
+  BENCH_TIME=5s       Override benchmark duration (default: 2s)
+  BENCH_COUNT=5       Override repeat count for averaging (default: 3)
 
-{
-    echo "=========================================="
-    echo "  BoomNetwork Performance Report"
-    echo "  $(date '+%Y-%m-%d %H:%M:%S')"
-    echo "=========================================="
-    echo ""
-    echo "[ Go Benchmark ]"
-    cd "$ROOT/svr"
-    go test ./codec/ -bench=. -benchmem -count=1 2>&1 | grep -E "^Benchmark|^goos|^goarch|^cpu"
-    echo ""
-    echo "[ C# Benchmark ]"
-    echo "$OUTPUT" | grep -E "^\| |^\|[-]"
-} > "$REPORT_FILE"
+Examples:
+  ./bench.sh
+  ./bench.sh diff
+  BENCH_TIME=5s ./bench.sh md
+EOF
+  exit 0
+fi
 
-echo ""
-echo "------------------------------------------"
-echo "Report saved to: $REPORT_FILE"
-echo "=========================================="
+# ── check dependencies ─────────────────────────────────────────────────────────
+check_go() {
+  if ! command -v go &>/dev/null; then
+    echo "❌  Go is not installed or not in PATH."
+    echo "    Install from: https://go.dev/dl/"
+    exit 1
+  fi
+}
+
+check_dotnet() {
+  if ! command -v dotnet &>/dev/null; then
+    echo "⚠️   dotnet is not installed — C# benchmarks will be skipped."
+    echo "    Install from: https://dotnet.microsoft.com/download"
+    return 1
+  fi
+  return 0
+}
+
+check_go
+
+# ── build benchcmp (incremental: skip if binary is newer than all source files) ─
+build_benchcmp() {
+  local needs_build=0
+
+  if [[ ! -f "$BENCHCMP_BIN" ]]; then
+    needs_build=1
+  else
+    # Rebuild if any .go source is newer than the binary
+    while IFS= read -r -d '' f; do
+      if [[ "$f" -nt "$BENCHCMP_BIN" ]]; then
+        needs_build=1
+        break
+      fi
+    done < <(find "$BENCHCMP_SRC" -name '*.go' -not -name '*_test.go' -print0)
+  fi
+
+  if [[ $needs_build -eq 1 ]]; then
+    echo "🔨 Building benchcmp..."
+    # tools/benchcmp is its own Go module, must build from within its directory
+    (cd "$BENCHCMP_SRC" && go build -o benchcmp .)
+    echo "   Built: $BENCHCMP_BIN"
+  fi
+}
+
+build_benchcmp
+
+# ── resolve flags ──────────────────────────────────────────────────────────────
+BENCH_TIME="${BENCH_TIME:-2s}"
+BENCH_COUNT="${BENCH_COUNT:-3}"
+
+BASE_FLAGS="--bench-time $BENCH_TIME --count $BENCH_COUNT"
+
+case "$MODE" in
+  ""|"go")
+    "$BENCHCMP_BIN" --go-only $BASE_FLAGS
+    ;;
+  "all")
+    if check_dotnet; then
+      "$BENCHCMP_BIN" $BASE_FLAGS
+    else
+      echo "   Falling back to Go-only."
+      "$BENCHCMP_BIN" --go-only $BASE_FLAGS
+    fi
+    ;;
+  "md")
+    "$BENCHCMP_BIN" --go-only --md --no-save $BASE_FLAGS
+    ;;
+  "diff")
+    "$BENCHCMP_BIN" --go-only --compare-last $BASE_FLAGS
+    ;;
+  *)
+    echo "❌  Unknown command: '$MODE'"
+    echo "    Run './bench.sh help' for usage."
+    exit 1
+    ;;
+esac
