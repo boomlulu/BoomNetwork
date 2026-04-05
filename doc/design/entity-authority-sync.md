@@ -243,7 +243,7 @@ public class SmoothCorrection : ICorrectionStrategy
 ```
 
 ```csharp
-// ④ 谁说了算？— 权威模型（Phase 2 可替换）
+// ④ 谁说了算？— 权威模型（可扩展）
 public interface IAuthorityModel
 {
     /// <summary>某实体的权威从哪来</summary>
@@ -251,8 +251,13 @@ public interface IAuthorityModel
     bool IsLocalAuthority(int entityId, int localPlayerId);
 }
 
-// 默认实现：服务器分配 + 先到先得转移
+// ✅ Phase 1 已实现：服务器分配 + 先到先得转移
 public class ServerAuthority : IAuthorityModel { ... }
+
+// 🔜 Phase 2+ 待实现（预留扩展点）：
+// public class ShooterAuthority   : IAuthorityModel { ... } // 射击者拥有子弹权威
+// public class TargetAuthority    : IAuthorityModel { ... } // 被命中者拥有伤害结算权威
+// public class HostAuthority      : IAuthorityModel { ... } // 房主拥有所有 NPC 权威
 ```
 
 **可插拔示例：**
@@ -267,6 +272,15 @@ entityView.correctionStrategy = new SmoothCorrection { deadZone = 0.1f, snapThre
 // 自定义：贝塞尔曲线纠偏
 entityView.correctionStrategy = new BezierCorrection { curveDuration = 0.3f };
 ```
+
+### 4.2.1 UPM 状态
+
+> **L2/L3 接口当前状态：仅在 Sample 层（BoomNetworkUnity）**
+>
+> `IDeadReckoning` / `IInertiaModel` / `ICorrectionStrategy` / `EntityView<T>` 目前在
+> `BoomNetworkUnity/Assets/...` 的 Sample 实现中，**尚未反哺 `unity/com.boom.boomnetwork/Runtime/`**。
+>
+> 反哺计划见 Phase 1 待做项。反哺后将在此处更新为"已反哺 UPM"。
 
 ### 4.3 EntityView\<T\> — Unity 组件（组装 Layer 1 + Layer 2）
 
@@ -363,6 +377,49 @@ view.correction = new SmoothCorrection { deadZone = 0.05f };
 view.deadReckoning = new MyQuadraticDeadReckoning();
 view.correction = new MyBezierCorrection();
 ```
+
+### 4.4 SendAuthorityEntityStates — 位置变化检测示例
+
+框架在 `SendInput()` 时自动附带权威状态（`SendAuthorityEntityStates()` 内部调用）。
+当玩家**无游戏输入但实体位置发生变化**（例如被外力推动），需显式调用。
+
+**Silent When Idle 合规实现（推荐）：**
+
+```csharp
+// FrameSyncClient.cs 调用链（框架内部）：
+// SendInput(data) → Send(FrameInput) → SendAuthorityEntityStates()
+//                                          └─ EntityStateCodec.Encode(authorityEntities)
+//                                          └─ Session.SendExt(ExtCmd.SendEntityState, buf)
+
+// 游戏层：只在有变化时调用
+void Update()
+{
+    if (!client.IsSyncing) return;
+
+    bool hasInput   = Input.GetAxisRaw("Horizontal") != 0 || Input.GetAxisRaw("Vertical") != 0;
+    bool posChanged = Vector3.Distance(_lastSentPos, _entity.Position) > 0.001f
+                   || Quaternion.Angle(_lastSentRot, _entity.Rotation) > 0.5f;
+
+    if (hasInput)
+    {
+        // 发输入时自动携带权威状态（框架处理）
+        client.SendInput(inputData);
+        _lastSentPos = _entity.Position;
+        _lastSentRot = _entity.Rotation;
+    }
+    else if (posChanged)
+    {
+        // 被外力推动但无主动输入 → 只发实体状态，不发 FrameInput
+        client.SendAuthorityEntityStates();
+        _lastSentPos = _entity.Position;
+        _lastSentRot = _entity.Rotation;
+    }
+    // 否则：静止不发包（Silent When Idle）
+}
+```
+
+**注意：** `SendAuthorityEntityStates()` 调用一次即序列化所有已注册的 `IEntitySync`。
+死区阈值（0.001f / 0.5°）根据游戏精度调整。
 
 ---
 

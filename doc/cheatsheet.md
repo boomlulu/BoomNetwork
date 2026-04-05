@@ -119,11 +119,22 @@ adminAddr: ":9091"           # admin HTTP
 ## Admin Endpoints
 
 ```
-GET  /health         GET  /stats          GET  /rooms
-GET  /rooms/inspect/{id}                  POST /rooms/{id}/kick/{pid}
-POST /rooms/{id}/stop                     POST /netsim
-GET  /netsim         POST /config/reload  POST /loglevel
+GET  /health              GET  /stats               GET  /rooms
+GET  /rooms/inspect/{id}  GET  /rooms/replay/{id}   POST /rooms/stop/{id}
+POST /rooms/kill/{id}     POST /rooms/stop-all       POST /rooms/create
+POST /kick/{pid}          POST /broadcast            GET  /players/{pid}
+GET  /perf                GET  /rates                GET  /netsim
+POST /netsim              POST /config/reload        GET/POST /log-level
+GET  /messages            GET  /logs
 ```
+
+## Core Cmd 表（S→C 单向推送）
+
+| Cmd | 名称 | 说明 |
+|-----|------|------|
+| 12 | ServerShutdown | 服务器即将关闭，客户端应保存状态并断线 |
+| 13 | RateLimitWarning | 消息速率接近上限，请求客户端降速 |
+| 14 | Kicked | 你已被踢出，附带 1 字节原因码（0=Admin，1=速率超限，2=超时） |
 
 ## UPM Install
 

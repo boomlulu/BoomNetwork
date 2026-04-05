@@ -66,7 +66,10 @@ CmdType=11  Reserved
 | 9 | HeartbeatRsp | S→C |
 | 10 | Reconnect | C→S |
 | 11 | ReconnectRsp | S→C |
-| 12-15 | 保留 | — |
+| 12 | ServerShutdown | S→C |
+| 13 | RateLimitWarning | S→C |
+| 14 | Kicked | S→C |
+| 15 | 保留 | — |
 
 ### Extended (uint16)
 

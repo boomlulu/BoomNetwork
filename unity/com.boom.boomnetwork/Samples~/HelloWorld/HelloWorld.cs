@@ -41,7 +41,7 @@ public class HelloWorld : MonoBehaviour
     {
         if (!_network.IsSyncing) return;
 
-        // 按服务器帧率节流（20fps = 50ms），不要每帧都发
+        // 累计 deltaTime（ms）；每满一个帧周期（50ms = 20fps）才检查一次输入变化
         _sendTimer += Time.deltaTime * 1000f;
         if (_sendTimer < 50f) return;
         _sendTimer -= 50f;

@@ -519,6 +519,7 @@ func handleSessionBind(conn *transport.Conn, msg *codec.Message) *codec.Message 
 	}
 	framesync.Metrics.ConnectionsTotal.Inc()
 	framesync.Metrics.ConnectionsCurrent.Inc()
+	atomic.AddInt64(&totalConnEver, 1)
 
 	playerId := nextPlayerId()
 
@@ -1223,6 +1224,10 @@ func handleFrameHash(conn *transport.Conn, msg *codec.Message) *codec.Message {
 		mismatchData := framesync.EncodeFrameHashMismatch(frameNum, hashes)
 		broadcastToRoom(room, -1, codec.NewExtMessage(framesync.ExtCmdFrameHashMismatch, mismatchData))
 		broadcastToRoom(room, -1, codec.NewExtMessage(framesync.ExtCmdFrameSyncPaused, []byte{byte(framesync.PauseReasonDesync)}))
+		// 通知 GM Hub 推送 desync 事件
+		if gmHub != nil {
+			gmHub.NotifyDesync(DesyncEvent{RoomID: room.ID, FrameNumber: frameNum, PlayerHashes: hashes})
+		}
 	}
 	return nil
 }
