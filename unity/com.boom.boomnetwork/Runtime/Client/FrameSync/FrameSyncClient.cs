@@ -293,7 +293,16 @@ namespace BoomNetwork.Client.FrameSync
         }
 
         /// <summary>
-        /// 恢复自动重连（配合 SimulateNetworkDropAndPause 使用）
+        /// 暂停自动重连（断开后不会尝试恢复，直到调用 ResumeReconnect）。
+        /// 适用于 App 进入后台等场景。
+        /// </summary>
+        public void PauseReconnect()
+        {
+            _connMgr?.PauseReconnect();
+        }
+
+        /// <summary>
+        /// 恢复自动重连（配合 PauseReconnect 或 SimulateNetworkDropAndPause 使用）
         /// </summary>
         public void ResumeReconnect()
         {
