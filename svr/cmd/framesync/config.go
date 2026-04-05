@@ -10,8 +10,9 @@ import (
 // ServerConfig 服务端 YAML 配置文件
 type ServerConfig struct {
 	// 网络
-	Addr  string `yaml:"addr"`
-	Proto string `yaml:"proto"`
+	Addr   string `yaml:"addr"`
+	Proto  string `yaml:"proto"`
+	WSAddr string `yaml:"wsAddr"` // WebSocket 监听地址（空 = 不启用）。WebGL 客户端专用，与 TCP/KCP 共享路由逻辑。
 
 	// 安全
 	AuthToken string `yaml:"authToken"`
@@ -75,6 +76,7 @@ func DefaultConfig() ServerConfig {
 	return ServerConfig{
 		Addr:           ":9000",
 		Proto:          "tcp",
+		WSAddr:         ":9001", // 默认启用 WebSocket 端口，供 WebGL 客户端接入
 		AuthToken:      "",
 		MetricsAddr:    ":9090",
 		AdminAddr:      ":9091",
@@ -122,8 +124,10 @@ func SaveDefaultConfig(path string) {
 	content := `# BoomNetwork 帧同步服务器配置
 
 # ===== 网络 =====
-addr: ":9000"         # 监听地址
-proto: "tcp"          # 传输协议: tcp 或 kcp
+addr: ":9000"         # 主监听地址（TCP/KCP/WS 由 proto 决定）
+proto: "tcp"          # 传输协议: tcp / kcp / ws
+wsAddr: ":9001"       # WebSocket 独立端口（空字符串 = 不启用）
+                      # WebGL 客户端通过此端口接入，与主协议共享全部路由逻辑
 
 # ===== 安全 =====
 authToken: ""         # 鉴权 token，空字符串 = 不鉴权

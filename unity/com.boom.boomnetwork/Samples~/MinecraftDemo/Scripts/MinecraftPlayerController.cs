@@ -76,12 +76,33 @@ namespace BoomNetwork.Samples.MinecraftDemo
                 _cameraTransform = cam.transform;
             }
 
+#if UNITY_WEBGL && !UNITY_EDITOR
+            // H3 WebGL: 浏览器安全策略要求 Pointer Lock 必须在用户手势（点击）回调中触发。
+            // 在 Start() 中直接调用会被浏览器静默忽略，导致鼠标无法锁定。
+            // WebGL 下改为"首次点击时锁定"，见 Update() 中的 _waitingForClick 逻辑。
+            _waitingForClick = true;
+            Cursor.visible = true;
+#else
             Cursor.lockState = CursorLockMode.Locked;
             Cursor.visible = false;
+#endif
         }
+
+#if UNITY_WEBGL && !UNITY_EDITOR
+        private bool _waitingForClick;
+#endif
 
         void Update()
         {
+#if UNITY_WEBGL && !UNITY_EDITOR
+            // H3 WebGL: 等待用户点击以锁定鼠标（浏览器安全策略：必须在用户手势中调用）
+            if (_waitingForClick && UnityEngine.Input.GetMouseButtonDown(0))
+            {
+                _waitingForClick = false;
+                Cursor.lockState = CursorLockMode.Locked;
+                Cursor.visible = false;
+            }
+#endif
             HandleMouseLook();
             HandleVoxelMovement();
             HandleBlockRaycast();
