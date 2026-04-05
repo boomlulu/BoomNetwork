@@ -29,6 +29,10 @@ namespace BoomNetwork.Client.Transport
         private const int JsStateConnecting = 1;
         private const int JsStateConnected = 2;
 
+        // H1: 每帧最多处理消息数上限，防止单帧处理时间过长导致卡顿（尤其 WebGL 单线程）。
+        // jslib 侧已有 512 条队列上限，这里控制每帧消耗速率，剩余消息留到下帧处理。
+        private const int MaxMessagesPerTick = 64;
+
         private int _socketId = -1;
         private int _lastJsState = JsStateDisconnected;
 
@@ -38,7 +42,14 @@ namespace BoomNetwork.Client.Transport
         private readonly byte[] _recvBuf = new byte[65536];
         private readonly byte[] _errorBuf = new byte[512];
 
-        /// <summary>强制使用 wss:// 加密连接（默认根据端口自动判断：443 → wss，其他 → ws）</summary>
+        /// <summary>
+        /// 强制使用 wss:// 加密连接（默认根据端口自动判断：443 → wss，其他 → ws）。
+        ///
+        /// 双层保险：
+        ///   1. C# 层：ForceWss=true 或 port==443 时，直接构造 wss:// URL 传给 jslib。
+        ///   2. JS 层（BoomNetworkWS.jslib）：即使 C# 传入 ws://，若页面协议为 https: 也自动升级为 wss://。
+        ///      这能覆盖 port 非 443 但部署在 HTTPS 后面的情形（如反向代理 443→9001）。
+        /// </summary>
         public bool ForceWss { get; set; }
 
         public TransportState State { get; private set; } = TransportState.Disconnected;
@@ -151,13 +162,15 @@ namespace BoomNetwork.Client.Transport
                 return;
             }
 
-            // 3. 轮询接收数据
+            // 3. 轮询接收数据（每帧最多 MaxMessagesPerTick 条，防止单帧 spike）
             if (State != TransportState.Connected) return;
 
-            while (true)
+            int processed = 0;
+            while (processed < MaxMessagesPerTick)
             {
                 int n = BoomNetworkWS_Poll(_socketId, _recvBuf, _recvBuf.Length);
                 if (n <= 0) break;
+                processed++;
 
                 var pooled = ArrayPool<byte>.Shared.Rent(n);
                 Buffer.BlockCopy(_recvBuf, 0, pooled, 0, n);

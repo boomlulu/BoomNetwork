@@ -7,6 +7,15 @@ var BoomNetworkWSLib = {
 
     BoomNetworkWS_Connect: function (urlPtr) {
         var url = UTF8ToString(urlPtr);
+
+        // C2: HTTPS 页面必须使用 wss://，否则浏览器拒绝混合内容。
+        // 当 C# 侧传来 ws:// 且当前页面是 https: 时自动升级，无需调用方感知。
+        if (typeof window !== "undefined" &&
+            window.location.protocol === "https:" &&
+            url.indexOf("ws://") === 0) {
+            url = "wss://" + url.slice(5);
+        }
+
         var id = wsState.nextId++;
         var entry = {
             ws: null,
@@ -26,6 +35,11 @@ var BoomNetworkWSLib = {
 
             ws.onmessage = function (evt) {
                 if (evt.data instanceof ArrayBuffer) {
+                    // H1: 队列上限 512 条，防止帧率极低时无限堆积耗尽堆内存。
+                    // 超出时静默丢弃最旧消息（服务端会在下一个快照点补全状态）。
+                    if (entry.recvQueue.length >= 512) {
+                        entry.recvQueue.shift(); // 丢弃最旧的
+                    }
                     entry.recvQueue.push(new Uint8Array(evt.data));
                 }
             };

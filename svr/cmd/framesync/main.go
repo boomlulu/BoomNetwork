@@ -34,6 +34,7 @@ var cfg ServerConfig
 var (
 	addr        = flag.String("addr", ":9000", "listen address")
 	proto       = flag.String("proto", "tcp", "protocol: tcp or kcp")
+	wsAddr      = flag.String("ws-addr", ":9001", "WebSocket listen address for WebGL clients (empty = disabled)")
 	ppr         = flag.Int("ppr", 4, "default players per room")
 	authToken   = flag.String("token", "", "auth token (empty = no auth)")
 	metricsAddr = flag.String("metrics", ":9090", "prometheus metrics address (empty = disabled)")
@@ -113,6 +114,7 @@ func main() {
 		cfg = LoadConfig(*configFile)
 		*addr        = cfg.Addr
 		*proto       = cfg.Proto
+		*wsAddr      = cfg.WSAddr
 		*ppr         = cfg.PlayersPerRoom
 		*authToken   = cfg.AuthToken
 		*metricsAddr = cfg.MetricsAddr
@@ -121,6 +123,7 @@ func main() {
 	} else {
 		cfg.Addr           = *addr
 		cfg.Proto          = *proto
+		cfg.WSAddr         = *wsAddr
 		cfg.PlayersPerRoom = *ppr
 		cfg.AuthToken      = *authToken
 		cfg.MetricsAddr    = *metricsAddr
@@ -237,6 +240,27 @@ func main() {
 	}
 	authRequired := secCfg.RequireAuth
 	slog.Info("framesync server running", "addr", *addr, "proto", *proto, "ppr", *ppr, "auth", authRequired)
+
+	// WebGL 双端口：额外启动一个 WebSocket 服务器，与主协议共享全部路由逻辑。
+	// WebGL 客户端无法使用 TCP/KCP，通过此端口接入；桌面/移动客户端走主协议端口。
+	if *wsAddr != "" {
+		wsServer := transport.NewWsServer(rxHandler)
+		wsServer.SetOnDisconnect(onClientDisconnect)
+		wsServer.SetOnRateLimited(func(c *transport.Conn) {
+			framesync.Metrics.RateLimited.Inc()
+			c.Send(codec.NewCoreMessage(framesync.CmdKicked, []byte{framesync.KickReasonRateLimit}))
+		})
+		wsServer.SetOnRateLimitWarn(func(c *transport.Conn) {
+			c.Send(codec.NewCoreMessage(framesync.CmdRateLimitWarning, nil))
+		})
+		wsServer.SetMaxConns(cfg.MaxConnections)
+		wsServer.SetSecurity(secCfg)
+		if err := wsServer.Listen(*wsAddr); err != nil {
+			slog.Error("ws server listen failed", "err", err)
+			os.Exit(1)
+		}
+		slog.Info("websocket server running", "addr", *wsAddr)
+	}
 
 	// Prometheus metrics endpoint
 	if *metricsAddr != "" {

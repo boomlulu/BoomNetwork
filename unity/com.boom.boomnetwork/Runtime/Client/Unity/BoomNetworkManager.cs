@@ -1,9 +1,27 @@
+using System;
 using UnityEngine;
 using BoomNetwork.Client.FrameSync;
+using BoomNetwork.Client.Transport;
 using BoomNetwork.Core.FrameSync;
+using BoomNetwork.Core.Transport;
 
 namespace BoomNetwork.Unity
 {
+    /// <summary>
+    /// 传输协议选择
+    /// </summary>
+    public enum TransportType
+    {
+        /// <summary>自动选择：WebGL → WebSocket，其他平台 → TCP</summary>
+        Auto,
+        /// <summary>强制 TCP（不支持 WebGL）</summary>
+        TCP,
+        /// <summary>强制 WebSocket（适合 WebGL 或穿墙场景）</summary>
+        WebSocket,
+        /// <summary>强制 KCP（低延迟 UDP，不支持 WebGL）</summary>
+        KCP,
+    }
+
     /// <summary>
     /// BoomNetwork Unity 封装
     ///
@@ -22,8 +40,13 @@ namespace BoomNetwork.Unity
         [SerializeField] private string host = ""; // L5: 不预填生产地址，避免开发者误连线上
         [SerializeField] private int port = 9000;
 
+        [Header("Transport")]
+        [Tooltip("Auto: WebGL→WebSocket, 其他→TCP。手动选择可覆盖平台默认值。")]
+        [SerializeField] private TransportType transportType = TransportType.Auto;
+
         [Header("Heartbeat")]
         [SerializeField] private float heartbeatIntervalMs = 3000;
+        [Tooltip("心跳超时时长（ms）。Android 建议设为 15000，因移动网络 RTT 波动较大。")]
         [SerializeField] private float heartbeatTimeoutMs = 10000;
 
         [Header("Room")]
@@ -68,6 +91,28 @@ namespace BoomNetwork.Unity
         private void Update()
         {
             Client?.Tick(Time.deltaTime * 1000f);
+        }
+
+        // H1 Android: 后台/前台切换时暂停/恢复自动重连。
+        // 在 Android 上，App 进入后台后 TCP 连接可能被系统中断，但重连需要网络权限已就绪。
+        // OnApplicationPause(true)  → 暂停重连（防止后台无限重试耗电）
+        // OnApplicationPause(false) → 恢复重连（回到前台，补触发断线重连）
+        private void OnApplicationPause(bool pauseStatus)
+        {
+            if (pauseStatus)
+                Client?.PauseReconnect();
+            else
+                Client?.ResumeReconnect();
+        }
+
+        // OnApplicationFocus 与 OnApplicationPause 语义互补：
+        // 部分 Android 版本 Focus 比 Pause 更早/晚触发，双钩子确保覆盖。
+        private void OnApplicationFocus(bool hasFocus)
+        {
+            if (!hasFocus)
+                Client?.PauseReconnect();
+            else
+                Client?.ResumeReconnect();
         }
 
         private void OnDestroy()
@@ -163,9 +208,29 @@ namespace BoomNetwork.Unity
             Client?.SendInput(data, dataLength);
         }
 
+        private Func<ITransport>? BuildTransportFactory()
+        {
+            switch (transportType)
+            {
+                case TransportType.TCP:
+                    return () => new TcpClientTransport();
+                case TransportType.WebSocket:
+#if UNITY_WEBGL && !UNITY_EDITOR
+                    return () => new WebGLWebSocketTransport();
+#else
+                    return () => new WebSocketClientTransport();
+#endif
+                case TransportType.KCP:
+                    return () => new KcpClientTransport();
+                case TransportType.Auto:
+                default:
+                    return null; // FrameSyncClient 按平台自动选择
+            }
+        }
+
         private void CreateClient()
         {
-            Client = new FrameSyncClient(heartbeatIntervalMs, heartbeatTimeoutMs);
+            Client = new FrameSyncClient(heartbeatIntervalMs, heartbeatTimeoutMs, BuildTransportFactory());
 
             if (logEnabled)
             {

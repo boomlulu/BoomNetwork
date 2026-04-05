@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- BoomNetwork: 网络访问权限（TCP/KCP/WebSocket 连接服务器） -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- BoomNetwork: 读取网络状态（心跳超时检测与重连策略） -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+</manifest>
