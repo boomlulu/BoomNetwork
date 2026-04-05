@@ -115,11 +115,18 @@ namespace BoomNetwork.Client.Transport
                 var ws = _ws;
                 if (ws == null) return;
 
+                // H4 fix: 添加 5 秒发送超时，防止 SendAsync 无限期阻塞
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
                 try
                 {
                     var segment = new ArraySegment<byte>(data, offset, length);
-                    ws.SendAsync(segment, WebSocketMessageType.Binary, true, CancellationToken.None)
+                    ws.SendAsync(segment, WebSocketMessageType.Binary, true, cts.Token)
                         .ConfigureAwait(false).GetAwaiter().GetResult();
+                }
+                catch (OperationCanceledException)
+                {
+                    _eventQueue.Enqueue(() => OnError?.Invoke(new NetworkError(ErrorCode.SendFailed, "WebSocket send timeout (5s)")));
+                    HandleDisconnect();
                 }
                 catch (Exception ex)
                 {

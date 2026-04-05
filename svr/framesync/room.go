@@ -13,6 +13,7 @@ import (
 // PlayerConn 玩家连接接口
 type PlayerConn interface {
 	Send(msg *codec.Message) error
+	Close() error
 }
 
 // playerSlicePool 复用 []*Player 临时切片，供 ForEachOnlinePlayer 等非热路径使用
@@ -159,10 +160,10 @@ type Room struct {
 	delegate RoomDelegate
 
 	// 房间生命周期
-	createdAt time.Time // 创建时间
-	hadPlayer bool      // 是否有过玩家加入
-	startedAt time.Time // 指标：Start 时间
-	emptyAt   time.Time // 最近一次变空的时刻；有玩家时为零值
+	createdAt time.Time  // 创建时间
+	hadPlayer atomic.Bool // 是否有过玩家加入（原子读写，无需持锁）
+	startedAt time.Time  // 指标：Start 时间
+	emptyAt   time.Time  // 最近一次变空的时刻；有玩家时为零值
 }
 
 // NewRoom 创建帧同步房间
@@ -258,7 +259,7 @@ func (r *Room) AddPlayer(id int32, conn PlayerConn) {
 		player = &Player{ID: id, Conn: conn, State: PlayerOnline}
 		r.players[id] = player
 	}
-	r.hadPlayer = true
+	r.hadPlayer.Store(true)
 	r.emptyAt = time.Time{} // 有玩家，清零空房间计时
 	if r.hostPlayerId == 0 {
 		r.hostPlayerId = id
@@ -363,6 +364,17 @@ func (r *Room) GetPlayerIds() []int32 {
 		ids = append(ids, id)
 	}
 	return ids
+}
+
+// AppendPlayerIds 将所有玩家 ID（含断线保留的）追加到 dst 并返回。
+// 调用方可传入预分配切片避免分配：ids = room.AppendPlayerIds(ids[:0])
+func (r *Room) AppendPlayerIds(dst []int32) []int32 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for id := range r.players {
+		dst = append(dst, id)
+	}
+	return dst
 }
 
 // IsRunning 帧同步是否正在运行
@@ -608,11 +620,9 @@ func (r *Room) IsSnapshotPaused() bool {
 // CreatedAt 返回房间创建时间
 func (r *Room) CreatedAt() time.Time { return r.createdAt }
 
-// HadPlayer 是否有过玩家加入
+// HadPlayer 是否有过玩家加入（原子读，无锁）
 func (r *Room) HadPlayer() bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.hadPlayer
+	return r.hadPlayer.Load()
 }
 
 // Start 开始帧同步
@@ -701,6 +711,11 @@ func (r *Room) tickLoop() {
 			d := r.delegate
 			r.mu.Unlock()
 
+			// L4: 广播 PlayerLeft 通知残留客户端（panic 前正常 Stop 路径会发此事件，panic 恢复路径必须补发）
+			for _, id := range playerIds {
+				r.broadcast(codec.NewExtMessage(ExtCmdPlayerLeft, EncodePlayerId(id)))
+			}
+
 			if d != nil {
 				d.OnRoomPanicked(r, playerIds)
 			}
@@ -774,31 +789,6 @@ func (r *Room) stepFrame() {
 	r.pendingEvents = r.pendingEventsBuf[:0]
 	r.pendingEventsBuf = events
 
-	// 组帧 + 编码（在锁内复用 frameBuf）
-	frame := &FrameData{FrameNumber: frameNum, Inputs: inputs, Events: events}
-	size := FrameDataSize(frame)
-	if cap(r.frameBuf) < size {
-		r.frameBuf = make([]byte, size)
-	} else {
-		r.frameBuf = r.frameBuf[:size]
-	}
-	EncodeFrameData(frame, r.frameBuf)
-
-	// 写入环形缓冲区（复用已有的 slot，不 make 新 slice）
-	slot := &r.frameRing[r.frameRingPos]
-	slot.FrameNumber = frameNum
-	if cap(slot.EncodedData) >= size {
-		slot.EncodedData = slot.EncodedData[:size]
-	} else {
-		slot.EncodedData = make([]byte, size)
-	}
-	copy(slot.EncodedData, r.frameBuf[:size])
-
-	r.frameRingPos = (r.frameRingPos + 1) % len(r.frameRing)
-	if r.frameRingLen < len(r.frameRing) {
-		r.frameRingLen++
-	}
-
 	// 收集在线玩家（复用 broadcastSlice）
 	r.broadcastSlice = r.broadcastSlice[:0]
 	for _, p := range r.players {
@@ -808,16 +798,60 @@ func (r *Room) stepFrame() {
 	}
 	r.mu.Unlock()
 
+	// M1: 编码在锁外执行（inputs/events 已局部持有，broadcastSlice 为 ticker goroutine 独占）
+	frame := &FrameData{FrameNumber: frameNum, Inputs: inputs, Events: events}
+	size := FrameDataSize(frame)
+	if cap(r.frameBuf) < size {
+		r.frameBuf = make([]byte, size)
+	} else {
+		r.frameBuf = r.frameBuf[:size]
+	}
+	EncodeFrameData(frame, r.frameBuf)
+
+	// 写入环形缓冲区需重新加锁（GetFramesSince 在锁内读取 frameRing）
+	r.mu.Lock()
+	slot := &r.frameRing[r.frameRingPos]
+	slot.FrameNumber = frameNum
+	if cap(slot.EncodedData) >= size {
+		slot.EncodedData = slot.EncodedData[:size]
+	} else {
+		slot.EncodedData = make([]byte, size)
+	}
+	copy(slot.EncodedData, r.frameBuf[:size])
+	r.frameRingPos = (r.frameRingPos + 1) % len(r.frameRing)
+	if r.frameRingLen < len(r.frameRing) {
+		r.frameRingLen++
+	}
+	r.mu.Unlock()
+
 	// 广播在锁外执行，不阻塞其他操作
 	Metrics.FramesPushed.Inc()
 	broadcastStart := time.Now()
 	msg := codec.NewCoreMessage(CmdPushFrames, r.frameBuf[:size])
+
+	// S1: 收集发送失败的连接，锁外异步断开（zombie conn 处理）
+	var failedIDs []int32
+	var failedConns []PlayerConn
 	for _, p := range r.broadcastSlice {
-		if c := p.Conn; c != nil { // H2: guard against concurrent DisconnectPlayer setting Conn=nil
-			c.Send(msg)
+		if c := p.Conn; c != nil {
+			if err := c.Send(msg); err != nil {
+				slog.Warn("broadcast send error, disconnecting zombie conn", "playerId", p.ID, "err", err)
+				failedIDs = append(failedIDs, p.ID)
+				failedConns = append(failedConns, c)
+				Metrics.BroadcastSendErrors.Inc()
+			}
 		}
 	}
 	Metrics.FrameBroadcastLatency.Observe(time.Since(broadcastStart).Seconds())
+
+	for i, id := range failedIDs {
+		conn := failedConns[i]
+		id := id
+		go func() {
+			conn.Close()       // 触发客户端 FIN/RST → 快速重连
+			r.DisconnectPlayer(id)
+		}()
+	}
 }
 
 // ReconcilePlayers 收敛玩家期望状态：通过 removePlayerLocked 移除所有超过 keepalive 的断线玩家
@@ -859,7 +893,12 @@ func (r *Room) EmptyAt() time.Time {
 }
 
 // broadcast 广播（用于非热路径：Start/Stop/Pause/Resume）
-// 复用 broadcastBuf 避免每次 make([]*Player, ...)；调用方通过 running 状态机保证串行化。
+// 调用链串行化保证：
+//   - Start() / Stop() 由 running 状态机控制（re-entrant 检查）
+//   - Pause / Resume 通过 snapshotPaused 状态位保证同一时刻只有一个调用路径执行
+//
+// 因此 broadcast() 不会被并发调用，broadcastBuf 无需额外保护。
+// 控制消息发送失败仅记录日志，不触发断连（由下次帧广播失败时处理）。
 func (r *Room) broadcast(msg *codec.Message) {
 	r.mu.Lock()
 	r.broadcastBuf = r.broadcastBuf[:0]
@@ -871,7 +910,9 @@ func (r *Room) broadcast(msg *codec.Message) {
 	r.mu.Unlock()
 
 	for _, p := range r.broadcastBuf {
-		p.Conn.Send(msg)
+		if err := p.Conn.Send(msg); err != nil {
+			slog.Warn("control broadcast send error", "playerId", p.ID, "err", err)
+		}
 	}
 }
 
@@ -1005,6 +1046,7 @@ func (r *Room) ReportFrameHash(playerId int32, frameNumber uint32, hash uint32) 
 			}
 			if h != firstHash {
 				r.desyncDetected = true
+				r.frameHashes = make(map[uint32]map[int32]uint32) // M9: 释放内存，检测完成后无需保留
 				return true
 			}
 		}

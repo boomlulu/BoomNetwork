@@ -21,13 +21,28 @@ namespace BoomNetwork.Client.Transport
     /// </summary>
     public class KcpClientTransport : ITransport
     {
-        private UDPSession? _session;
+        private IUDPSession? _session;
 
         private string _lastHost = "";
         private int _lastPort;
         private readonly byte[] _recvBuf = new byte[65536];
+        // H2 fix: 后台 DoConnect 通过此队列将事件（Connected/Error）投递回 Tick 线程
+        private readonly ConcurrentQueue<Action> _eventQueue = new();
 
         public TransportState State { get; private set; } = TransportState.Disconnected;
+
+        /// <summary>
+        /// 注入自定义 IUDPSession（用于单元测试 mock 或高级自定义场景）。
+        /// 注入后 State 直接设为 Connected，不执行 DNS 解析或 Socket 操作。
+        /// </summary>
+        public KcpClientTransport(IUDPSession session)
+        {
+            _session = session;
+            State = TransportState.Connected;
+        }
+
+        /// <summary>默认构造函数，使用真实 UDPSession。</summary>
+        public KcpClientTransport() { }
 
         public event Action? OnConnected;
         public event Action? OnDisconnected;
@@ -42,20 +57,35 @@ namespace BoomNetwork.Client.Transport
             _lastPort = port;
             State = TransportState.Connecting;
 
+            // H2 fix: DNS 解析（UDPSession.Connect 内部调 Dns.GetHostEntry）可能阻塞数百 ms，
+            // 放到后台线程避免卡主线程（与 TcpClientTransport 对称）。
+            ThreadPool.QueueUserWorkItem(_ => DoConnect(host, port));
+        }
+
+        private void DoConnect(string host, int port)
+        {
             try
             {
-                _session = new UDPSession();
-                _session.AckNoDelay = true;
-                _session.WriteDelay = false;
-                _session.Connect(host, port);
+                var session = new UDPSession();
+                session.AckNoDelay = true;
+                session.WriteDelay = false;
+                session.Connect(host, port); // DNS + socket bind 在后台线程执行
 
-                State = TransportState.Connected;
-                OnConnected?.Invoke();
+                _session = session;
+
+                _eventQueue.Enqueue(() =>
+                {
+                    State = TransportState.Connected;
+                    OnConnected?.Invoke();
+                });
             }
             catch (Exception ex)
             {
-                State = TransportState.Disconnected;
-                OnError?.Invoke(new NetworkError(ErrorCode.ConnectFailed, ex.Message));
+                _eventQueue.Enqueue(() =>
+                {
+                    State = TransportState.Disconnected;
+                    OnError?.Invoke(new NetworkError(ErrorCode.ConnectFailed, ex.Message));
+                });
             }
         }
 
@@ -91,7 +121,14 @@ namespace BoomNetwork.Client.Transport
 
             try
             {
-                _session.Send(data, offset, length);
+                // C2 fix: Send 返回 0 表示 KCP 发送窗口已满，数据未发出，必须通知上层。
+                // 修复前：返回值被静默忽略，游戏输入丢失且无任何错误提示。
+                int sent = _session.Send(data, offset, length);
+                if (sent == 0)
+                {
+                    OnError?.Invoke(new NetworkError(ErrorCode.SendFailed,
+                        "KCP send window full: input dropped. Consider reducing send rate or increasing window size."));
+                }
             }
             catch (Exception ex)
             {
@@ -102,11 +139,16 @@ namespace BoomNetwork.Client.Transport
 
         /// <summary>
         /// 每帧调用。KCP 需要在 Tick 里:
-        /// 1. Update() — 驱动 KCP 内部状态机（重传、ACK 等）
-        /// 2. Recv() — 从 UDP socket poll 数据，经 KCP 解包后取出
+        /// 1. 排出事件队列（H2 fix: DoConnect 通过 eventQueue 回调主线程）
+        /// 2. Update() — 驱动 KCP 内部状态机（重传、ACK 等）
+        /// 3. Recv() — 从 UDP socket poll 数据，经 KCP 解包后取出
         /// </summary>
         public void Tick()
         {
+            // H2 fix: 先排出后台线程通过 _eventQueue 投递的事件（Connected/Error 等）
+            while (_eventQueue.TryDequeue(out var action))
+                action();
+
             if (_session == null || State != TransportState.Connected)
                 return;
 

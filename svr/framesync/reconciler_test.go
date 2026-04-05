@@ -15,6 +15,7 @@ import (
 type nopConn struct{}
 
 func (nopConn) Send(*codec.Message) error { return nil }
+func (nopConn) Close() error              { return nil }
 
 // ---- mockDelegate ----
 

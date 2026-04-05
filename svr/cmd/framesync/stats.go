@@ -300,6 +300,8 @@ func (sc *statsConn) Send(msg *codec.Message) error {
 	return sc.inner.Send(msg)
 }
 
+func (sc *statsConn) Close() error { return sc.inner.Close() }
+
 // connPid 从 connPlayerMap 取 playerId
 func connPid(conn *transport.Conn) int32 {
 	if v, ok := connPlayerMap.Load(conn.ID); ok {
@@ -352,19 +354,18 @@ func (pr *playerRate) Record(pid int32) {
 }
 
 // Rate5Sec 返回该玩家最近 5 秒的消息/秒
+// M3: 单次加锁完成查找 + 迭代，消除原双重加锁的竞态窗口。
 func (pr *playerRate) Rate5Sec(pid int32) float64 {
 	now := time.Now().Unix()
 	cut := now - 5
 
 	pr.mu.Lock()
 	ring, ok := pr.counts[pid]
-	pr.mu.Unlock()
 	if !ok {
+		pr.mu.Unlock()
 		return 0
 	}
-
 	var total int32
-	pr.mu.Lock()
 	for i := 0; i < ringSize; i++ {
 		b := ring[i]
 		if b.sec > cut && b.sec <= now {
@@ -429,6 +430,9 @@ var coreCmdNames = map[byte]string{
 	9:  "HeartbeatRsp",
 	10: "Reconnect",
 	11: "ReconnectRsp",
+	12: "ServerShutdown",
+	13: "RateLimitWarning",
+	14: "Kicked",
 }
 
 var extCmdNames = map[uint16]string{

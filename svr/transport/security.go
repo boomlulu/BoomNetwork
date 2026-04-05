@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -21,7 +22,7 @@ type SecurityConfig struct {
 func DefaultSecurityConfig() SecurityConfig {
 	return SecurityConfig{
 		MaxMessageSize:    65536, // 64KB
-		MaxMessagesPerSec: 200,   // 每秒最多 200 条消息（含突发容忍）
+		MaxMessagesPerSec: 100,   // 每秒最多 100 条消息（与 DefaultConfig() 对齐）
 		RequireAuth:       false,
 		AuthTimeout:       5 * time.Second,
 		AuthToken:         "",
@@ -38,21 +39,25 @@ const (
 )
 
 // RateLimiter 每连接速率限制器
+// H1: 热路径使用原子 CAS 替代 sync.Mutex，避免每条消息的锁竞争。
+// packed 字段布局：高 32 位 = unix 秒，低 32 位 = 当前秒内计数（uint32 解释）。
 type RateLimiter struct {
-	mu           sync.Mutex
-	count        int
-	lastReset    time.Time
-	limit        int
-	warnAt       int       // 80% 软限阈值
-	lastWarnTime time.Time // 限制警告频率：每秒最多 1 次
+	packed   int64      // [unixSecond:32][count:32] — 原子 CAS
+	limit    int32
+	warnAt   int32
+	warnMu   sync.Mutex // 仅用于防止并发警告日志
+	warnTime int64      // 上次发出 Warn 的 unix 秒（原子读写）
 }
 
 // NewRateLimiter 创建速率限制器
 func NewRateLimiter(messagesPerSec int) *RateLimiter {
+	nowSec := time.Now().Unix()
+	// 初始 packed：当前秒 + 计数 0（0 表示"尚未计数"）
+	initPacked := nowSec << 32
 	return &RateLimiter{
-		limit:     messagesPerSec,
-		warnAt:    messagesPerSec * 8 / 10, // 80%
-		lastReset: time.Now(),
+		packed: initPacked,
+		limit:  int32(messagesPerSec),
+		warnAt: int32(messagesPerSec * 8 / 10), // 80%
 	}
 }
 
@@ -62,26 +67,40 @@ func (rl *RateLimiter) Allow() bool {
 }
 
 // AllowLevel 检查速率等级（OK / Warn / Deny）
+// 使用原子 CAS 实现无锁热路径。
 func (rl *RateLimiter) AllowLevel() RateLevel {
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
+	nowSec := time.Now().Unix()
+	for {
+		old := atomic.LoadInt64(&rl.packed)
+		oldSec := old >> 32
+		oldCount := int32(old) // 低 32 位转 int32
 
-	now := time.Now()
-	if now.Sub(rl.lastReset) >= time.Second {
-		rl.count = 0
-		rl.lastReset = now
-	}
+		var newCount int32
+		if oldSec != nowSec {
+			newCount = 1
+		} else {
+			if oldCount > rl.limit {
+				return RateLevelDeny // 快速路径：无需 CAS
+			}
+			newCount = oldCount + 1
+		}
 
-	rl.count++
-
-	if rl.count > rl.limit {
-		return RateLevelDeny
+		newPacked := (nowSec << 32) | int64(uint32(newCount))
+		if atomic.CompareAndSwapInt64(&rl.packed, old, newPacked) {
+			if newCount > rl.limit {
+				return RateLevelDeny
+			}
+			if newCount > rl.warnAt {
+				// 每秒最多发一次 Warn
+				lastWarn := atomic.LoadInt64(&rl.warnTime)
+				if lastWarn < nowSec && atomic.CompareAndSwapInt64(&rl.warnTime, lastWarn, nowSec) {
+					return RateLevelWarn
+				}
+			}
+			return RateLevelOK
+		}
+		// CAS 失败（并发写入），重试
 	}
-	if rl.count > rl.warnAt && now.Sub(rl.lastWarnTime) >= time.Second {
-		rl.lastWarnTime = now
-		return RateLevelWarn
-	}
-	return RateLevelOK
 }
 
 // ===================== S18: Per-IP 连接速率限制 =====================

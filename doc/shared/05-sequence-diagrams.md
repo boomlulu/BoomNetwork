@@ -68,7 +68,7 @@
      │  ConnectionManager 检测到断线
      │  委托 QuickReconnectStrategy
      │                  │
-     │  Session.LightReset()  ← 保留发送缓冲区
+     │  Session.LightReset()  ← 保留 Seq 计数器，但丢弃已发送缓冲区
      │  Transport.Reconnect()
      │                  │
      ├─ [TCP 重建连接] ─→│
@@ -77,9 +77,12 @@
      ├─ Reconnect(playerId=1) →│
      │←─ ReconnectRsp(帧号=150)┤
      │                  │
-     │  Session.ResendUnacked()  ← 重发未确认的消息
-     ├─ [重发 Seq=45] ──→│
-     ├─ [重发 Seq=46] ──→│
+     │  Session.ClearSentBuffer()  ← 丢弃已发送缓冲区
+     │                               SessionBind/CreateRoom 等消息不能重发，
+     │                               否则服务端会创建重复 player/room
+     │                  │
+     │  ※ FrameInput / EntityState 使用无 Seq 的 Send()，不进入 sent buffer，
+     │    无需客户端重发 —— 服务器通过帧缓冲区回放补帧。
      │                  │
      │  状态恢复: Syncing
      │  继续收帧...

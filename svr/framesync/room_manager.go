@@ -238,11 +238,14 @@ func (rm *RoomManager) MatchRoom(maxPlayers int, matchKey string) *Room {
 }
 
 // AutoAssignRoom 自动分配房间（原子操作，无竞态）
+// M8: 使用 matchIndex[""] 替代全量遍历 rm.rooms。
+// AutoAssignRoom 创建的房间 MatchKey 为空字符串，matchIndex[""] 直接定向，
+// 避免遍历携带自定义 MatchKey 的房间，从 O(totalRooms) 降至 O(emptyKeyRooms)。
 func (rm *RoomManager) AutoAssignRoom(playersPerRoom int) *Room {
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
 
-	for _, r := range rm.rooms {
+	for _, r := range rm.matchIndex[""] {
 		if r.PlayerCount() < playersPerRoom {
 			return r
 		}

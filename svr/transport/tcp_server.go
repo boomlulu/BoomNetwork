@@ -12,17 +12,26 @@ import (
 
 // Conn 代表一个客户端连接
 type Conn struct {
-	ID          int
-	conn        net.Conn
-	writer      *codec.FrameWriter
-	mu          sync.Mutex
-	rateLimiter *RateLimiter
+	ID           int
+	conn         net.Conn
+	writer       *codec.FrameWriter
+	mu           sync.Mutex
+	rateLimiter  *RateLimiter
+	writeTimeout time.Duration // C1 fix: 0=无超时（向后兼容），>0=每次 Send 前设置写截止时间
 }
 
-// Send 发送一条消息给该连接
+// Send 发送一条消息给该连接。
+// C1 fix: 若 writeTimeout > 0，在 Flush 前设置写截止时间，防止慢客户端无限阻塞广播循环。
+// 发送完成（成功或失败）后清除截止时间，不影响连接上的后续读操作。
 func (c *Conn) Send(msg *codec.Message) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.writeTimeout > 0 {
+		if err := c.conn.SetWriteDeadline(time.Now().Add(c.writeTimeout)); err != nil {
+			return err
+		}
+		defer c.conn.SetWriteDeadline(time.Time{}) //nolint:errcheck
+	}
 	if err := c.writer.WriteMessage(msg); err != nil {
 		return err
 	}
@@ -182,10 +191,11 @@ func (s *TcpServer) acceptLoop() {
 		}
 		s.nextID++
 		c := &Conn{
-			ID:          s.nextID,
-			conn:        raw,
-			writer:      codec.NewFrameWriter(raw),
-			rateLimiter: NewRateLimiter(s.security.MaxMessagesPerSec),
+			ID:           s.nextID,
+			conn:         raw,
+			writer:       codec.NewFrameWriter(raw),
+			rateLimiter:  NewRateLimiter(s.security.MaxMessagesPerSec),
+			writeTimeout: s.config.WriteTimeout, // C1 fix: 从 ServerConfig 传入写超时
 		}
 		s.conns[c.ID] = c
 		s.mu.Unlock()

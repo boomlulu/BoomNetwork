@@ -8,7 +8,7 @@ using System.Text;
 
 namespace KcpProject
 {
-    class UDPSession
+    class UDPSession : IUDPSession
     {
         private Socket mSocket = null;
         private KCP mKCP = null;
@@ -43,7 +43,8 @@ namespace KcpProject
             // fast:    0, 30, 2, 1
             // fast2:   1, 20, 2, 1
             // fast3:   1, 10, 2, 1
-            mKCP.NoDelay(0, 30, 2, 1);
+            // H3 fix: fast2 模式（nodelay=1: 无延迟ACK, interval=20ms: 更快内部时钟）
+            mKCP.NoDelay(1, 20, 2, 1);
             mKCP.SetStreamMode(true);
 
             // Log
