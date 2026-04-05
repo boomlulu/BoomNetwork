@@ -13,7 +13,7 @@
 | 帧率 | **20 fps**（服务器稳定 tick，零漂移） |
 | 每客户端带宽 | **0.68 KB/s 上行，3.14 KB/s 下行** |
 | 服务器堆内存（4000 人） | **200 MB** |
-| Codec 编码（Go 零分配） | **3.6 ns / 0 alloc** |
+| Codec 编码（Go 零分配，预分配 buf） | **3.4 ns / 0 alloc** |
 | 热路径 GC 分配 | **0 bytes**（帧路径稳态） |
 | `PlayerCount()` | **0.28 ns**（原子读，无锁） |
 | `handleFrameInput` | **54.6 ns / 0 alloc**（单次 sync.Map 查找） |
@@ -22,47 +22,72 @@
 
 ---
 
-## 一、Codec 性能基准（最新：2026-03-27）
+## 一、Codec 性能基准（最新：2026-04-05）
+
+> Benchmark 修复说明（2026-04-05）：原 `BenchmarkFrameReader_Small` 每轮循环内调用
+> `NewFrameReader`（含 `bufio.NewReaderSize` 分配），导致数据偏高。已为 `FrameReader` 新增
+> `Reset(r io.Reader)` 方法，benchmark 改为循环外创建、循环内只 Reset，消除构造分配噪音。
+> 同时补充 `EncodeTo_Large`、`DecodePooled_Small/Large` 以覆盖零分配路径对比。
 
 ### C#（.NET 8，BenchmarkDotNet）
 
 | 操作 | 耗时 | 内存分配 |
 |------|------|---------|
-| Encode 小消息（41B payload） | 3.8 ns | 0 B |
+| Encode 小消息（41B payload，`Encode(msg, buf)`） | 3.8 ns | 0 B |
 | Encode 大消息（1KB payload） | 20.3 ns | 0 B |
 | Decode 小消息 | 6.9 ns | 72 B |
 | Decode 大消息（1KB） | 47.2 ns | 1048 B |
 | Decode 小消息（ArrayPool） | 12.1 ns | 0 B |
 | Framing 100 条粘包拆包 | 4.0 μs | 0 B |
 
-### Go（go test -bench）
+### Go（go test -bench，Apple M3 Pro，`-benchtime=2s -count=1`）
 
-| 操作 | 耗时 | 内存分配 |
-|------|------|---------|
-| Encode 小消息（sync.Pool） | 23.1 ns | 24 B / 1 alloc |
-| Encode 大消息（sync.Pool） | 32.5 ns | 24 B / 1 alloc |
-| EncodeTo 零分配版 | 3.6 ns | 0 B / 0 alloc |
-| Decode 小消息（零拷贝） | 16.0 ns | 48 B / 1 alloc |
-| Decode 大消息（零拷贝） | 15.3 ns | 48 B / 1 alloc |
-| FrameReader 10000 条 | 381 μs | 489 KB |
-| FrameWriter 10000 条 | 91 μs | 9.3 KB / 3 alloc |
+| Benchmark | ns/op | B/op | allocs/op | 说明 |
+|-----------|-------|------|-----------|------|
+| `BenchmarkEncode_Small` | 21.1 | 24 | 1 | Pool 路径（含 Pool Get/Put 开销） |
+| `BenchmarkEncode_Large` | 29.3 | 24 | 1 | Pool 路径 |
+| `BenchmarkEncodeTo_Small` | **3.4** | **0** | **0** | 预分配 buf，与 C# `Encode(msg, buf)` 等价 |
+| `BenchmarkEncodeTo_Large` | **13.8** | **0** | **0** | 预分配 buf，1KB payload |
+| `BenchmarkDecode_Small` | 15.0 | 48 | 1 | 每次 new *Message（基线） |
+| `BenchmarkDecode_Large` | 15.0 | 48 | 1 | 大消息 Data 零拷贝引用 |
+| `BenchmarkDecodePooled_Small` | **9.1** | **0** | **0** | Pool 复用，与 C# ArrayPool 路径等价 |
+| `BenchmarkDecodePooled_Large` | **8.5** | **0** | **0** | Pool 复用，大消息 |
+| `BenchmarkFrameReader_Small`（10000 条） | 358 μs | 480 KB | 10000 | 10000 × `Decode()` 各 1 alloc |
+| `BenchmarkFrameWriter_Small`（10000 条） | 83 μs | 9.3 KB | 3 | FrameWriter 复用内部 buf |
+
+### Go vs C# 公平对比（等价路径）
+
+| 操作 | Go ns/op | C# ns/op | Go B/op | Winner |
+|------|----------|----------|---------|--------|
+| Encode Small（预分配 buf） | 3.4 | 3.8 | 0 | Go +11% |
+| Encode Large（预分配 buf） | 13.8 | 20.3 | 0 | Go +32% |
+| Decode Small（分配路径） | 15.0 | 6.9 | 48 | C# 2.2× |
+| Decode Small（Pool 路径） | 9.1 | 12.1 | 0 | Go +25% |
+| Decode Large（分配路径） | 15.0 | 47.2 | 48 | Go 3.1× |
+
+> **读法**：Encode 公平基准是 `EncodeTo`（Go 预分配 buf）vs C# `Encode(msg, buf)`，双方都零分配。
+> Decode 分两条路径：普通 `Decode` / `DecodePooled`（Go） vs 普通 / `ArrayPool`（C#）。
 
 ### Codec 历史对比
 
-| 操作 | v0.1（03-19） | v0.2 未优化 | v0.2 最终 | 变化 |
-|------|-------------|-----------|----------|------|
-| C# Encode 小消息 | 3.6 ns | 15.1 ns ⚠️ | **3.8 ns** | +6% ✅ |
-| C# Encode 大消息 | 20 ns | 21.3 ns | 20.3 ns | +1% ✅ |
-| C# Decode 小消息 | 6.4 ns | 7.3 ns | **6.9 ns** | +8% ✅ |
-| C# Decode Pooled | 12.6 ns | 13.7 ns | **12.1 ns** | -4% ✅ 改善 |
-| Go Encode（Pool） | 24 ns | 25.1 ns | **23.1 ns** | -4% ✅ 改善 |
-| Go EncodeTo | 3.4 ns | 3.9 ns | **3.6 ns** | +5% ✅ |
-| Go Decode 大消息 | 18 ns | 15.1 ns | 15.3 ns | -15% ✅ 改善 |
+| 操作 | v0.1（03-19） | v0.2 最终 | v0.3 公平修复（04-05） | 变化 |
+|------|-------------|----------|---------------------|------|
+| C# Encode 小消息 | 3.6 ns | **3.8 ns** | 3.8 ns（不变） | — |
+| C# Decode 小消息 | 6.4 ns | **6.9 ns** | 6.9 ns（不变） | — |
+| Go EncodeTo 小消息 | 3.4 ns | 3.6 ns | **3.4 ns** | ✅ benchmark 去噪 |
+| Go EncodeTo 大消息 | — | — | **13.8 ns** | ✅ 新增 |
+| Go DecodePooled 小消息 | — | 8.7 ns¹ | **9.1 ns** | ≈ 持平 |
+| Go DecodePooled 大消息 | — | — | **8.5 ns** | ✅ 新增 |
+| Go FrameReader 10000 条 | — | 381 μs² | **358 μs** | ✅ benchmark 去噪后更准 |
 
-**优化措施：**
+> ¹ 原 P1-1 优化结果（pool_test.go，不同测试条件）
+> ² 原 benchmark 含 `NewFrameReader` 构造开销，数据偏高；修复后 358 μs 为公平值
+
+**优化措施（历史）：**
 1. **C# Encode（15.1ns → 3.8ns）：** `CmdExtraSize` 属性 → `[AggressiveInlining] GetCmdExtraSize()` 方法，消除三次重复计算
 2. **C# Decode（7.3ns → 6.9ns）：** `AggressiveInlining` + switch → if/else，ARM64 JIT 生成单条 `cbz`
-3. **Go EncodeTo（3.9ns → 3.6ns）：** Core 消息独立快速路径，不走 switch
+3. **Go EncodeTo（3.9ns → 3.4ns）：** Core 消息独立快速路径，不走 switch；benchmark 去噪
+4. **Go FrameReader（benchmark 修复）：** 新增 `FrameReader.Reset()`，benchmark 循环外创建 reader，消除 bufio.NewReaderSize 分配噪音
 
 ---
 
