@@ -118,31 +118,31 @@ namespace BoomNetwork.Samples.VampireSurvivors
         // --- Capacities ---
         public const int MaxPlayers = 4;
         public const int MaxEnemies = 512;
-        public const int MaxProjectiles = 256;
-        public const int MaxGems = 512;
-        public const int MaxLightningFlashes = 32;
+        public const int MaxProjectiles = 512;   // ×2: 512 敌人同屏，子弹更多
+        public const int MaxGems = 1024;          // ×2: 512 敌人死亡时宝石溢出保障
+        public const int MaxLightningFlashes = 64; // ×2: 4 玩家同帧 8 链不裁切
 
         // --- Arena ---
-        public static readonly FInt ArenaHalfSize = FInt.FromInt(20);
+        public static readonly FInt ArenaHalfSize = FInt.FromInt(30); // 60×60，512 敌人不挤死
 
         // --- Player ---
         public static readonly FInt PlayerSpeed = new FInt(7168);    // 7.0
         public static readonly FInt PlayerRadius = new FInt(409);    // 0.4
-        public const int PlayerMaxHp = 200;
+        public const int PlayerMaxHp = 350;           // 200→350：512 敌人压力下更有韧性
         public const int PlayerBaseXpToLevel = 8;
-        public const uint InvincibilityDuration = 30;
+        public const uint InvincibilityDuration = 45; // 30→45：给玩家更多喘息空间
 
         // --- Zombie ---
-        public static readonly FInt ZombieSpeed = new FInt(2252);    // 2.2 (2252/1024=2.19922)
+        public static readonly FInt ZombieSpeed = new FInt(2867);    // ~2.8 (2867/1024)，更有威胁感
         public static readonly FInt ZombieRadius = new FInt(409);    // 0.4
-        public const int ZombieHp = 1;
+        public const int ZombieHp = 8;            // 1→8：存活更久，积累到 512
         public const int ZombieDamage = 5;
         public const int ZombieXpValue = 1;
 
         // --- Bat ---
-        public static readonly FInt BatSpeed = new FInt(4096);       // 4.0
+        public static readonly FInt BatSpeed = new FInt(5120);       // 5.0，更快更灵活
         public static readonly FInt BatRadius = new FInt(307);       // 0.3
-        public const int BatHp = 1;
+        public const int BatHp = 6;               // 1→6
         public const int BatDamage = 3;
         public const int BatXpValue = 2;
         public const uint BatDirChangeInterval = 8;
@@ -150,46 +150,46 @@ namespace BoomNetwork.Samples.VampireSurvivors
         // --- Skeleton Mage ---
         public static readonly FInt MageSpeed = new FInt(1536);      // 1.5
         public static readonly FInt MageRadius = new FInt(409);      // 0.4
-        public const int MageHp = 3;
+        public const int MageHp = 20;             // 3→20：精英怪，需多次攻击
         public const int MageDamage = 5;
         public const int MageXpValue = 5;
-        public static readonly FInt MageAttackRange = FInt.FromInt(8);
+        public static readonly FInt MageAttackRange = FInt.FromInt(10); // 8→10：大场景匹配
         public const uint MageFireCooldown = 60;
         public static readonly FInt BoneShardSpeed = FInt.FromInt(5);
         public const uint BoneShardLifetime = 25;
         public static readonly FInt BoneShardRadius = new FInt(204); // 0.2
-        public const int BoneShardDamage = 8;
+        public const int BoneShardDamage = 20;    // 8→20：法师射击更有威胁
 
         // --- Knife ---
         public static readonly FInt KnifeSpeed = FInt.FromInt(14);
         public static readonly FInt KnifeRadius = new FInt(204);     // 0.2
-        public const int KnifeDamage = 2;
+        public const int KnifeDamage = 8;          // 2→8：匹配提升的敌人HP
         public const uint KnifeBaseCooldown = 6;
-        public const uint KnifeLifetimeFrames = 40;
+        public const uint KnifeLifetimeFrames = 60; // 40→60：大场景需要更长飞行距离
 
         // --- Orb ---
         public static readonly FInt OrbOrbitRadius = new FInt(1843); // 1.8 (1843/1024=1.79980)
         public static readonly FInt OrbAngularSpeed = FInt.FromInt(220); // deg/s
         public static readonly FInt OrbHitRadius = new FInt(512);    // 0.5
-        public const int OrbDamage = 3;
+        public const int OrbDamage = 12;           // 3→12：AoE 清怪主力
 
         // --- Lightning ---
-        public static readonly FInt LightningRange = FInt.FromInt(8);
-        public const int LightningDamage = 5;
+        public static readonly FInt LightningRange = FInt.FromInt(12); // 8→12：大场景链接范围
+        public const int LightningDamage = 15;     // 5→15：链式清怪核心输出
         public const uint LightningBaseCooldown = 20;
         public const int LightningBaseChains = 4;
 
         // --- Holy Water ---
-        public static readonly FInt HolyWaterBaseRadius = FInt.FromInt(2);
+        public static readonly FInt HolyWaterBaseRadius = FInt.FromInt(3); // 2→3：AoE 覆盖更多怪
         public const uint HolyWaterBaseCooldown = 50;
         public const uint HolyWaterLifetime = 100;
-        public const int HolyWaterDamage = 2;
+        public const int HolyWaterDamage = 8;      // 2→8：持续 AoE 更有效
         public const uint HolyWaterDamageTick = 6;
 
         // --- Boss ---
         public static readonly FInt BossSpeed = new FInt(1024);      // 1.0
         public static readonly FInt BossRadius = new FInt(1536);     // 1.5
-        public const int BossHp = 200;
+        public const int BossHp = 500;             // 200→500：大场景的 Boss 更有分量
         public const int BossDamage = 25;
         public const int BossXpValue = 50;
         public const int BossWaveInterval = 5;
@@ -200,9 +200,9 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
         // --- XP ---
         public static readonly FInt XpPickupRadius = new FInt(1536); // 1.5
-        public static readonly FInt XpMagnetRadius = FInt.FromInt(5);  // 磁吸范围
+        public static readonly FInt XpMagnetRadius = FInt.FromInt(8);  // 5→8：大场景磁吸范围
         public static readonly FInt XpMagnetBaseSpeed = FInt.FromInt(8); // 最远处吸引速度
-        public static readonly FInt XpMagnetMaxSpeed = FInt.FromInt(25); // 最近处吸引速度
+        public static readonly FInt XpMagnetMaxSpeed = FInt.FromInt(30); // 25→30：近距离收宝石更爽快
 
         // --- Shared ---
         static readonly FInt _enemyApproxRadius = new FInt(409);     // 0.4

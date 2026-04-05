@@ -40,7 +40,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
         // ==================== Camera (Feature 1) ====================
         static readonly Vector3 IsoOffset = new Vector3(0f, 18f, -14f);
         static readonly Quaternion IsoRotation = Quaternion.Euler(52f, 0f, 0f);
-        const float IsoOrthoSize = 13f;
+        const float IsoOrthoSize = 18f; // 13→18：ArenaHalfSize 30 需要更大视野
         const float CamSmoothSpeed = 8f;
         Vector3 _camCurrentPos;
 

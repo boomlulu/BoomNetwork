@@ -6,7 +6,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
 {
     public static class WeaponSystem
     {
-        static readonly FInt _autoAimRange = FInt.FromInt(15);
+        static readonly FInt _autoAimRange = FInt.FromInt(20); // 15→20：大场景自动瞄准范围
         static readonly FInt _arenaKillLimit = GameState.ArenaHalfSize + FInt.FromInt(5);
         static readonly FInt _03 = new FInt(307);  // 0.3 * 1024 = 307
         static readonly FInt _05 = new FInt(512);  // 0.5 * 1024 = 512
