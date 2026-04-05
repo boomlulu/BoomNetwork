@@ -6,10 +6,10 @@ namespace BoomNetwork.Samples.VampireSurvivors
 {
     public static class WaveSystem
     {
-        const uint WaveGapFrames = 100;
-        const uint SpawnIntervalFrames = 5;
-        const int BaseEnemyCount = 15;
-        const int EnemiesPerWave = 10;
+        const uint WaveGapFrames = 60;         // 100→60：缩短波次间隙维持压力
+        const uint SpawnIntervalFrames = 1;    // 5→1：每帧生成1个=20/s，快速填满 512 槽
+        const int BaseEnemyCount = 60;         // 15→60：首波就有分量
+        const int EnemiesPerWave = 60;         // 10→60：波次快速升级
 
         public static void Tick(GameState state)
         {
@@ -48,10 +48,10 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
             switch (e.Type)
             {
-                case EnemyType.Zombie: e.Hp = GameState.ZombieHp + state.WaveNumber / 3; break;
-                case EnemyType.Bat: e.Hp = GameState.BatHp + state.WaveNumber / 4; break;
+                case EnemyType.Zombie: e.Hp = GameState.ZombieHp + state.WaveNumber * 2; break;   // wave/3→wave×2
+                case EnemyType.Bat: e.Hp = GameState.BatHp + state.WaveNumber * 2; break;          // wave/4→wave×2
                 case EnemyType.SkeletonMage:
-                    e.Hp = GameState.MageHp + state.WaveNumber / 2;
+                    e.Hp = GameState.MageHp + state.WaveNumber * 4;                                // wave/2→wave×4
                     e.BehaviorTimer = (uint)DeterministicRng.RangeInt(ref state.RngState, 0, (int)GameState.MageFireCooldown);
                     break;
             }
@@ -77,7 +77,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             ref var e = ref state.Enemies[slot];
             e.IsAlive = true;
             e.Type = EnemyType.Boss;
-            e.Hp = GameState.BossHp + state.WaveNumber * 2;
+            e.Hp = GameState.BossHp + state.WaveNumber * 15; // wave*2→wave*15：Boss 随波次显著增强
             e.BehaviorTimer = 0;
             e.DirX = FInt.Zero; e.DirZ = FInt.Zero;
             // Spawn from top edge

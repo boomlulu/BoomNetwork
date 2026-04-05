@@ -8,8 +8,8 @@ namespace BoomNetwork.Samples.VampireSurvivors
     public static class CollisionSystem
     {
         static readonly FInt CellSize = FInt.FromInt(2);
-        const int GridCells = 20;
-        const int TotalCells = GridCells * GridCells;
+        const int GridCells = 32;              // 20→32：覆盖 ArenaHalfSize 30（64u > 60u，有余量）
+        const int TotalCells = GridCells * GridCells; // 400→1024
 
         static readonly int[] BucketHeads = new int[TotalCells];
         static readonly int[] NextInBucket = new int[GameState.MaxEnemies];
