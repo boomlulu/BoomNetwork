@@ -32,6 +32,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
         BoomNetworkManager _network;
         VSSimulation _sim;
         VSRenderer _renderer;
+        VSUIManager _ui;
 
         readonly byte[] _inputBuf = new byte[VSInput.InputSize];
         float _sendTimer;
@@ -45,15 +46,6 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
         // Mobile virtual joystick — null on PC/Editor
         VSVirtualJoystick _joystick;
-        // GUI scale factor for high-DPI mobile screens (computed once per OnGUI)
-        float _guiScale = 1f;
-
-        // Cached GUIStyles
-        bool _stylesCached;
-        GUIStyle _boxStyle, _titleStyle, _labelStyle, _btnStyle, _smallStyle, _pauseStyle;
-
-        static readonly string[] WeaponNames = { "", "Knife", "Orb", "Lightning", "Holy Water" };
-        static readonly string[] WeaponIcons = { "", "\ud83d\udde1", "\ud83d\udd2e", "\u26a1", "\ud83d\udca7" };
 
         void Start()
         {
@@ -62,14 +54,17 @@ namespace BoomNetwork.Samples.VampireSurvivors
             var c = _network.Client;
 
             c.OnFrameSyncStart += OnFrameSyncStart;
-            c.OnFrameSyncStop += OnFrameSyncStop;
-            c.OnFrame += OnFrame;
-            c.OnJoinedRoom += OnJoinedRoom;
-            c.OnPlayerJoined += OnPlayerJoined;
-            c.OnPlayerLeft += OnPlayerLeft;
-            c.OnTakeSnapshot = TakeSnapshot;
-            c.OnLoadSnapshot = LoadSnapshot;
+            c.OnFrameSyncStop  += OnFrameSyncStop;
+            c.OnFrame          += OnFrame;
+            c.OnJoinedRoom     += OnJoinedRoom;
+            c.OnPlayerJoined   += OnPlayerJoined;
+            c.OnPlayerLeft     += OnPlayerLeft;
+            c.OnTakeSnapshot   = TakeSnapshot;
+            c.OnLoadSnapshot   = LoadSnapshot;
             c.OnDesyncDetected += OnDesync;
+
+            _ui = VSUIManager.Create();
+            _ui.OnUpgradeSelected += choice => _pendingUpgradeChoice = choice;
 
             _network.QuickStart();
         }
@@ -78,7 +73,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
         {
             if (!_syncing) return;
 
-            // Upgrade key presses
+            // Upgrade key presses (keyboard fallback — buttons handled via _ui.OnUpgradeSelected)
             if (_localSlot >= 0 && _localSlot < GameState.MaxPlayers
                 && _sim.State.Players[_localSlot].PendingLevelUp)
             {
@@ -93,14 +88,12 @@ namespace BoomNetwork.Samples.VampireSurvivors
             _sendTimer -= 50f;
 
             // Unified input: virtual joystick on mobile, keyboard on PC.
-            // _joystick is null on non-mobile — VSVirtualJoystick.Create() handles the check.
             float h = _joystick != null ? _joystick.Direction.x : Input.GetAxisRaw("Horizontal");
             float v = _joystick != null ? _joystick.Direction.y : Input.GetAxisRaw("Vertical");
             byte ability = _pendingUpgradeChoice;
             _pendingUpgradeChoice = 0;
 
             // First input must always be sent to trigger auto-init in ApplyInputs.
-            // "Silent When Idle" would otherwise delay player spawn indefinitely.
             if (!_firstInputSent)
             {
                 _firstInputSent = true;
@@ -131,23 +124,13 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
             if (!_snapshotLoaded)
             {
-                // Fresh start — Init sets Dt, RngState, wave timers.
-                // NO InitPlayer here. Players are initialized through two
-                // deterministic paths only:
-                //   a) OnPlayerJoined frame event (joins during sync)
-                //   b) ApplyInputs auto-init (first input in FrameData)
                 _sim.Init(dt, seed);
             }
             else
             {
-                // Late join — snapshot has the complete game state.
-                // Only apply Dt from InitData (snapshot already has correct
-                // RngState, wave state, and all active players).
                 _sim.State.Dt = dt;
             }
 
-            // Map our PlayerId to a local slot (0-3). PidToSlot assigns
-            // slots deterministically in order of first appearance.
             _localSlot = _sim.PidToSlot(_network.PlayerId);
             _syncing = true;
 
@@ -156,14 +139,19 @@ namespace BoomNetwork.Samples.VampireSurvivors
             float frameIntervalSec = init.FrameInterval / 1000f;
             _renderer.Init(_sim.State, _localSlot, frameIntervalSec);
 
-            // Create virtual joystick on mobile (no-op on PC/Editor)
             if (_joystick == null)
                 _joystick = VSVirtualJoystick.Create();
+
+            _ui.SetVisible(true);
 
             Debug.Log($"[VS] FrameSync started. Pid={_network.PlayerId}, Slot={_localSlot}, snapshot={_snapshotLoaded}, dt={dt}, fps={init.FrameRate}");
         }
 
-        void OnFrameSyncStop() { _syncing = false; }
+        void OnFrameSyncStop()
+        {
+            _syncing = false;
+            _ui.SetVisible(false);
+        }
 
         void OnJoinedRoom(int roomId, int[] existingPlayerIds)
         {
@@ -172,15 +160,12 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
         /// <summary>
         /// Frame event — embedded in FrameData, all clients process at the same frame.
-        /// During sync: deterministic. Before sync: ExtCmd, only used for tracking.
         /// </summary>
         void OnPlayerJoined(int pid)
         {
             int slot = _sim.PidToSlot(pid);
             if (slot < 0 || slot >= GameState.MaxPlayers) return;
 
-            // During sync, frame events guarantee same-frame delivery.
-            // InitPlayer here is deterministic — all clients execute at the same frame.
             if (_syncing && !_sim.State.Players[slot].IsActive)
                 _sim.State.InitPlayer(slot);
 
@@ -195,7 +180,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             if (_syncing)
             {
                 _sim.State.Players[slot].IsActive = false;
-                _sim.State.Players[slot].IsAlive = false;
+                _sim.State.Players[slot].IsAlive  = false;
             }
         }
 
@@ -209,15 +194,14 @@ namespace BoomNetwork.Samples.VampireSurvivors
             uint hash = _sim.State.ComputeHash();
             _network.Client.SendFrameHash(frame.FrameNumber, hash);
 
-            // Level-Triggered Pause Convergence (see DESIGN PRINCIPLE 2 at top of file):
-            // Compare game's desired pause state vs network's actual pause state,
-            // and drive toward convergence every frame. No local memory needed.
-            // IsGamePaused is the authoritative source of truth for network state.
+            // Level-Triggered Pause Convergence (see DESIGN PRINCIPLE 2 at top of file)
             bool wantsPause = _sim.IsAnyPlayerUpgrading();
             if (wantsPause && !_network.Client.IsGamePaused)
                 _network.Client.RequestGamePause();
             else if (!wantsPause && _network.Client.IsGamePaused)
                 _network.Client.RequestGameResume();
+
+            _ui.UpdateHUD(_sim, _localSlot, _network.Client.RttMs);
         }
 
         void OnDesync(FrameHashMismatch mismatch)
@@ -228,11 +212,10 @@ namespace BoomNetwork.Samples.VampireSurvivors
             foreach (var (pid, h) in mismatch.PlayerHashes)
                 detail += $"\n  P{pid}: 0x{h:X8}";
             Debug.LogError($"[VS] {detail}");
+
+            _ui.ShowDesync(mismatch.FrameNumber);
         }
 
-        // Only take snapshots after sync has started — the initial
-        // RequestStart snapshot would capture uninitialized state
-        // (before Init sets the RNG seed), causing late-join desync.
         byte[] TakeSnapshot() => _syncing ? VSSnapshot.Serialize(_sim) : null;
 
         void LoadSnapshot(byte[] data)
@@ -240,208 +223,8 @@ namespace BoomNetwork.Samples.VampireSurvivors
             _snapshotLoaded = true;
             VSSnapshot.Deserialize(data, _sim);
 
-            // No InitPlayer, no state mutation. The snapshot is the
-            // complete authoritative state. Players who join after the
-            // snapshot will be initialized via frame events or auto-init.
-
             if (_renderer != null) _renderer.SyncVisuals();
             Debug.Log($"[VS] Snapshot loaded. Frame={_sim.State.FrameNumber}, Wave={_sim.State.WaveNumber}");
-        }
-
-        // ==================== OnGUI ====================
-
-        void OnGUI()
-        {
-            if (!_syncing) return;
-            CacheStyles();
-
-            // Always apply GUI.matrix to map a 1920×1080 reference space onto the actual screen.
-            // Formula: min(w/1920, h/1080) — largest uniform scale that fits the reference into
-            // the screen without distortion (same as Canvas Scaler "Scale With Screen Size").
-            // Clamped to ≥ 1.0 so the UI never shrinks below design size on smaller screens.
-            //
-            // Result:
-            //   1920×1080 (PC):   scale = 1.0  — reference space = 1920×1080
-            //   3840×2160 (4K):   scale = 2.0  — elements appear 2× larger (same physical size)
-            //   1080×1920 (portrait phone): scale = 1.0  — sw=1080, sh=1920, layout fills portrait
-            //   2560×1440 (QHD):  scale = 1.33 — slightly larger than reference
-            //
-            // Base font/button sizes are intentionally large (≥24px) so they are readable
-            // at scale 1.0 on both PC and high-DPI mobile screens.
-            float scaleX = Screen.width  / 1920f;
-            float scaleY = Screen.height / 1080f;
-            _guiScale = Mathf.Max(1f, Mathf.Min(scaleX, scaleY));
-
-            Matrix4x4 prevMatrix = GUI.matrix;
-            GUI.matrix = Matrix4x4.TRS(Vector3.zero, Quaternion.identity,
-                                        new Vector3(_guiScale, _guiScale, 1f));
-
-            DrawStatusHUD();
-            DrawDesyncOverlay();
-            DrawPauseOverlay();
-            DrawUpgradePanel();
-
-            GUI.matrix = prevMatrix;
-        }
-
-        void CacheStyles()
-        {
-            if (_stylesCached) return;
-            _stylesCached = true;
-
-            // Font sizes are set large enough to be readable at scale 1.0 on mobile
-            // (≥24px for body text, ≥80px button height in DrawUpgradePanel).
-            // GUI.matrix handles further upscaling on 4K / QHD displays.
-            _boxStyle = new GUIStyle(GUI.skin.box)
-                { normal = { background = MakeTex(1, 1, new Color(0, 0, 0, 0.75f)) } };
-            _titleStyle = new GUIStyle(GUI.skin.label)
-                { fontStyle = FontStyle.Bold, fontSize = 24, normal = { textColor = Color.white }, richText = true };
-            _labelStyle = new GUIStyle(GUI.skin.label)
-                { fontSize = 20, normal = { textColor = Color.white }, richText = true };
-            _btnStyle = new GUIStyle(GUI.skin.button)
-                { fontSize = 22, fontStyle = FontStyle.Bold, normal = { textColor = Color.white } };
-            _smallStyle = new GUIStyle(GUI.skin.label)
-                { fontSize = 16, normal = { textColor = new Color(0.6f, 0.6f, 0.6f) }, richText = true };
-            _pauseStyle = new GUIStyle(GUI.skin.label)
-                { fontSize = 28, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter,
-                  normal = { textColor = new Color(1f, 1f, 0.3f) }, richText = true };
-        }
-
-        void DrawStatusHUD()
-        {
-            var state = _sim.State;
-            int aliveEnemies = 0;
-            for (int i = 0; i < GameState.MaxEnemies; i++)
-                if (state.Enemies[i].IsAlive) aliveEnemies++;
-
-            // Layout constants (design-space pixels, before GUI.matrix scaling):
-            //   title=28px, header=24px, per-player row=26px, footer=20px
-            //   Box height: 6(top-pad) + 28 + 24 + n×26 + 6(gap) + 20 + 10(bot-pad) = 94 + n×26
-            float w = 420, y = 10, x = 10;
-            GUI.Box(new Rect(x, y, w, 94 + CountActivePlayers() * 26), "", _boxStyle);
-            y += 6;
-
-            GUI.Label(new Rect(x + 8, y, w - 10, 28),
-                $"<b>Vampire Survivors</b>  F:{state.FrameNumber}  RTT:{_network.Client.RttMs}ms", _titleStyle);
-            y += 28;
-            GUI.Label(new Rect(x + 8, y, w - 10, 24),
-                $"Wave {state.WaveNumber}  Enemies: {aliveEnemies}/{GameState.MaxEnemies}", _labelStyle);
-            y += 24;
-
-            for (int i = 0; i < GameState.MaxPlayers; i++)
-            {
-                ref var p = ref state.Players[i];
-                if (!p.IsActive) continue;
-                string me = (i == _localSlot) ? "\u2605" : " ";
-                string hp = p.IsAlive ? $"<color=#88ff88>HP {p.Hp}/{p.MaxHp}</color>" : "<color=red>DEAD</color>";
-                string upgrading = p.PendingLevelUp ? " <color=yellow>[CHOOSING...]</color>" : "";
-                string weapons = GetWeaponString(ref p);
-                GUI.Label(new Rect(x + 8, y, w - 10, 26),
-                    $"{me}P{i + 1} {hp} Lv{p.Level} K:{p.KillCount} {weapons}{upgrading}", _labelStyle);
-                y += 26;
-            }
-
-            y += 6;
-            GUI.Label(new Rect(x + 8, y, w - 10, 20),
-                $"{aliveEnemies} enemies · 0 extra bandwidth (pure FrameSync)", _smallStyle);
-        }
-
-        void DrawDesyncOverlay()
-        {
-            if (!_desyncDetected) return;
-            float w = 520, h = 80;
-            float sw = Screen.width / _guiScale, sh = Screen.height / _guiScale;
-            float px = (sw - w) / 2f;
-            float py = sh * 0.2f;
-            GUI.Box(new Rect(px, py, w, h), "", _boxStyle);
-            GUI.Label(new Rect(px, py, w, h),
-                $"<color=red><b>DESYNC DETECTED</b></color>\nFrame {_desyncFrame} \u2014 State hashes differ. Game paused.", _pauseStyle);
-        }
-
-        void DrawPauseOverlay()
-        {
-            int upgradingSlot = -1;
-            for (int i = 0; i < GameState.MaxPlayers; i++)
-            {
-                if (_sim.State.Players[i].IsActive && _sim.State.Players[i].PendingLevelUp)
-                { upgradingSlot = i; break; }
-            }
-            if (upgradingSlot < 0) return;
-            if (upgradingSlot == _localSlot) return;
-
-            float w = 420, h = 70;
-            float sw = Screen.width / _guiScale, sh = Screen.height / _guiScale;
-            float px = (sw - w) / 2f;
-            float py = sh * 0.3f;
-            GUI.Box(new Rect(px, py, w, h), "", _boxStyle);
-            GUI.Label(new Rect(px, py, w, h),
-                $"PAUSED\nP{upgradingSlot + 1} is choosing an upgrade...", _pauseStyle);
-        }
-
-        void DrawUpgradePanel()
-        {
-            if (_localSlot < 0 || _localSlot >= GameState.MaxPlayers) return;
-            ref var player = ref _sim.State.Players[_localSlot];
-            if (!player.PendingLevelUp) return;
-
-            // Layout: 12(top) + 36(title) + 14(gap) + 4×(80+10) + 14(bot) = 436 → 440
-            // Button height 80px ensures comfortable tap target on mobile.
-            const float BtnH    = 80f;
-            const float BtnGap  = 10f;
-            const float panelW  = 480f;
-            const float panelH  = 12f + 36f + 14f + 4f * (BtnH + BtnGap) + 14f;
-
-            float sw = Screen.width / _guiScale, sh = Screen.height / _guiScale;
-            float px = (sw - panelW) / 2f;
-            float py = (sh - panelH) / 2f;
-
-            GUI.Box(new Rect(px, py, panelW, panelH), "", _boxStyle);
-            GUI.Label(new Rect(px + 12, py + 12, panelW - 24, 36),
-                $"<color=yellow><b>LEVEL UP! (Lv.{player.Level})</b></color>  Choose upgrade:", _titleStyle);
-
-            float btnY = py + 12 + 36 + 14;
-            for (int i = 0; i < 4; i++)
-            {
-                WeaponType wt = (WeaponType)(i + 1);
-                int existingSlot = player.FindWeaponSlot(wt);
-                string label = existingSlot >= 0
-                    ? $"[{i + 1}] {WeaponIcons[(int)wt]} {WeaponNames[(int)wt]} Lv{player.GetWeapon(existingSlot).Level} \u2192 Lv{player.GetWeapon(existingSlot).Level + 1}"
-                    : $"[{i + 1}] {WeaponIcons[(int)wt]} {WeaponNames[(int)wt]} (NEW)";
-
-                if (GUI.Button(new Rect(px + 12, btnY, panelW - 24, BtnH), label, _btnStyle))
-                    _pendingUpgradeChoice = (byte)(1 << i);
-                btnY += BtnH + BtnGap;
-            }
-        }
-
-        string GetWeaponString(ref PlayerState p)
-        {
-            string s = "";
-            for (int i = 0; i < PlayerState.MaxWeaponSlots; i++)
-            {
-                var w = p.GetWeapon(i);
-                if (w.Type == WeaponType.None) continue;
-                if (s.Length > 0) s += " ";
-                s += $"{WeaponIcons[(int)w.Type]}{w.Level}";
-            }
-            return s;
-        }
-
-        int CountActivePlayers()
-        {
-            int c = 0;
-            for (int i = 0; i < GameState.MaxPlayers; i++)
-                if (_sim.State.Players[i].IsActive) c++;
-            return c;
-        }
-
-        static Texture2D MakeTex(int w, int h, Color col)
-        {
-            var pix = new Color[w * h];
-            for (int i = 0; i < pix.Length; i++) pix[i] = col;
-            var tex = new Texture2D(w, h);
-            tex.SetPixels(pix); tex.Apply();
-            return tex;
         }
     }
 }
