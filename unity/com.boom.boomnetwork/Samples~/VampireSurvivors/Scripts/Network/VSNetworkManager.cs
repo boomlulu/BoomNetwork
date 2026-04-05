@@ -43,6 +43,11 @@ namespace BoomNetwork.Samples.VampireSurvivors
         byte _pendingUpgradeChoice;
         bool _firstInputSent;
 
+        // Mobile virtual joystick — null on PC/Editor
+        VSVirtualJoystick _joystick;
+        // GUI scale factor for high-DPI mobile screens (computed once per OnGUI)
+        float _guiScale = 1f;
+
         // Cached GUIStyles
         bool _stylesCached;
         GUIStyle _boxStyle, _titleStyle, _labelStyle, _btnStyle, _smallStyle, _pauseStyle;
@@ -87,8 +92,10 @@ namespace BoomNetwork.Samples.VampireSurvivors
             if (_sendTimer < 50f) return;
             _sendTimer -= 50f;
 
-            float h = Input.GetAxisRaw("Horizontal");
-            float v = Input.GetAxisRaw("Vertical");
+            // Unified input: virtual joystick on mobile, keyboard on PC.
+            // _joystick is null on non-mobile — VSVirtualJoystick.Create() handles the check.
+            float h = _joystick != null ? _joystick.Direction.x : Input.GetAxisRaw("Horizontal");
+            float v = _joystick != null ? _joystick.Direction.y : Input.GetAxisRaw("Vertical");
             byte ability = _pendingUpgradeChoice;
             _pendingUpgradeChoice = 0;
 
@@ -148,6 +155,10 @@ namespace BoomNetwork.Samples.VampireSurvivors
             if (_renderer == null) _renderer = gameObject.AddComponent<VSRenderer>();
             float frameIntervalSec = init.FrameInterval / 1000f;
             _renderer.Init(_sim.State, _localSlot, frameIntervalSec);
+
+            // Create virtual joystick on mobile (no-op on PC/Editor)
+            if (_joystick == null)
+                _joystick = VSVirtualJoystick.Create();
 
             Debug.Log($"[VS] FrameSync started. Pid={_network.PlayerId}, Slot={_localSlot}, snapshot={_snapshotLoaded}, dt={dt}, fps={init.FrameRate}");
         }
@@ -243,10 +254,22 @@ namespace BoomNetwork.Samples.VampireSurvivors
         {
             if (!_syncing) return;
             CacheStyles();
+
+            // On high-DPI mobile screens (height > 1200px), scale the legacy GUI so
+            // labels, buttons, and panels remain readable without touching every pixel value.
+            // GUI.matrix affects all rendering including text.
+            _guiScale = Screen.height > 1200 ? Screen.height / 1080f : 1f;
+            Matrix4x4 prevMatrix = GUI.matrix;
+            if (_guiScale > 1f)
+                GUI.matrix = Matrix4x4.TRS(Vector3.zero, Quaternion.identity,
+                                            new Vector3(_guiScale, _guiScale, 1f));
+
             DrawStatusHUD();
             DrawDesyncOverlay();
             DrawPauseOverlay();
             DrawUpgradePanel();
+
+            if (_guiScale > 1f) GUI.matrix = prevMatrix;
         }
 
         void CacheStyles()
@@ -309,8 +332,9 @@ namespace BoomNetwork.Samples.VampireSurvivors
         {
             if (!_desyncDetected) return;
             float w = 400, h = 60;
-            float px = (Screen.width - w) / 2f;
-            float py = Screen.height * 0.2f;
+            float sw = Screen.width / _guiScale, sh = Screen.height / _guiScale;
+            float px = (sw - w) / 2f;
+            float py = sh * 0.2f;
             GUI.Box(new Rect(px, py, w, h), "", _boxStyle);
             GUI.Label(new Rect(px, py, w, h),
                 $"<color=red><b>DESYNC DETECTED</b></color>\nFrame {_desyncFrame} \u2014 State hashes differ. Game paused.", _pauseStyle);
@@ -328,8 +352,9 @@ namespace BoomNetwork.Samples.VampireSurvivors
             if (upgradingSlot == _localSlot) return;
 
             float w = 300, h = 50;
-            float px = (Screen.width - w) / 2f;
-            float py = Screen.height * 0.3f;
+            float sw = Screen.width / _guiScale, sh = Screen.height / _guiScale;
+            float px = (sw - w) / 2f;
+            float py = sh * 0.3f;
             GUI.Box(new Rect(px, py, w, h), "", _boxStyle);
             GUI.Label(new Rect(px, py, w, h),
                 $"PAUSED\nP{upgradingSlot + 1} is choosing an upgrade...", _pauseStyle);
@@ -342,8 +367,9 @@ namespace BoomNetwork.Samples.VampireSurvivors
             if (!player.PendingLevelUp) return;
 
             float panelW = 400, panelH = 220;
-            float px = (Screen.width - panelW) / 2f;
-            float py = (Screen.height - panelH) / 2f;
+            float sw = Screen.width / _guiScale, sh = Screen.height / _guiScale;
+            float px = (sw - panelW) / 2f;
+            float py = (sh - panelH) / 2f;
 
             GUI.Box(new Rect(px, py, panelW, panelH), "", _boxStyle);
             GUI.Label(new Rect(px + 10, py + 10, panelW, 30),

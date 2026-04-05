@@ -14,7 +14,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
         public static byte[] Serialize(VSSimulation sim)
         {
             var state = sim.State;
-            using var ms = new MemoryStream(65536); // 8192→65536：512 敌 + 512 弹 + 1024 宝石约 52KB
+            using var ms = new MemoryStream(8192);
             using var w = new BinaryWriter(ms);
 
             w.Write(Magic);

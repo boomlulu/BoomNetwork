@@ -1,6 +1,6 @@
 // BoomNetwork VampireSurvivors Demo — Master 3D Renderer (Juice Edition)
 //
-// Isometric camera following local player. Kill explosions.
+// Isometric camera following local player. Kill explosions + screen shake.
 // Gem magnet visual. Floating damage numbers. Growth-curve weapon scaling.
 // Boss pulsing visual + warning banner.
 
@@ -40,20 +40,30 @@ namespace BoomNetwork.Samples.VampireSurvivors
         // ==================== Camera (Feature 1) ====================
         static readonly Vector3 IsoOffset = new Vector3(0f, 18f, -14f);
         static readonly Quaternion IsoRotation = Quaternion.Euler(52f, 0f, 0f);
-        const float IsoOrthoSize = 18f; // 13→18：ArenaHalfSize 30 需要更大视野
+        const float IsoOrthoSize = 13f;
         const float CamSmoothSpeed = 8f;
         Vector3 _camCurrentPos;
 
-        // ==================== Player Interpolation (jitter fix) ====================
+        // ==================== Player Interpolation (jitter buffer) ====================
         // Store previous and current sim positions to interpolate between frames.
         // SyncVisuals runs at ~20fps (server tick), but Update runs at 60fps+.
+        // Dynamic jitter buffer: render N ms behind real time (N adapts to measured jitter).
         Vector3[] _playerPrevPos = new Vector3[GameState.MaxPlayers];
         Vector3[] _playerCurPos = new Vector3[GameState.MaxPlayers];
         Quaternion[] _playerPrevRot = new Quaternion[GameState.MaxPlayers];
         Quaternion[] _playerCurRot = new Quaternion[GameState.MaxPlayers];
         float _interpT; // 0→1 between sim frames
         float _simFrameInterval; // seconds between sim ticks (e.g. 0.05)
-        float _timeSinceLastSync;
+        float _timeSinceLastSync; // diagnostic only
+        float _prevFrameWallTime; // realtimeSinceStartup when prev frame arrived
+        float _curFrameWallTime;  // realtimeSinceStartup when cur frame arrived
+        // Dynamic jitter buffer: EMA of |arrival_interval - expected|, scaled by 2×, clamped.
+        float _measuredJitter;    // EMA of absolute deviation from expected frame interval
+        float _jitterBuffer;      // current effective buffer in seconds (smoothed)
+        const float JitterEmaAlpha   = 0.15f; // how fast jitter estimate reacts
+        const float JitterSmoothAlpha = 0.1f; // how fast buffer target is chased
+        const float JitterMinSec     = 0.010f; // 10ms floor (always some buffer)
+        const float JitterMaxFraction = 0.75f; // never exceed 75% of one frame
 
         // ==================== Jitter Diagnostic ====================
         float _lastSyncTime;
@@ -68,9 +78,13 @@ namespace BoomNetwork.Samples.VampireSurvivors
         bool[] _prevEnemyAlive = new bool[GameState.MaxEnemies];
         int[] _prevPlayerHp = new int[GameState.MaxPlayers];
 
-        // ==================== Death Pop (Feature 2) ====================
+        // ==================== Death Pop + Screen Shake (Feature 2) ====================
         struct DeathPop { public bool Active; public int Frame; public Vector3 Origin; public bool IsBoss; }
         DeathPop[] _deathPops = new DeathPop[GameState.MaxEnemies];
+        Vector3 _shakeOffset;
+        float _shakeIntensity;
+        const float ShakePerKill = 0.08f;
+        const float ShakeMax = 0.6f;
 
         // ==================== Gem Magnet (Feature 3) ====================
         Vector3[] _gemVisualPos = new Vector3[GameState.MaxGems];
@@ -124,6 +138,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 _playerPrevRot[i] = Quaternion.identity;
                 _playerCurRot[i] = Quaternion.identity;
             }
+            _jitterBuffer = JitterMinSec;
 
             // Snap camera to player or center
             if (_localSlot >= 0 && _localSlot < GameState.MaxPlayers && state.Players[_localSlot].IsActive)
@@ -193,9 +208,14 @@ namespace BoomNetwork.Samples.VampireSurvivors
         {
             if (!_initialized || _state == null) return;
 
-            // Advance interpolation timer
-            _timeSinceLastSync += Time.deltaTime;
-            _interpT = (_simFrameInterval > 0f) ? Mathf.Clamp01(_timeSinceLastSync / _simFrameInterval) : 1f;
+            // Dynamic jitter buffer: render behind real time by _jitterBuffer seconds
+            // so frame-arrival jitter is absorbed and interpT stays monotonically increasing.
+            _timeSinceLastSync += Time.deltaTime; // diagnostic only
+            float window = _curFrameWallTime - _prevFrameWallTime;
+            float renderTime = Time.realtimeSinceStartup - _jitterBuffer;
+            _interpT = (window > 0.001f)
+                ? Mathf.Clamp01((renderTime - _prevFrameWallTime) / window)
+                : 1f;
 
             // Interpolate player positions between prev and current sim positions
             for (int i = 0; i < GameState.MaxPlayers; i++)
@@ -234,7 +254,8 @@ namespace BoomNetwork.Samples.VampireSurvivors
                     + IsoOffset;
             }
 
-            _cam.transform.position = _camTarget;
+            UpdateShake();
+            _cam.transform.position = _camTarget + _shakeOffset;
             _cam.transform.rotation = IsoRotation;
         }
 
@@ -427,7 +448,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             if (_diagTimer >= 2f)
             {
                 float avgHz = _syncCount / _diagTimer;
-                Debug.Log($"[VS-Jitter] SyncPlayers avg rate: {avgHz:F1} Hz (expected ~{1f/_simFrameInterval:F0}), interval: {syncDelta*1000f:F1}ms, renderFPS: {1f/Time.deltaTime:F0}");
+                Debug.Log($"[VS-Jitter] SyncPlayers avg rate: {avgHz:F1} Hz (expected ~{1f/_simFrameInterval:F0}), interval: {syncDelta*1000f:F1}ms, renderFPS: {1f/Time.deltaTime:F0}, jitterEMA: {_measuredJitter*1000f:F1}ms, buffer: {_jitterBuffer*1000f:F1}ms");
                 _diagTimer = 0f;
                 _syncCount = 0;
             }
@@ -437,8 +458,20 @@ namespace BoomNetwork.Samples.VampireSurvivors
             if (interpAtReceipt < 0.7f || interpAtReceipt > 1.5f)
                 Debug.LogWarning($"[VS-FrameTiming] Frame arrived at interpT={interpAtReceipt:F2} (timeSince={_timeSinceLastSync*1000f:F1}ms, expected {_simFrameInterval*1000f:F0}ms)");
 
-            // Reset interpolation timer — new sim frame arrived
-            _timeSinceLastSync = 0f;
+            // Record wall-clock arrival time for jitter-buffered interpolation
+            _prevFrameWallTime = _curFrameWallTime;
+            float newArrival = Time.realtimeSinceStartup;
+            // Update dynamic jitter buffer from actual inter-frame deviation
+            if (_curFrameWallTime > 0f && _simFrameInterval > 0f)
+            {
+                float actualInterval = newArrival - _curFrameWallTime;
+                float deviation = Mathf.Abs(actualInterval - _simFrameInterval);
+                _measuredJitter = Mathf.Lerp(_measuredJitter, deviation, JitterEmaAlpha);
+                float targetBuffer = Mathf.Clamp(_measuredJitter * 2f, JitterMinSec, _simFrameInterval * JitterMaxFraction);
+                _jitterBuffer = Mathf.Lerp(_jitterBuffer, targetBuffer, JitterSmoothAlpha);
+            }
+            _curFrameWallTime = newArrival;
+            _timeSinceLastSync = 0f; // diagnostic only
 
             for (int i = 0; i < GameState.MaxPlayers; i++)
             {
@@ -495,6 +528,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
                     Vector3 lastPos = _enemyPool[i].transform.position;
                     bool isBoss = (e.Type == EnemyType.Boss);
                     _deathPops[i] = new DeathPop { Active = true, Frame = 0, Origin = lastPos, IsBoss = isBoss };
+                    _shakeIntensity = Mathf.Min(_shakeIntensity + (isBoss ? ShakeMax : ShakePerKill), ShakeMax);
                 }
 
                 if (!show) continue;
@@ -712,6 +746,18 @@ namespace BoomNetwork.Samples.VampireSurvivors
                     pop.Active = false;
                 }
             }
+        }
+
+        // ==================== Feature 2: Screen Shake ====================
+
+        void UpdateShake()
+        {
+            if (_shakeIntensity <= 0.001f) { _shakeOffset = Vector3.zero; _shakeIntensity = 0f; return; }
+            _shakeOffset = new Vector3(
+                (Random.value * 2f - 1f) * _shakeIntensity,
+                0f,
+                (Random.value * 2f - 1f) * _shakeIntensity);
+            _shakeIntensity *= 0.6f;
         }
 
         // ==================== Feature 4: Damage Numbers ====================
