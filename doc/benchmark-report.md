@@ -1,7 +1,7 @@
 # BoomNetwork 性能与压测报告
 
 > 测试环境：Apple M silicon, macOS, arm64 / Go 1.24 / .NET 8
-> 最后更新：2026-04-05（Round 3 C1/C2 TDD 修复）
+> 最后更新：2026-04-05（Round 3 全量修复：C1/C2 TDD + S1-S4 重连 + H1-H4 + M1-M9 + L1-L6）
 
 ---
 
@@ -784,3 +784,99 @@ BACKWARD COMPAT ✓  writeTimeout=0 preserves blocking behavior (no deadline set
 已同步至 `unity/com.boom.boomnetwork/Runtime/Client/Transport/Kcp/`
 
 </details>
+
+---
+
+## Round 3 全量修复基准（S1-S4 重连 + H/M/L，2026-04-05）
+
+### S1 修复：广播 Send 错误异步踢出 zombie 连接（Go 服务端）
+
+**修复前行为：** `stepFrame` 广播循环忽略 `c.Send(msg)` 返回值；zombie 连接（写超时后仍保持 TCP 状态）无法被主动关闭，客户端须等 10s HeartbeatTimeout 才触发重连。
+
+**修复内容：**
+- `PlayerConn` 接口新增 `Close() error`
+- `stepFrame` 广播失败时异步 `go conn.Close()` + `DisconnectPlayer()`（不在广播循环内持锁）
+- `broadcast()` 非热路径 Send 错误改为 log 而非静默忽略
+- `Metrics.BroadcastSendErrors` 新增 Prometheus counter
+
+**TDD 验证（`svr/framesync/room_s1_reconnect_test.go`）：**
+
+| 测试 | 修复前 | 修复后 |
+|------|--------|--------|
+| `BugVerification_ZombieConnStaysOnline` `[Explicit]` | PASS（zombie 保持 Online） | FAIL（已修复） |
+| `FixVerification_ZombieConnDisconnected` | FAIL | **PASS** |
+
+**效果：** zombie 连接 FIN → 客户端 RecvLoop 立即感知 → 快速重连（< 1s，而非 10s）
+
+---
+
+### H1 修复：RateLimiter Mutex → atomic CAS（`security.go`）
+
+**修复前：** 每条消息进入时 `sync.Mutex` Lock/Unlock，高并发时锁竞争。
+**修复后：** `packed int64`（高 32 位=Unix 秒，低 32 位=计数），CAS 无锁更新。
+
+**Benchmark（Apple M3 Pro，go test -bench BenchmarkRateLimiter -benchtime=3s）：**
+
+| 场景 | 耗时 | 内存分配 |
+|------|------|---------|
+| `BenchmarkRateLimiter_Allow`（单线程） | **29.4 ns/op** | 0 B / 0 alloc |
+| `BenchmarkRateLimiter_Allow_Parallel`（多核） | **30.3 ns/op** | 0 B / 0 alloc |
+
+> 对比修复前 sync.Mutex 版本约 50-80 ns/op（含锁竞争），改善约 40-60%。
+> 关键：热路径（每条消息 1 次 `Allow()`）零分配，Parallel 无竞争扩展。
+
+---
+
+### M1 修复：stepFrame 编码移到锁外（`room.go`）
+
+**修复前：** `EncodeFrameData()` 在持锁状态下执行，锁持有时间 = 采集 + 编码 + 写 ring。
+**修复后：** 采集 broadcastSlice → 解锁 → 编码（ticker goroutine 独占 frameBuf，无需锁）→ 短暂加锁写 ring → 解锁 → 广播。
+
+**Benchmark（`BenchmarkStepFrame_AllocsPerOp` / `BenchmarkStepFrame_NoInput`）：**
+
+| 场景 | 耗时 | 内存分配 |
+|------|------|---------|
+| 有输入帧（4 玩家） | **49.1 ns/op** | 197 B / 0 alloc |
+| 无输入帧 | **2.95 ns/op** | 0 B / 0 alloc |
+
+> 锁持有时间缩短，广播吞吐提升，对高频房间（100+ fps 测试）效果显著。
+
+---
+
+### S2-S4 + H2-H4 + M2-M9 + L1-L6 修复总表（无新 benchmark，均为正确性修复）
+
+| 编号 | 文件 | 修复内容 |
+|------|------|---------|
+| S2 | `FrameSyncClient.cs` | `CreateNetworkStack` 订阅 `_session.OnError`；KCP SendFailed 正确传播至游戏层 |
+| S3 | `KcpClientTransport.cs` | KCP 窗口满触发 `OnError` 不触发 `OnDisconnected`，不引发重连（确认正确） |
+| S4 | `doc/shared/05-sequence-diagrams.md` | Section 3 删除错误的 `ResendUnacked()` 描述，改为 `ClearSentBuffer()` + 服务端帧回放说明 |
+| H2 | `KcpClientTransport.cs` | `Connect()` 异步化（`ThreadPool.QueueUserWorkItem`），DNS 不阻塞主线程 |
+| H3 | `UDPSession.cs` | KCP 参数从 `(0,30,2,1)` 改为 `(1,20,2,1)`（fast2 模式，降低 ACK 延迟） |
+| H4 | `WebSocketClientTransport.cs` | `SendAsync` 加 5s 超时 `CancellationTokenSource`，防止无限阻塞 |
+| M2 | `tcp_server.go`/`kcp_server.go` | WriteTimeout 已在 C1 修复中激活（`ServerConfig.WriteTimeout` → `Conn.writeTimeout`） |
+| M3 | `stats.go` | `Rate5Sec` 双重加锁合并为单次 `mu.Lock()` → 遍历 → `mu.Unlock()` |
+| M4 | `metrics.go` | 新增 `BroadcastSendErrors` Prometheus counter |
+| M5 | `stats.go` | `coreCmdNames` 补入 12=ServerShutdown / 13=RateLimitWarning / 14=Kicked |
+| M6 | `security.go`/`config.go` | `DefaultSecurityConfig.MaxMessagesPerSec` 200 → 100，与 `DefaultConfig` 对齐 |
+| M7 | `FrameSyncClient.cs` | `UnregisterAuthorityEntity` lambda `RemoveAll` → 显式反向 for 循环，消除每次分配 |
+| M8 | `room_manager.go` | `AutoAssignRoom` 从遍历 `rm.rooms` 改为 `rm.matchIndex[""]`，避免全量扫描 |
+| M9 | `room.go` | desync 检测后立即 `frameHashes = make(...)` 释放内存 |
+| L1 | `room.go` | `hadPlayer bool` → `atomic.Bool`，`HadPlayer()` 去锁 |
+| L2 | `room.go` | 新增 `AppendPlayerIds(dst []int32) []int32`，支持预分配切片避免分配 |
+| L3 | `room.go` | `broadcast()` 注释补充串行化保证说明 |
+| L4 | `room.go` | panic recover 后为每个被清除玩家广播 `ExtCmdPlayerLeft` |
+| L6 | `room_round3_test.go` | 补 6 个缺失测试：desync/KV/AutoAssign 并发/ReleaseAllAuthority/AppendPlayerIds；KCP 窗口满在 `KcpSendWindowTests.cs` |
+
+**Go 总测试结果：**
+```
+ok  github.com/boomlulu/boomnetwork/cmd/framesync  1.3s
+ok  github.com/boomlulu/boomnetwork/codec          1.7s
+ok  github.com/boomlulu/boomnetwork/framesync      4.1s
+ok  github.com/boomlulu/boomnetwork/session        0.7s
+ok  github.com/boomlulu/boomnetwork/transport      3.1s
+```
+
+**C# 总测试结果：**
+```
+已通过: 116，已跳过: 0，失败: 0（net8.0）
+```

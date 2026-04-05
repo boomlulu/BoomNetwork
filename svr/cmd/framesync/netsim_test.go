@@ -28,6 +28,8 @@ func (m *mockConn) Send(msg *codec.Message) error {
 	return nil
 }
 
+func (m *mockConn) Close() error { return nil }
+
 func (m *mockConn) count() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -103,3 +103,5 @@ func (sc *simConn) Send(msg *codec.Message) error {
 
 	return sc.inner.Send(msg)
 }
+
+func (sc *simConn) Close() error { return sc.inner.Close() }

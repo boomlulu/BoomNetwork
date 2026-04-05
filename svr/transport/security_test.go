@@ -80,10 +80,8 @@ func TestRateLimiter_WindowReset(t *testing.T) {
 		t.Fatal("should be denied after exhausting limit")
 	}
 
-	// Force window reset by manipulating lastReset
-	rl.mu.Lock()
-	rl.lastReset = time.Now().Add(-2 * time.Second)
-	rl.mu.Unlock()
+	// Wait for a new second window (atomic CAS 自动按 unix 秒滚动，无需手动重置)
+	time.Sleep(1100 * time.Millisecond)
 
 	// Should reset and allow again
 	if lv := rl.AllowLevel(); lv != RateLevelOK {
@@ -187,4 +185,23 @@ func TestIPRateLimiter_Concurrent(t *testing.T) {
 	for g := 0; g < 10; g++ {
 		<-done
 	}
+}
+
+// H1 benchmark: RateLimiter atomic CAS vs. previous sync.Mutex
+func BenchmarkRateLimiter_Allow(b *testing.B) {
+	rl := NewRateLimiter(1000)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rl.Allow()
+	}
+}
+
+func BenchmarkRateLimiter_Allow_Parallel(b *testing.B) {
+	rl := NewRateLimiter(1000)
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			rl.Allow()
+		}
+	})
 }

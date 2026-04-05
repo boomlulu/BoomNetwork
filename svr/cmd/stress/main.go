@@ -313,6 +313,8 @@ func (w *writerConn) Send(msg *codec.Message) error {
 	return w.writer.Flush()
 }
 
+func (w *writerConn) Close() error { return nil }
+
 // --- 模拟客户端 ---
 
 func runClient(stopCh chan struct{}) {

@@ -122,7 +122,9 @@ namespace BoomNetwork.Client.FrameSync
         /// <summary>注销实体</summary>
         public void UnregisterAuthorityEntity(int entityId)
         {
-            _authorityEntities.RemoveAll(e => e.EntityId == entityId);
+            for (int i = _authorityEntities.Count - 1; i >= 0; i--)
+                if (_authorityEntities[i].EntityId == entityId)
+                    _authorityEntities.RemoveAt(i);
         }
 
         /// <summary>请求获取 entityId 的权威（Extended Cmd AuthorityTransfer, release=0）</summary>
@@ -485,6 +487,7 @@ namespace BoomNetwork.Client.FrameSync
             _connMgr.OnLog += HandleConnMgrLog;      // H3: named method for unsubscription
 
             _session.OnMessage += HandleMessage;
+            _session.OnError += HandleSessionError;  // S2 fix: 订阅 transport 层直接抛出的错误
 
             _roomClient = new RoomClient(_session);
         }
@@ -492,6 +495,14 @@ namespace BoomNetwork.Client.FrameSync
         // H3: named handlers used so DestroyNetworkStack can unsubscribe with -=
         private void HandleConnMgrError(NetworkError err) => OnError?.Invoke(err);
         private void HandleConnMgrLog(string msg) => Log(msg);
+
+        // S2 fix: transport 层直接抛出的错误（如 KCP 窗口满 SendFailed）绕过 ConnMgr，
+        // 需要单独订阅 _session.OnError 以确保游戏层感知。
+        // 注意：这类错误不触发重连（不是断连事件），只通知上层。
+        private void HandleSessionError(NetworkError err)
+        {
+            OnError?.Invoke(err);
+        }
 
         private void DestroyNetworkStack()
         {
@@ -505,7 +516,10 @@ namespace BoomNetwork.Client.FrameSync
                 _connMgr.OnLog -= HandleConnMgrLog;
             }
             if (_session != null)
+            {
                 _session.OnMessage -= HandleMessage;
+                _session.OnError -= HandleSessionError;  // S2 fix: 取消订阅防止 GC 泄漏
+            }
 
             _roomClient?.Dispose(); // H3: unsubscribe RoomClient.HandleMessage
             _transport = null;

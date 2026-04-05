@@ -32,10 +32,11 @@ var Metrics = struct {
 	SnapshotSizeBytes prometheus.Gauge
 
 	// 错误
-	MessageErrors prometheus.Counter
-	RoomPanics    prometheus.Counter
-	AuthFailures  prometheus.Counter
-	RateLimited   prometheus.Counter
+	MessageErrors       prometheus.Counter
+	RoomPanics          prometheus.Counter
+	AuthFailures        prometheus.Counter
+	RateLimited         prometheus.Counter
+	BroadcastSendErrors prometheus.Counter
 }{
 	ConnectionsTotal: promauto.NewCounter(prometheus.CounterOpts{
 		Name: "boom_connections_total",
@@ -102,5 +103,9 @@ var Metrics = struct {
 	RateLimited: promauto.NewCounter(prometheus.CounterOpts{
 		Name: "boom_rate_limited_total",
 		Help: "Total connections rate limited",
+	}),
+	BroadcastSendErrors: promauto.NewCounter(prometheus.CounterOpts{
+		Name: "boom_broadcast_send_errors_total",
+		Help: "Total Send() errors during frame broadcast (zombie connections)",
 	}),
 }

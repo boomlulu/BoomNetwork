@@ -26,6 +26,8 @@ namespace BoomNetwork.Client.Transport
         private string _lastHost = "";
         private int _lastPort;
         private readonly byte[] _recvBuf = new byte[65536];
+        // H2 fix: 后台 DoConnect 通过此队列将事件（Connected/Error）投递回 Tick 线程
+        private readonly ConcurrentQueue<Action> _eventQueue = new();
 
         public TransportState State { get; private set; } = TransportState.Disconnected;
 
@@ -55,20 +57,35 @@ namespace BoomNetwork.Client.Transport
             _lastPort = port;
             State = TransportState.Connecting;
 
+            // H2 fix: DNS 解析（UDPSession.Connect 内部调 Dns.GetHostEntry）可能阻塞数百 ms，
+            // 放到后台线程避免卡主线程（与 TcpClientTransport 对称）。
+            ThreadPool.QueueUserWorkItem(_ => DoConnect(host, port));
+        }
+
+        private void DoConnect(string host, int port)
+        {
             try
             {
-                _session = new UDPSession();
-                _session.AckNoDelay = true;
-                _session.WriteDelay = false;
-                _session.Connect(host, port);
+                var session = new UDPSession();
+                session.AckNoDelay = true;
+                session.WriteDelay = false;
+                session.Connect(host, port); // DNS + socket bind 在后台线程执行
 
-                State = TransportState.Connected;
-                OnConnected?.Invoke();
+                _session = session;
+
+                _eventQueue.Enqueue(() =>
+                {
+                    State = TransportState.Connected;
+                    OnConnected?.Invoke();
+                });
             }
             catch (Exception ex)
             {
-                State = TransportState.Disconnected;
-                OnError?.Invoke(new NetworkError(ErrorCode.ConnectFailed, ex.Message));
+                _eventQueue.Enqueue(() =>
+                {
+                    State = TransportState.Disconnected;
+                    OnError?.Invoke(new NetworkError(ErrorCode.ConnectFailed, ex.Message));
+                });
             }
         }
 
@@ -122,11 +139,16 @@ namespace BoomNetwork.Client.Transport
 
         /// <summary>
         /// 每帧调用。KCP 需要在 Tick 里:
-        /// 1. Update() — 驱动 KCP 内部状态机（重传、ACK 等）
-        /// 2. Recv() — 从 UDP socket poll 数据，经 KCP 解包后取出
+        /// 1. 排出事件队列（H2 fix: DoConnect 通过 eventQueue 回调主线程）
+        /// 2. Update() — 驱动 KCP 内部状态机（重传、ACK 等）
+        /// 3. Recv() — 从 UDP socket poll 数据，经 KCP 解包后取出
         /// </summary>
         public void Tick()
         {
+            // H2 fix: 先排出后台线程通过 _eventQueue 投递的事件（Connected/Error 等）
+            while (_eventQueue.TryDequeue(out var action))
+                action();
+
             if (_session == null || State != TransportState.Connected)
                 return;
 

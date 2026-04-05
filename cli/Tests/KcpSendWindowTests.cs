@@ -87,7 +87,7 @@ namespace BoomNetwork.Tests
 
             // 修复前：OnError 从未触发 → capturedError == null → PASS（bug 已证明）
             // 修复后：OnError 触发 → capturedError != null → FAIL（此测试不再适用）
-            Assert.IsNull(capturedError,
+            Assert.That(capturedError, Is.Null,
                 "BUG VERIFIED: KcpClientTransport.Send 在窗口满时静默忽略（OnError 未触发）。" +
                 "此断言失败表示 bug 已被修复。");
         }
@@ -115,9 +115,9 @@ namespace BoomNetwork.Tests
             var data = new byte[64];
             transport.Send(data, 0, data.Length);
 
-            Assert.IsNotNull(capturedError,
+            Assert.That(capturedError, Is.Not.Null,
                 "FIX VERIFICATION FAILED: Send 窗口满时应触发 OnError，但未触发。");
-            Assert.AreEqual(ErrorCode.SendFailed, capturedError!.Value.Code,
+            Assert.That(capturedError!.Value.Code, Is.EqualTo(ErrorCode.SendFailed),
                 "FIX VERIFICATION: OnError 应携带 SendFailed 错误码。");
 
             TestContext.WriteLine($"FIX VERIFIED ✓ Send 窗口满时触发 OnError: {capturedError.Value.Message}");
@@ -139,9 +139,9 @@ namespace BoomNetwork.Tests
             var data = new byte[64];
             transport.Send(data, 0, data.Length);
 
-            Assert.IsNull(capturedError,
+            Assert.That(capturedError, Is.Null,
                 "FIX VERIFICATION: 正常发送不应触发 OnError。");
-            Assert.AreEqual(1, mock.SentPackets.Count,
+            Assert.That(mock.SentPackets.Count, Is.EqualTo(1),
                 "FIX VERIFICATION: 正常发送应将数据传递到 IUDPSession.Send。");
 
             TestContext.WriteLine("FIX VERIFIED ✓ 正常发送不触发 OnError，数据成功传递。");
@@ -163,7 +163,7 @@ namespace BoomNetwork.Tests
             var data = new byte[64];
             transport.Send(data, 0, data.Length); // 应提前返回，不调用 session
 
-            Assert.IsNull(capturedError,
+            Assert.That(capturedError, Is.Null,
                 "Disconnected 状态下 Send 应直接返回，不触发任何事件。");
 
             TestContext.WriteLine("FIX VERIFIED ✓ Disconnected 状态 Send 提前返回，无副作用。");
@@ -179,7 +179,7 @@ namespace BoomNetwork.Tests
             var mock = new MockUDPSession();
             var transport = new KcpClientTransport(mock);
 
-            Assert.AreEqual(TransportState.Connected, transport.State,
+            Assert.That(transport.State, Is.EqualTo(TransportState.Connected),
                 "注入构造函数应将 State 设为 Connected。");
 
             TestContext.WriteLine("FIX VERIFIED ✓ MockUDPSession 注入后 State=Connected。");
@@ -234,7 +234,7 @@ namespace BoomNetwork.Tests
                 transport.Send(data, 0, data.Length);
             sw.Stop();
 
-            Assert.AreEqual(N, errorCount, "每次窗口满都应触发 OnError。");
+            Assert.That(errorCount, Is.EqualTo(N), "每次窗口满都应触发 OnError。");
             TestContext.WriteLine($"BENCHMARK: {N} × Send (window-full) = {sw.ElapsedMilliseconds}ms " +
                                   $"({sw.Elapsed.TotalMicroseconds / N:F2}μs/op, errorCount={errorCount})");
         }
