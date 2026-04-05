@@ -3,7 +3,9 @@ package main
 import (
 	"fmt"
 	"math"
+	"runtime"
 	"strings"
+	"time"
 )
 
 // ANSI color codes
@@ -52,6 +54,18 @@ func computeWinner(p MatchedPair) WinnerInfo {
 		return WinnerInfo{Text: fmt.Sprintf("Go +%.0f%%", pct), IsGo: true}
 	}
 	return WinnerInfo{Text: fmt.Sprintf("C# +%.0f%%", -pct), IsCS: true}
+}
+
+// PrintHeader 在表格前打印日期和机器信息
+func PrintHeader(benchTime string, count int) {
+	date := time.Now().Format("2006-01-02 15:04")
+	fmt.Printf("\n%sBoomNetwork Codec Benchmark%s  %s%s | %s/%s | Go %s | benchtime=%s count=%d%s\n\n",
+		colorBold, colorReset,
+		colorDim, date,
+		runtime.GOOS, runtime.GOARCH, runtime.Version(),
+		benchTime, count,
+		colorReset,
+	)
 }
 
 // PrintTerminalTable 输出彩色终端表格

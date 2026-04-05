@@ -1,17 +1,17 @@
 // benchcmp — BoomNetwork Go vs C# benchmark 对比工具
 //
-// 用法:
+// 最简用法（从仓库根目录）：
 //
-//	go run . --go-only              # 只跑 Go benchmark
-//	go run . --cs-only              # 只跑 C# benchmark
-//	go run .                        # 双端对比
-//	go run . --md                   # 输出 Markdown 表格（可追加到 benchmark-report.md）
-//	go run . --compare-last         # 与上次运行对比（go-only）
-//	go run . --go-only --bench-time 5s --count 5
+//	./bench.sh          # 一键跑完，输出彩色表格
+//	./bench.sh diff     # 与上次对比
+//	./bench.sh md       # 输出 Markdown
 //
-// 从仓库根目录执行:
+// 直接调用（已编译）：
 //
-//	go run tools/benchcmp/main.go --go-only
+//	tools/benchcmp/benchcmp --go-only
+//	tools/benchcmp/benchcmp --go-only --md
+//	tools/benchcmp/benchcmp --go-only --compare-last
+//	tools/benchcmp/benchcmp --bench-time 5s --count 5
 package main
 
 import (
@@ -19,7 +19,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"time"
 )
 
 func main() {
@@ -33,7 +35,7 @@ func main() {
 		goDir       = flag.String("go-dir", "", "Path to svr/ directory (auto-detected if empty)")
 		csDir       = flag.String("cs-dir", "", "Path to cli/ directory (auto-detected if empty)")
 		histFile    = flag.String("history", "", "Path to history.json (default: tools/benchcmp/history.json)")
-		noSave      = flag.Bool("no-save", false, "Do not save results to history")
+		noSave      = flag.Bool("no-save", false, "Do not save results to history.json")
 	)
 	flag.Parse()
 
@@ -61,7 +63,7 @@ func main() {
 		histPath = filepath.Join(repoRoot, "tools", "benchcmp", "history.json")
 	}
 
-	// Load history for --compare-last
+	// Load history
 	history, err := LoadHistory(histPath)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, colorYellow+"Warning: could not load history: "+err.Error()+colorReset)
@@ -72,50 +74,59 @@ func main() {
 	var goResults, csResults []BenchResult
 
 	if !*csOnly {
-		fmt.Fprintln(os.Stderr, colorBold+"\n[ Running Go benchmarks... ]"+colorReset)
+		estSecs := estimateDuration(*benchTime, *count, len(cfg.GoPackages))
+		fmt.Fprintf(os.Stderr, "\n🔍 Running Go benchmarks... (this takes ~%ds)\n", estSecs)
 		goRaw, err := RunGoBenchmarks(cfg)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, colorRed+"Go benchmark failed: "+err.Error()+colorReset)
-			if !*goOnly {
-				fmt.Fprintln(os.Stderr, colorYellow+"Continuing without Go results."+colorReset)
+			fmt.Fprintln(os.Stderr, colorRed+"   Go benchmark failed: "+err.Error()+colorReset)
+			if *goOnly {
+				os.Exit(1)
 			}
+			fmt.Fprintln(os.Stderr, colorYellow+"   Continuing without Go results."+colorReset)
 		} else {
 			goResults, err = ParseGoOutput(strings.NewReader(goRaw))
 			if err != nil {
-				fmt.Fprintln(os.Stderr, colorRed+"Failed to parse Go output: "+err.Error()+colorReset)
+				fmt.Fprintln(os.Stderr, colorRed+"   Failed to parse Go output: "+err.Error()+colorReset)
 			}
-			// average multiple counts for the same benchmark name
 			goResults = averageResults(goResults)
-			fmt.Fprintf(os.Stderr, "  Parsed %d Go benchmarks\n", len(goResults))
+			fmt.Fprintf(os.Stderr, "   Parsed %d Go benchmarks\n", len(goResults))
 		}
 	}
 
 	if !*goOnly {
-		fmt.Fprintln(os.Stderr, colorBold+"\n[ Running C# benchmarks... ]"+colorReset)
+		fmt.Fprintln(os.Stderr, "\n🔍 Running C# benchmarks...")
 		csRaw, err := RunCSBenchmarks(cfg)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, colorYellow+"C# benchmark not available ("+err.Error()+")"+colorReset)
-			fmt.Fprintln(os.Stderr, colorDim+"  Hint: create cli/Benchmark/ with BenchmarkDotNet for C# comparisons."+colorReset)
+			fmt.Fprintln(os.Stderr, colorYellow+"   C# benchmark not available: "+err.Error()+colorReset)
+			fmt.Fprintln(os.Stderr, colorDim+"   Hint: create cli/Benchmark/ with BenchmarkDotNet for C# comparisons."+colorReset)
 		} else {
 			csResults, err = ParseCSOutput(strings.NewReader(csRaw))
 			if err != nil {
-				fmt.Fprintln(os.Stderr, colorRed+"Failed to parse C# output: "+err.Error()+colorReset)
+				fmt.Fprintln(os.Stderr, colorRed+"   Failed to parse C# output: "+err.Error()+colorReset)
 			}
-			fmt.Fprintf(os.Stderr, "  Parsed %d C# benchmarks\n", len(csResults))
+			fmt.Fprintf(os.Stderr, "   Parsed %d C# benchmarks\n", len(csResults))
 		}
 	}
 
 	// --- Match and format ---
 	pairs := MatchBenchmarks(goResults, csResults)
 
-	fmt.Fprintln(os.Stderr, "")
 	if *mdOut {
+		// Markdown: print header as HTML comment, then table
+		fmt.Printf("<!-- %s | %s/%s | Go %s | benchtime=%s count=%d -->\n",
+			time.Now().Format("2006-01-02 15:04"),
+			runtime.GOOS, runtime.GOARCH,
+			goVersion(),
+			*benchTime, *count,
+		)
 		PrintMarkdownTable(pairs)
 	} else {
+		PrintHeader(*benchTime, *count)
 		PrintTerminalTable(pairs)
 	}
 
-	if *compareLast {
+	// Auto-show diff if history exists (terminal only, skipped for --md)
+	if !*mdOut && (*compareLast || len(lastPairs) > 0) {
 		PrintCompareLast(pairs, lastPairs)
 	}
 
@@ -123,11 +134,36 @@ func main() {
 	if !*noSave && len(pairs) > 0 {
 		history, err = SaveHistory(histPath, history, pairs)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, colorYellow+"Warning: could not save history: "+err.Error()+colorReset)
+			fmt.Fprintln(os.Stderr, colorYellow+"\nWarning: could not save history: "+err.Error()+colorReset)
 		} else {
-			fmt.Fprintf(os.Stderr, colorDim+"\nSaved to %s (total %d runs)\n"+colorReset, histPath, len(history))
+			fmt.Fprintf(os.Stderr, "\n✅ Done! Results saved to %s (run #%d)\n", histPath, len(history))
+		}
+	} else if len(pairs) > 0 {
+		fmt.Fprintln(os.Stderr, "\n✅ Done!")
+	}
+}
+
+// estimateDuration 估算 benchmark 运行时长（秒），用于打印友好提示
+func estimateDuration(benchTime string, count, pkgCount int) int {
+	// 粗估：每个包每次 count 约 benchTime × 测试数（保守按 10 个测试算）
+	secs := 2 // default
+	if len(benchTime) >= 2 {
+		val := 0
+		fmt.Sscanf(benchTime, "%d", &val)
+		if val > 0 {
+			secs = val
 		}
 	}
+	return secs * count * pkgCount
+}
+
+// goVersion 返回 Go 版本字符串，例如 "go1.24"
+func goVersion() string {
+	v := runtime.Version()
+	if len(v) > 7 {
+		return v[:7]
+	}
+	return v
 }
 
 // findRepoRoot 向上查找包含 svr/go.mod 的目录
@@ -147,7 +183,6 @@ func findRepoRoot() (string, error) {
 		}
 		dir = parent
 	}
-	// Fallback: use cwd, let runner fail with a clear error
 	return cwd, nil
 }
 
@@ -161,7 +196,7 @@ func averageResults(results []BenchResult) []BenchResult {
 		sample    BenchResult
 	}
 	seen := make(map[string]*accum)
-	order := []string{}
+	var order []string
 
 	for _, r := range results {
 		if a, ok := seen[r.Name]; ok {
