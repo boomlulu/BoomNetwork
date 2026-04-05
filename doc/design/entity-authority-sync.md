@@ -1,13 +1,14 @@
 # 实体权威同步（Entity Authority Sync）设计文档
 
-> **状态**：Phase 1 已实施（2026-03-25）
+> **状态**：Phase 1 + Phase 2 已实施
 >
-> - L1 框架核心：ExtCmd 40/41 + IEntitySync + EntityStateCodec（BoomNetwork `e45555e`）
+> - L1 框架核心：ExtCmd 40/41/42 + IEntitySync + EntityStateCodec + AuthorityTransferCodec（BoomNetwork `e45555e`）
 > - L2 纠偏中间件：IDeadReckoning + IInertiaModel + ICorrectionStrategy（BoomNetworkUnity）
 > - L3 NetworkTransformSync：2D 具体实现（BoomNetworkUnity）
-> - L4 Demo02：EntitySyncDemoManager（BoomNetworkUnity）
+> - L4 Demo02/Demo03：EntitySyncDemoManager / EntitySyncMultiClientManager（BoomNetworkUnity）
+> - AuthorityTransfer Sample：ExtCmd 42 完整权威转移流程演示（Samples~/AuthorityTransfer）
 > - 网络模拟：netsim 延迟/抖动/丢包 + GM 面板
-> - 待做：Phase 2 权威转移 / Phase 3 生产加固
+> - 待做：EntityView\<T\> 组件反哺 UPM 包（L2+L3 接口正式入包）/ Phase 3 生产加固（StateHash 反同步 + GM 面板统计）
 >
 > **核心思想**：帧驱动状态同步，用增量带宽换确定性。不依赖确定性数学库。
 >
@@ -404,13 +405,13 @@ Phase 1（1 人 1 实体）典型大小：`2 + 8 + 1 + 4 + 2 + 24 = 41 bytes/fra
   Unity 包: Runtime/EntitySync/EntityView<T> 组件（L2+L3 反哺 UPM 包）
 ```
 
-### Phase 2：权威转移 + 多实体
+### Phase 2：权威转移 + 多实体 ✅ 已实现
 
 ```
-ExtCmd 40/41/42 协议（SendEntityState / PushEntityState / AuthorityTransfer）
-服务器先到先得裁决
-EntitySyncManager.TransferAuthority()
-Demo: 可拾取物品
+ExtCmd 42 AuthorityTransfer（subCmd=request C→S / subCmd=result S→C）
+服务器先到先得裁决（同帧多请求 → 按到达顺序，后到丢弃）
+AuthorityTransferCodec: EncodeRequest/DecodeRequest/EncodeResult/DecodeResult
+Sample: Samples~/AuthorityTransfer — N 人 + 1 球，Space 键请求权威，Release 归还
 ```
 
 ### Phase 3：生产加固

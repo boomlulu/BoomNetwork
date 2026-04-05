@@ -165,3 +165,58 @@ client.Tick(16ms)
         ├─ StartFrameSync → 状态切换
         └─ HeartbeatRsp → 重置心跳计时器
 ```
+
+## 7. 帧内嵌事件处理顺序
+
+```
+  Client A            Server            Client B
+     │                  │                  │
+     │   帧 100 tick     │                  │
+     │                  │← FrameInput(B) ──┤  玩家 B 首次发包
+     │                  │                  │
+     │                  │  stepFrame():    │
+     │                  │  pendingEvents = [PlayerJoined(B)]
+     │                  │  FrameData = {   │
+     │                  │    inputs: [...] │
+     │                  │    events: [PlayerJoined(B)]
+     │                  │  }               │
+     │←── PushFrames(帧100) ─────────────→│
+     │                  │                  │
+     │  HandlePushFrames():               │  HandlePushFrames():
+     │  1. DispatchFrameEvent(            │  1. DispatchFrameEvent(
+     │       PlayerJoined(B))             │       PlayerJoined(B))
+     │     → OnPlayerJoined(B)            │     → OnPlayerJoined(B)
+     │     → InitPlayer(B, slot=1)        │     → InitPlayer(B, slot=1) ← 同帧同 slot ✓
+     │  2. OnFrame(帧100)                 │  2. OnFrame(帧100)
+     │     → Tick → ApplyInputs(B)        │     → Tick → ApplyInputs(B)
+     │                  │                  │
+
+注意：帧事件（步骤 1）必须在 OnFrame（步骤 2）之前处理，
+      确保 InitPlayer 在 Tick 前执行，slot 对所有客户端一致。
+```
+
+## 8. 房主选举（HostChanged）
+
+```
+  Client A            Server            Client B
+  (Host)               │             (Normal)
+     │                  │                  │
+     │  ══ 网络断开 ══   │                  │
+     │                  │                  │
+     │  (心跳超时 10s)   │                  │
+     │                  │  PlayerOffline(A) 进入 pendingEvents
+     │                  │                  │
+     │                  │  选举逻辑:       │
+     │                  │  在线玩家中 playerId 最小者 = B
+     │                  │  hostPlayerId = B
+     │                  │  HostChanged(B) 进入 pendingEvents
+     │                  │                  │
+     │                  │  stepFrame():    │
+     │                  │  events = [PlayerOffline(A), HostChanged(B)]
+     │                  ├── PushFrames ───→│
+     │                  │                  │
+     │                  │               HandlePushFrames():
+     │                  │               1. OnPlayerOffline(A)
+     │                  │               2. OnHostChanged(B)  → isHost = true
+     │                  │               3. OnFrame
+```

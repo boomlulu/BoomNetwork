@@ -18,14 +18,18 @@
 │
 ✅ v0.2 已完成
 ├── Unity UPM 包 (com.boom.boomnetwork + com.boom.boomnetwork.gm)
-├── 实体权威同步 (IEntitySync + Dead Reckoning + 惯性模型)
+├── 实体权威同步 Phase 1+2 (IEntitySync + Dead Reckoning + 惯性模型 + AuthorityTransfer)
 ├── 多房间管理 (RoomManager + CreateRoom/JoinRoom/LeaveRoom)
 ├── 网络模拟器 netsim (延迟/抖动/丢包，Dashboard 滑块控制)
-├── GM 工具 (Admin HTTP 10 端点 + WebSocket + ServerWindow 4 Tab)
+├── GM 工具 (Admin HTTP 10 端点 + WebSocket + ServerWindow 5 Tab：Monitor/Messages/Rooms/Control/Deploy)
+├── GM inspect_room WS RPC + GET /rooms/inspect/{id} (房间深度检视)
 ├── 连接鉴权 (SessionBind token + env override + WS origin whitelist)
 ├── 运维 (systemd + Docker + health check + sd_notify)
-├── 安全加固 (auth disconnect + per-IP rate limit)
-└── Person 瘦身 + FrameSyncClient 长生命周期重构
+├── 安全加固 (auth disconnect + per-IP rate limit + C3 协议边界检查 + H/M/L 全量修复)
+├── Person 瘦身 + FrameSyncClient 长生命周期重构
+├── 帧内嵌事件 + 房主管理 (FrameEvent 5 种类型 + Host 选举 + 双路径分发)
+├── VampireSurvivors Demo (纯帧同步弹幕生存，512 怪零额外带宽)
+└── TowerDefense Demo (多人帧同步塔防，双层经济 + BFS寻路 + 7种塔)
 ```
 
 ---
@@ -86,10 +90,11 @@
 - LZ4 压缩：对大 payload (快照) 压缩，用 Flags bit 标记
 - 预计快照带宽降 50-70%
 
-### 2.3 实体权威同步 Phase 2 — 权威转移
+### 2.3 实体权威同步 Phase 3 — 生产加固
 **优先级: P1**
 
-Phase 1（自权威同步）已完成。Phase 2：运行时权威转移、仲裁者角色。
+Phase 1（自权威同步）已完成。Phase 2（权威转移，ExtCmd 42）已实现并有 AuthorityTransfer Sample。
+Phase 3：待做 — EntityView\<T\> 组件反哺 UPM 包 + StateHash 反同步 + GM 面板纠偏统计 + 服务器反作弊。
 
 ### 2.4 观战
 **优先级: P3**
@@ -138,7 +143,7 @@ Phase 1（自权威同步）已完成。Phase 2：运行时权威转移、仲裁
 | 版本 | 目标 | 关键交付 |
 |------|------|---------|
 | **v0.1** ✅ | 核心可用 | TCP/KCP 双端通信 + 帧同步 + 心跳重连 |
-| **v0.2** ✅ | Unity + 生产工具 | UPM 包 + 实体同步 + 多房间 + GM 工具 + netsim + 鉴权 |
+| **v0.2** ✅ | Unity + 生产工具 | UPM 包 + 实体同步（Phase 1+2）+ 多房间 + GM 工具 + 帧内嵌事件 + 2 个综合 Demo |
 | **v0.3** | 开源就绪 | 文档重组 + 服务端重连完善 + FrameData 紧凑化 |
-| **v0.4** | 帧同步增强 | 权威转移 + 帧压缩 + 帧录制回放 |
+| **v0.4** | 帧同步增强 | EntityView\<T\> 入 UPM 包 + 帧压缩 + 帧录制回放 |
 | **v1.0** | 正式版 | 加密 + WebSocket Transport + 全文档 |

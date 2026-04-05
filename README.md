@@ -103,6 +103,7 @@ client.SendInput(myInputBytes);
 | AuthorityTransfer | 权威转移协议 | 进阶 |
 | **MinecraftDemo** | 混合同步：帧同步(方块) + 实体同步(移动) + 快照(增量) | 综合 |
 | **VampireSurvivors** | 纯帧同步弹幕生存 — 512 怪零额外带宽 | 综合 |
+| **TowerDefense** | 多人帧同步塔防 — 双层经济 + BFS流场 + 7种塔 + 5种怪 | 综合 |
 
 ### VampireSurvivors Demo
 
@@ -113,6 +114,17 @@ client.SendInput(myInputBytes);
 - 4 种武器 + Boss 波次 + 升级系统
 - 击杀爆炸 + 屏幕震动 + 宝石磁铁 + 浮动伤害数字
 - 不同步检测：每帧 Hash 比对 + desync 自动暂停
+
+### TowerDefense Demo
+
+展示多人帧同步下复杂共享状态的处理：
+
+- 双层经济：PlayerGold（个人 75% 击杀奖励）+ SharedGold（25% 流入），团队塔从共享金库建造
+- BFS 流场寻路：20×20 格，`PathSystem` 每帧增量重算（添加/移除塔时触发）
+- 7 种防御塔（Arrow/Cannon/Magic/Ice/Sniper/Fortress/Storm）× 3 级升级
+- 5 种敌人（Basic/Fast/Tank/Armored/Elite），10 波线性难度曲线，Elite 免疫减速
+- Snapshot 完整：PlayerGold[]/SharedGold/Tower.OwnerId + 敌人 slot index
+- 不同步检测：每帧 FNV-1a Hash 覆盖全部确定性字段
 
 ### MinecraftDemo
 

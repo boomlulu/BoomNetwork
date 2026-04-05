@@ -12,6 +12,8 @@
 //   W9:  All types mixed     (resource management)
 //   W10: Boss wave (all types, large numbers)
 
+using BoomNetwork.Samples.Shared;
+
 namespace BoomNetwork.Samples.TowerDefense
 {
     public static class WaveSystem

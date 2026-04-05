@@ -1,6 +1,7 @@
 // BoomNetwork VampireSurvivors Demo — Spatial Hash Collision (Fixed-Point)
 
 using System;
+using BoomNetwork.Samples.Shared;
 
 namespace BoomNetwork.Samples.VampireSurvivors
 {

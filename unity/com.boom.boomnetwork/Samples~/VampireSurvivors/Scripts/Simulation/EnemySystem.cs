@@ -1,5 +1,7 @@
 // BoomNetwork VampireSurvivors Demo — Enemy AI (Fixed-Point)
 
+using BoomNetwork.Samples.Shared;
+
 namespace BoomNetwork.Samples.VampireSurvivors
 {
     public static class EnemySystem
