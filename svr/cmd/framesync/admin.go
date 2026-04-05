@@ -21,6 +21,12 @@ import (
 
 var serverStartTime = time.Now()
 
+// gmHub 全局 GM WebSocket Hub，供 main.go 消息处理器推送 desync 事件
+var gmHub *GMHub
+
+// totalConnEver 累计连接玩家数（atomic，SessionBind 时递增）
+var totalConnEver int64
+
 // startAdminServer 启动 Admin HTTP 服务
 //
 // 路由：
@@ -54,10 +60,15 @@ func startAdminServer(ctx context.Context, addr, token string) {
 	mux.HandleFunc("/config/reload", withAuth(token, handleConfigReload))
 	mux.HandleFunc("/logs", withAuth(token, handleLogs))
 
+	// 新增端点
+	mux.HandleFunc("/rooms/stop-all", withAuth(token, handleStopAll))
+	mux.HandleFunc("/broadcast", withAuth(token, handleBroadcast))
+	mux.HandleFunc("/rooms/replay/", withAuth(token, handleRoomReplay))
+
 	// WebSocket GM 长连接
-	hub := newGMHub(ctx)
-	go hub.Run()
-	mux.HandleFunc("/ws", hub.HandleUpgrade(token))
+	gmHub = newGMHub(ctx)
+	go gmHub.Run()
+	mux.HandleFunc("/ws", gmHub.HandleUpgrade(token))
 
 	handler := gmTrafficMiddleware(mux)
 
@@ -69,7 +80,7 @@ func startAdminServer(ctx context.Context, addr, token string) {
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		srv.Shutdown(shutCtx)
-		hub.Stop()
+		gmHub.Stop()
 	}()
 
 	slog.Info("admin listening", "addr", addr)
@@ -145,6 +156,12 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 
 // ===================== GET /stats =====================
 
+// matchKeyStats 按 matchKey 汇总的房间/玩家数
+type matchKeyStats struct {
+	Rooms   int `json:"rooms"`
+	Players int `json:"players"`
+}
+
 func handleStats(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -153,13 +170,76 @@ func handleStats(w http.ResponseWriter, r *http.Request) {
 	g := GameStats.Snapshot()
 	m := GmStats.Snapshot()
 
+	// 按 matchKey 分组统计
+	byMK := make(map[string]matchKeyStats)
+	infos := roomMgr.GetAllRoomInfos()
+	for _, info := range infos {
+		room := roomMgr.GetRoom(info.RoomId)
+		if room == nil {
+			continue
+		}
+		mk := room.MatchKey
+		if mk == "" {
+			mk = "(default)"
+		}
+		s := byMK[mk]
+		s.Rooms++
+		s.Players += room.PlayerCount()
+		byMK[mk] = s
+	}
+	byMKJSON, _ := json.Marshal(byMK)
+
+	var mem runtime.MemStats
+	runtime.ReadMemStats(&mem)
+
+	type statsResp struct {
+		// 流量
+		GameRxTotal int64 `json:"game_rx_total"`
+		GameTxTotal int64 `json:"game_tx_total"`
+		GameRx1Min  int64 `json:"game_rx_1min"`
+		GameTx1Min  int64 `json:"game_tx_1min"`
+		GameRx5Sec  int64 `json:"game_rx_5sec"`
+		GameTx5Sec  int64 `json:"game_tx_5sec"`
+		GmRxTotal   int64 `json:"gm_rx_total"`
+		GmTxTotal   int64 `json:"gm_tx_total"`
+		GmRx1Min    int64 `json:"gm_rx_1min"`
+		GmTx1Min    int64 `json:"gm_tx_1min"`
+		GmRx5Sec    int64 `json:"gm_rx_5sec"`
+		GmTx5Sec    int64 `json:"gm_tx_5sec"`
+		// 连接
+		ActiveConnections int   `json:"active_connections"` // 当前在线玩家数
+		TotalConnections  int64 `json:"total_connections"`  // 累计连接总数（服务器启动以来）
+		// 运行时
+		Goroutines int     `json:"goroutines"`
+		HeapMB     float64 `json:"heap_mb"`
+		Uptime     string  `json:"uptime"`
+		// 房间
+		TotalRooms int `json:"total_rooms"`
+	}
+
+	resp := statsResp{
+		GameRxTotal: g.RxTotal, GameTxTotal: g.TxTotal,
+		GameRx1Min: g.Rx1Min, GameTx1Min: g.Tx1Min,
+		GameRx5Sec: g.Rx5Sec, GameTx5Sec: g.Tx5Sec,
+		GmRxTotal: m.RxTotal, GmTxTotal: m.TxTotal,
+		GmRx1Min: m.Rx1Min, GmTx1Min: m.Tx1Min,
+		GmRx5Sec: m.Rx5Sec, GmTx5Sec: m.Tx5Sec,
+		ActiveConnections: countOnlinePlayers(),
+		TotalConnections:  atomic.LoadInt64(&totalConnEver),
+		Goroutines:        runtime.NumGoroutine(),
+		HeapMB:            float64(mem.HeapAlloc) / (1024 * 1024),
+		Uptime:            time.Since(serverStartTime).Truncate(time.Second).String(),
+		TotalRooms:        roomMgr.RoomCount(),
+	}
+
+	respJSON, _ := json.Marshal(resp)
+
+	// 拼入 by_match_key（避免嵌套 struct 带来的额外 alloc）
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w,
-		`{"game_rx_total":%d,"game_tx_total":%d,"game_rx_1min":%d,"game_tx_1min":%d,"game_rx_5sec":%d,"game_tx_5sec":%d,`+
-			`"gm_rx_total":%d,"gm_tx_total":%d,"gm_rx_1min":%d,"gm_tx_1min":%d,"gm_rx_5sec":%d,"gm_tx_5sec":%d}`,
-		g.RxTotal, g.TxTotal, g.Rx1Min, g.Tx1Min, g.Rx5Sec, g.Tx5Sec,
-		m.RxTotal, m.TxTotal, m.Rx1Min, m.Tx1Min, m.Rx5Sec, m.Tx5Sec,
-	)
+	w.Write(respJSON[:len(respJSON)-1]) // 去掉结尾 }
+	w.Write([]byte(`,"by_match_key":`))
+	w.Write(byMKJSON)
+	w.Write([]byte("}"))
 }
 
 // ===================== GET /messages =====================
@@ -657,6 +737,112 @@ func handleLogs(w http.ResponseWriter, r *http.Request) {
 	entries := LogBuf.Recent(n, level)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(entries)
+}
+
+// ===================== POST /rooms/stop-all =====================
+
+func handleStopAll(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	infos := roomMgr.GetAllRoomInfos()
+	stopped := 0
+	for _, info := range infos {
+		room := roomMgr.GetRoom(info.RoomId)
+		if room == nil {
+			continue
+		}
+		room.Stop()
+		room.ForEachPlayer(func(p framesync.PlayerInfo) {
+			playerRoomMap.Delete(p.ID)
+		})
+		roomMgr.RemoveRoom(info.RoomId)
+		stopped++
+	}
+
+	slog.Info("admin stop-all rooms", "stopped", stopped)
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{"ok":true,"stopped":%d}`, stopped)
+}
+
+// ===================== POST /broadcast =====================
+
+func handleBroadcast(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Message string `json:"message"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Message == "" {
+		jsonError(w, http.StatusBadRequest, "missing or invalid message")
+		return
+	}
+
+	// 将公告写入 KV 存储 key=0（广播通道），玩家通过 OnDataChanged 接收
+	msgBytes := []byte(req.Message)
+	sent := 0
+	infos := roomMgr.GetAllRoomInfos()
+	for _, info := range infos {
+		room := roomMgr.GetRoom(info.RoomId)
+		if room == nil {
+			continue
+		}
+		room.SetData(0, 0, msgBytes) // playerId=0 表示服务器, key=0 = broadcast channel
+		sent += room.PlayerCount()
+	}
+
+	slog.Info("admin broadcast", "message", req.Message, "reached_players", sent)
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{"ok":true,"sent":%d}`, sent)
+}
+
+// ===================== GET /rooms/replay/{id} =====================
+
+func handleRoomReplay(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	idStr := strings.TrimPrefix(r.URL.Path, "/rooms/replay/")
+	id, err := strconv.Atoi(idStr)
+	if err != nil || id <= 0 {
+		jsonError(w, http.StatusBadRequest, "invalid room id")
+		return
+	}
+
+	room := roomMgr.GetRoom(int32(id))
+	if room == nil {
+		jsonError(w, http.StatusNotFound, fmt.Sprintf("room %d not found", id))
+		return
+	}
+
+	afterFrame := uint32(0)
+	if v := r.URL.Query().Get("after_frame"); v != "" {
+		if n, err2 := strconv.ParseUint(v, 10, 32); err2 == nil {
+			afterFrame = uint32(n)
+		}
+	}
+
+	frames := room.GetFramesSince(afterFrame)
+
+	type replayFrame struct {
+		FrameNumber uint32 `json:"frame_number"`
+		Data        []byte `json:"data"` // JSON base64-encodes []byte automatically
+	}
+	result := make([]replayFrame, 0, len(frames))
+	for _, f := range frames {
+		result = append(result, replayFrame{FrameNumber: f.FrameNumber, Data: f.EncodedData})
+	}
+
+	slog.Info("admin replay export", "room_id", id, "frames", len(result))
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
 }
 
 func jsonError(w http.ResponseWriter, code int, msg string) {

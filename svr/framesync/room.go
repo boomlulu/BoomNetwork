@@ -38,6 +38,7 @@ type Player struct {
 	Conn           PlayerConn
 	State          PlayerState
 	DisconnectTime time.Time
+	JoinedAt       time.Time // 首次加入时间（GM 检视用）
 }
 
 // CachedFrame 缓冲的帧数据
@@ -255,7 +256,7 @@ func (r *Room) AddPlayer(id int32, conn PlayerConn) {
 		player = existing
 	} else {
 		atomic.AddInt32(&r.onlineCount, 1)
-		player = &Player{ID: id, Conn: conn, State: PlayerOnline}
+		player = &Player{ID: id, Conn: conn, State: PlayerOnline, JoinedAt: time.Now()}
 		r.players[id] = player
 	}
 	r.hadPlayer = true
@@ -468,6 +469,7 @@ type PlayerInfo struct {
 	ID             int32       `json:"id"`
 	State          PlayerState `json:"state"` // 0=online, 1=disconnected
 	DisconnectTime int64       `json:"disconnect_time,omitempty"` // unix ms, 0=online
+	JoinedAt       int64       `json:"joined_at,omitempty"`       // unix ms，加入时间
 }
 
 // ForEachPlayer 遍历所有玩家（含离线），用于 GM 查询
@@ -475,7 +477,7 @@ func (r *Room) ForEachPlayer(fn func(info PlayerInfo)) {
 	r.mu.Lock()
 	infos := make([]PlayerInfo, 0, len(r.players))
 	for _, p := range r.players {
-		info := PlayerInfo{ID: p.ID, State: p.State}
+		info := PlayerInfo{ID: p.ID, State: p.State, JoinedAt: p.JoinedAt.UnixMilli()}
 		if p.State == PlayerDisconnected {
 			info.DisconnectTime = p.DisconnectTime.UnixMilli()
 		}
@@ -1114,4 +1116,25 @@ func (r *Room) GetDataStoreEntries() []DataStoreEntry {
 // GetConfig 获取房间配置（只读）
 func (r *Room) GetConfig() RoomConfig {
 	return r.config
+}
+
+// PendingInputsLen 当前待处理输入队列深度（GM 检视用）
+func (r *Room) PendingInputsLen() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.pendingInputs)
+}
+
+// StartedAt 帧同步启动时间；未启动时返回零值（GM 检视用）
+func (r *Room) StartedAt() time.Time {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.startedAt
+}
+
+// IsDesyncDetected 是否已检测到 desync（GM 检视用）
+func (r *Room) IsDesyncDetected() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.desyncDetected
 }

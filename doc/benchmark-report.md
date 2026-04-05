@@ -1,7 +1,7 @@
 # BoomNetwork 性能与压测报告
 
 > 测试环境：Apple M silicon, macOS, arm64 / Go 1.24 / .NET 8
-> 最后更新：2026-04-05
+> 最后更新：2026-04-05（第五轮：GM 工具 Phase 2 功能扩展）
 
 ---
 
@@ -718,3 +718,43 @@ cd cli/Benchmark && dotnet run -c Release
 | Goroutines | 752 |
 
 </details>
+
+---
+
+## 五、GM 工具 Phase 2 新增端点（2026-04-05）
+
+### 新增 HTTP 端点概览
+
+| 端点 | 功能 | 测试覆盖 |
+|------|------|---------|
+| `GET /stats`（增强） | matchKey 分组、active/total 连接数、goroutines、uptime | `TestStats_Enhanced` |
+| `POST /rooms/stop-all` | 停止所有房间 | `TestStopAll_Empty` / `TestStopAll_WithRoom` |
+| `POST /broadcast` | 运维公告广播（KV key=0） | `TestBroadcast_OK` |
+| `GET /rooms/replay/{id}` | 帧历史导出（base64 JSON） | `TestRoomReplay_OK` |
+
+### /rooms/inspect/{id} 增强字段
+
+| 字段 | 计算方式 |
+|------|---------|
+| `actual_fps` | `frameNumber / (now - startedAt).Seconds()` |
+| `pending_inputs` | `len(room.pendingInputs)`（带锁快照） |
+| `desync_detected` | `room.desyncDetected` 字段 |
+| `started_at` | `room.startedAt.UnixMilli()` |
+| `players[].joined_at` | `player.JoinedAt.UnixMilli()` |
+
+### WS 新增功能
+
+| 功能 | 类型 | 说明 |
+|------|------|------|
+| Topic `desync` | Push | desync 检测到时立即推送，含各玩家 hash 值 |
+| RPC `get_room_frames` | Request/Response | 拉取指定房间的缓冲帧（after_frame 起）|
+| RPC `broadcast` | Request/Response | WS 版广播公告 |
+
+### 测试结果
+
+所有新增测试通过（`go test ./... 2026-04-05`）：
+
+```
+ok  github.com/boomlulu/boomnetwork/cmd/framesync  2.1s
+ok  github.com/boomlulu/boomnetwork/framesync      5.2s
+```

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -354,6 +355,179 @@ func TestPerf_GET(t *testing.T) {
 	json.Unmarshal(rec.Body.Bytes(), &body)
 	if body["goroutines"] == nil {
 		t.Fatal("missing goroutines field")
+	}
+}
+
+// ===================== /stats (enhanced) =====================
+
+func TestStats_Enhanced(t *testing.T) {
+	ensureTestGlobals()
+	req := httptest.NewRequest(http.MethodGet, "/stats", nil)
+	rec := httptest.NewRecorder()
+	handleStats(rec, req)
+
+	if rec.Code != 200 {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var body map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("invalid JSON: %v\nbody: %s", err, rec.Body.String())
+	}
+	for _, field := range []string{"game_rx_total", "active_connections", "total_connections", "goroutines", "heap_mb", "uptime", "total_rooms", "by_match_key"} {
+		if body[field] == nil {
+			t.Errorf("missing field %q", field)
+		}
+	}
+}
+
+// ===================== /rooms/stop-all =====================
+
+func TestStopAll_Empty(t *testing.T) {
+	ensureTestGlobals()
+	req := httptest.NewRequest(http.MethodPost, "/rooms/stop-all", nil)
+	rec := httptest.NewRecorder()
+	handleStopAll(rec, req)
+
+	if rec.Code != 200 {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var body map[string]interface{}
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	if body["ok"] != true {
+		t.Fatal("expected ok=true")
+	}
+}
+
+func TestStopAll_MethodNotAllowed(t *testing.T) {
+	ensureTestGlobals()
+	req := httptest.NewRequest(http.MethodGet, "/rooms/stop-all", nil)
+	rec := httptest.NewRecorder()
+	handleStopAll(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", rec.Code)
+	}
+}
+
+func TestStopAll_WithRoom(t *testing.T) {
+	ensureTestGlobals()
+	// create a room so we can stop it
+	room := roomMgr.CreateRoomWithMaxPlayers(2, "test-stop-all")
+	if room == nil {
+		t.Skip("could not create room")
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/rooms/stop-all", nil)
+	rec := httptest.NewRecorder()
+	handleStopAll(rec, req)
+
+	if rec.Code != 200 {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var body map[string]interface{}
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	if body["ok"] != true {
+		t.Fatal("expected ok=true")
+	}
+	stopped, _ := body["stopped"].(float64)
+	if stopped < 1 {
+		t.Errorf("expected at least 1 stopped room, got %v", stopped)
+	}
+}
+
+// ===================== /broadcast =====================
+
+func TestBroadcast_OK(t *testing.T) {
+	ensureTestGlobals()
+	body := `{"message":"server maintenance in 5 min"}`
+	req := httptest.NewRequest(http.MethodPost, "/broadcast", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	handleBroadcast(rec, req)
+
+	if rec.Code != 200 {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]interface{}
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp["ok"] != true {
+		t.Fatal("expected ok=true")
+	}
+}
+
+func TestBroadcast_MissingMessage(t *testing.T) {
+	ensureTestGlobals()
+	req := httptest.NewRequest(http.MethodPost, "/broadcast", strings.NewReader(`{}`))
+	rec := httptest.NewRecorder()
+	handleBroadcast(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestBroadcast_MethodNotAllowed(t *testing.T) {
+	ensureTestGlobals()
+	req := httptest.NewRequest(http.MethodGet, "/broadcast", nil)
+	rec := httptest.NewRecorder()
+	handleBroadcast(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", rec.Code)
+	}
+}
+
+// ===================== /rooms/replay/{id} =====================
+
+func TestRoomReplay_NotFound(t *testing.T) {
+	ensureTestGlobals()
+	req := httptest.NewRequest(http.MethodGet, "/rooms/replay/99999", nil)
+	rec := httptest.NewRecorder()
+	handleRoomReplay(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rec.Code)
+	}
+}
+
+func TestRoomReplay_InvalidId(t *testing.T) {
+	ensureTestGlobals()
+	req := httptest.NewRequest(http.MethodGet, "/rooms/replay/abc", nil)
+	rec := httptest.NewRecorder()
+	handleRoomReplay(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestRoomReplay_OK(t *testing.T) {
+	ensureTestGlobals()
+	room := roomMgr.CreateRoomWithMaxPlayers(2, "replay-test")
+	if room == nil {
+		t.Skip("could not create room")
+	}
+	defer roomMgr.RemoveRoom(room.ID)
+
+	url := "/rooms/replay/" + strconv.Itoa(int(room.ID))
+	req := httptest.NewRequest(http.MethodGet, url, nil)
+	rec := httptest.NewRecorder()
+	handleRoomReplay(rec, req)
+
+	if rec.Code != 200 {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var frames []interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &frames); err != nil {
+		t.Fatalf("invalid JSON array: %v", err)
+	}
+	// newly created room has no frames
+	if frames == nil {
+		t.Fatal("expected non-nil array")
+	}
+}
+
+func TestRoomReplay_MethodNotAllowed(t *testing.T) {
+	ensureTestGlobals()
+	req := httptest.NewRequest(http.MethodPost, "/rooms/replay/1", nil)
+	rec := httptest.NewRecorder()
+	handleRoomReplay(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", rec.Code)
 	}
 }
 

@@ -19,12 +19,20 @@ import (
 
 // ===================== GMHub — 管理所有 WS 连接 =====================
 
+// DesyncEvent 不同步事件，由 main.go handleFrameHash 在检测到 desync 后推送
+type DesyncEvent struct {
+	RoomID       int32
+	FrameNumber  uint32
+	PlayerHashes map[int32]uint32
+}
+
 type GMHub struct {
 	mu    sync.RWMutex
 	conns map[*GMConn]struct{}
 
-	msgNotify chan MsgEntry // 来自 MsgLog 的实时消息通知
-	logNotify chan LogEntry // 来自 LogBuf 的实时日志通知
+	msgNotify    chan MsgEntry  // 来自 MsgLog 的实时消息通知
+	logNotify    chan LogEntry  // 来自 LogBuf 的实时日志通知
+	desyncNotify chan DesyncEvent // 来自 handleFrameHash 的 desync 通知
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -33,11 +41,20 @@ type GMHub struct {
 func newGMHub(parent context.Context) *GMHub {
 	ctx, cancel := context.WithCancel(parent)
 	return &GMHub{
-		conns:     make(map[*GMConn]struct{}),
-		msgNotify: make(chan MsgEntry, 256),
-		logNotify: make(chan LogEntry, 512),
-		ctx:       ctx,
-		cancel:    cancel,
+		conns:        make(map[*GMConn]struct{}),
+		msgNotify:    make(chan MsgEntry, 256),
+		logNotify:    make(chan LogEntry, 512),
+		desyncNotify: make(chan DesyncEvent, 16),
+		ctx:          ctx,
+		cancel:       cancel,
+	}
+}
+
+// NotifyDesync 推送 desync 事件（非阻塞，慢消费时丢弃）
+func (h *GMHub) NotifyDesync(event DesyncEvent) {
+	select {
+	case h.desyncNotify <- event:
+	default:
 	}
 }
 
@@ -99,6 +116,7 @@ func (h *GMHub) Run() {
 			}
 			return
 
+
 		case entry := <-h.msgNotify:
 			// 实时消息推送
 			data := makePushEnvelope(TopicMessages, MsgEntryToWire(entry))
@@ -110,6 +128,19 @@ func (h *GMHub) Run() {
 				Ts: entry.Ts, Level: entry.Level, Msg: entry.Msg, Attrs: entry.Attrs,
 			})
 			h.broadcast(BitLogs, data)
+
+		case event := <-h.desyncNotify:
+			// desync 事件实时推送
+			items := make([]PlayerHashWire, 0, len(event.PlayerHashes))
+			for pid, hash := range event.PlayerHashes {
+				items = append(items, PlayerHashWire{Pid: pid, Hash: hash})
+			}
+			data := makePushEnvelope(TopicDesync, DesyncPush{
+				RoomID:       event.RoomID,
+				FrameNumber:  event.FrameNumber,
+				PlayerHashes: items,
+			})
+			h.broadcast(BitDesync, data)
 
 		case <-ticker2s.C:
 			h.pushHealth()
@@ -476,6 +507,10 @@ func (c *GMConn) handleRPC(env *GMEnvelope) {
 		c.rpcNetsim(env)
 	case "inspect_room":
 		c.rpcInspectRoom(env)
+	case "get_room_frames":
+		c.rpcGetRoomFrames(env)
+	case "broadcast":
+		c.rpcBroadcast(env)
 	default:
 		c.sendError(env.ID, env.Topic, "unknown rpc topic")
 	}
@@ -604,6 +639,57 @@ func (c *GMConn) rpcNetsim(env *GMEnvelope) {
 	c.sendRsp(env.ID, "netsim", map[string]bool{"ok": true})
 }
 
+func (c *GMConn) rpcGetRoomFrames(env *GMEnvelope) {
+	var p GetRoomFramesPayload
+	if err := msgpack.Unmarshal(env.Payload, &p); err != nil || p.RoomID <= 0 {
+		c.sendError(env.ID, "get_room_frames", "invalid room_id")
+		return
+	}
+
+	room := roomMgr.GetRoom(p.RoomID)
+	if room == nil {
+		c.sendError(env.ID, "get_room_frames", "room not found")
+		return
+	}
+
+	frames := room.GetFramesSince(p.AfterFrame)
+	result := GetRoomFramesResult{
+		Ok:     true,
+		RoomID: p.RoomID,
+		Frames: make([]FrameWire, 0, len(frames)),
+	}
+	for _, f := range frames {
+		result.Frames = append(result.Frames, FrameWire{
+			FrameNumber: f.FrameNumber,
+			Data:        f.EncodedData,
+		})
+	}
+	c.sendRsp(env.ID, "get_room_frames", result)
+}
+
+func (c *GMConn) rpcBroadcast(env *GMEnvelope) {
+	var p BroadcastPayload
+	if err := msgpack.Unmarshal(env.Payload, &p); err != nil || p.Message == "" {
+		c.sendError(env.ID, "broadcast", "missing or invalid message")
+		return
+	}
+
+	msgBytes := []byte(p.Message)
+	sent := 0
+	infos := roomMgr.GetAllRoomInfos()
+	for _, info := range infos {
+		room := roomMgr.GetRoom(info.RoomId)
+		if room == nil {
+			continue
+		}
+		room.SetData(0, 0, msgBytes)
+		sent += room.PlayerCount()
+	}
+
+	slog.Info("gm-ws broadcast", "message", p.Message, "reached_players", sent)
+	c.sendRsp(env.ID, "broadcast", BroadcastResult{Ok: true, Sent: sent})
+}
+
 func (c *GMConn) rpcInspectRoom(env *GMEnvelope) {
 	var p InspectRoomPayload
 	if err := msgpack.Unmarshal(env.Payload, &p); err != nil || p.RoomID <= 0 {
@@ -620,6 +706,19 @@ func (c *GMConn) rpcInspectRoom(env *GMEnvelope) {
 	c.sendRsp(env.ID, "inspect_room", buildRoomInspect(room))
 }
 
+// computeActualFPS 根据帧号和启动时间计算实际帧率
+func computeActualFPS(room *framesync.Room) float64 {
+	sa := room.StartedAt()
+	if sa.IsZero() || !room.IsRunning() {
+		return 0
+	}
+	elapsed := time.Since(sa).Seconds()
+	if elapsed < 0.5 {
+		return 0
+	}
+	return float64(room.CurrentFrameNumber()) / elapsed
+}
+
 func buildRoomInspect(room *framesync.Room) RoomInspectWire {
 	result := RoomInspectWire{
 		Ok:                  true,
@@ -628,6 +727,9 @@ func buildRoomInspect(room *framesync.Room) RoomInspectWire {
 		Paused:              room.IsSnapshotPaused(),
 		FrameNumber:         room.CurrentFrameNumber(),
 		FrameRate:           room.FrameRate(),
+		ActualFPS:           computeActualFPS(room),
+		PendingInputs:       room.PendingInputsLen(),
+		DesyncDetected:      room.IsDesyncDetected(),
 		MaxPlayers:          room.MaxPlayers(),
 		OnlineCount:         room.PlayerCount(),
 		TotalPlayers:        room.TotalPlayerCount(),
@@ -640,6 +742,9 @@ func buildRoomInspect(room *framesync.Room) RoomInspectWire {
 		SnapshotStaleFrames: room.SnapshotStaleFrames(),
 		DataVersion:         room.DataVersion(),
 	}
+	if sa := room.StartedAt(); !sa.IsZero() {
+		result.StartedAt = sa.UnixMilli()
+	}
 
 	// Players
 	room.ForEachPlayer(func(pi framesync.PlayerInfo) {
@@ -647,6 +752,7 @@ func buildRoomInspect(room *framesync.Room) RoomInspectWire {
 			ID:             pi.ID,
 			State:          int(pi.State),
 			DisconnectTime: pi.DisconnectTime,
+			JoinedAt:       pi.JoinedAt,
 		})
 	})
 

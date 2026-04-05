@@ -38,17 +38,20 @@ go run ./cmd/framesync/ -admin=:9091 -admin-token=your-secret
 | 类别 | 能力 | 端点 | 鉴权 |
 |------|------|------|------|
 | **监控** | 服务器存活 | `GET /health` | 免鉴权 |
-| | 流量统计（Game + GM） | `GET /stats` | 需鉴权 |
+| | 流量统计（Game + GM + matchKey + 连接数 + uptime） | `GET /stats` | 需鉴权 |
 | | 最近 100 条网络消息 | `GET /messages` | 需鉴权 |
 | | 房间列表 + 玩家详情 | `GET /rooms` | 需鉴权 |
 | **控制** | 踢出玩家 | `POST /kick/{pid}` | 需鉴权 |
 | | 强制停止房间 | `POST /rooms/stop/{id}` | 需鉴权 |
+| | **停止所有房间** | `POST /rooms/stop-all` | 需鉴权 |
+| | **运维公告广播** | `POST /broadcast` | 需鉴权 |
 | **控制** | 网络状态模拟（延迟/抖动/丢包） | `GET/POST /netsim` | 需鉴权 |
 | | 日志级别热调 | `GET/POST /log-level` | 需鉴权 |
 | | 配置热重载 | `POST /config/reload` | 需鉴权 |
 | | 创建房间 | `POST /rooms/create` | 需鉴权 |
 | | 强制销毁房间 | `POST /rooms/kill/{id}` | 需鉴权 |
-| **诊断** | 房间深度检视 | `GET /rooms/inspect/{id}` | 需鉴权 |
+| **诊断** | 房间深度检视（含实际帧率/pending inputs/desync/JoinedAt） | `GET /rooms/inspect/{id}` | 需鉴权 |
+| | **房间帧历史导出（回放调试）** | `GET /rooms/replay/{id}` | 需鉴权 |
 | | 单玩家详情 + 最近消息 | `GET /players/{pid}` | 需鉴权 |
 | | 服务器性能（内存/GC/goroutine） | `GET /perf` | 需鉴权 |
 | | 玩家消息速率 Top 20 | `GET /rates` | 需鉴权 |
@@ -315,6 +318,105 @@ curl http://127.0.0.1:9091/rooms/inspect/1
 ```
 
 正常值参考：20fps 帧同步 × 1 条输入/帧 = 100 条/5 秒。显著高于此值应关注。
+
+---
+
+---
+
+### 新增端点（Phase 2）
+
+#### GET /stats（增强版）
+
+在原有流量字段基础上新增：
+
+```json
+{
+  "active_connections": 12,
+  "total_connections": 150,
+  "goroutines": 42,
+  "heap_mb": 12.34,
+  "uptime": "2h30m15s",
+  "total_rooms": 3,
+  "by_match_key": {
+    "pvp": {"rooms": 2, "players": 8},
+    "(default)": {"rooms": 1, "players": 4}
+  }
+}
+```
+
+#### GET /rooms/inspect/{id}（增强版）
+
+新增字段：
+
+| 字段 | 说明 |
+|------|------|
+| `actual_fps` | 实际帧率（frameNumber / elapsed since Start） |
+| `started_at` | 帧同步启动时间戳（unix ms） |
+| `pending_inputs` | 当前待处理输入队列深度（正常值 0-2） |
+| `desync_detected` | 是否已检测到 desync |
+| `players[].joined_at` | 每个玩家首次加入时间戳（unix ms） |
+
+#### POST /rooms/stop-all
+
+停止所有运行中的房间（优雅关闭，逐一调用 Stop()）。适用于运维窗口前的预处理。
+
+```bash
+curl -X POST -H "Authorization: Bearer your-secret" http://127.0.0.1:9091/rooms/stop-all
+# => {"ok":true,"stopped":3}
+```
+
+#### POST /broadcast
+
+向所有在线玩家发送运维公告。通过 KV 存储（key=0）投递，游戏层通过 `OnDataChanged` 接收。
+
+```bash
+curl -X POST -H "Authorization: Bearer your-secret" http://127.0.0.1:9091/broadcast \
+  -d '{"message":"Server maintenance in 5 minutes. Please save your progress."}'
+# => {"ok":true,"sent":12}
+```
+
+#### GET /rooms/replay/{id}?after_frame=0
+
+导出房间帧缓冲区（用于回放调试）。返回 JSON 数组，每帧包含 `frame_number` 和 base64 编码的原始帧数据。
+
+```bash
+curl -H "Authorization: Bearer your-secret" http://127.0.0.1:9091/rooms/replay/1
+# => [{"frame_number":1,"data":"AAAB..."}, ...]
+```
+
+- `after_frame`（可选）：只返回该帧号之后的帧
+- 数据格式与 `PushFrames` 协议包相同，可直接用于本地回放
+
+#### WS RPC: get_room_frames
+
+MessagePack WS 版本的帧导出。payload: `{room_id: 1, after_frame: 0}`。
+
+```json
+rsp: {
+  "ok": true,
+  "room_id": 1,
+  "frames": [{"frame_number": 1, "data": <bytes>}, ...]
+}
+```
+
+#### WS RPC: broadcast
+
+向所有房间广播公告。payload: `{message: "..."}`。
+
+#### WS Topic: desync
+
+订阅 `desync` topic 后，服务器检测到帧不同步时实时推送：
+
+```json
+{
+  "room_id": 1,
+  "frame_number": 1234,
+  "player_hashes": [
+    {"pid": 1, "hash": 3141592653},
+    {"pid": 2, "hash": 2718281828}
+  ]
+}
+```
 
 ---
 

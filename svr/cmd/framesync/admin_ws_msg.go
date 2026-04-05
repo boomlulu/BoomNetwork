@@ -29,6 +29,7 @@ const (
 	TopicRates    = "rates"
 	TopicNetsim   = "netsim"
 	TopicLogs     = "logs"
+	TopicDesync   = "desync" // desync 事件推送
 )
 
 // topicBit 用于订阅位掩码
@@ -41,6 +42,7 @@ const (
 	BitRates
 	BitNetsim
 	BitLogs
+	BitDesync
 )
 
 var topicToBit = map[string]uint32{
@@ -52,6 +54,7 @@ var topicToBit = map[string]uint32{
 	TopicRates:    BitRates,
 	TopicNetsim:   BitNetsim,
 	TopicLogs:     BitLogs,
+	TopicDesync:   BitDesync,
 }
 
 // ===================== Auth 负载 =====================
@@ -160,6 +163,7 @@ type PlayerInfoWire struct {
 	ID             int32 `msgpack:"id"`
 	State          int   `msgpack:"state"`
 	DisconnectTime int64 `msgpack:"disconnect_time,omitempty"` // 断线时刻（unix ms）；在线时为 0
+	JoinedAt       int64 `msgpack:"joined_at,omitempty"`       // 加入时刻（unix ms）
 }
 
 // PerfPush — topic: perf
@@ -242,6 +246,10 @@ type RoomInspectWire struct {
 	Paused              bool               `msgpack:"paused" json:"paused"`
 	FrameNumber         uint32             `msgpack:"frame_number" json:"frame_number"`
 	FrameRate           int32              `msgpack:"frame_rate" json:"frame_rate"`
+	ActualFPS           float64            `msgpack:"actual_fps" json:"actual_fps"`           // 实际帧率（基于 StartedAt + FrameNumber 计算）
+	StartedAt           int64              `msgpack:"started_at,omitempty" json:"started_at,omitempty"` // 帧同步启动时间（unix ms）
+	PendingInputs       int                `msgpack:"pending_inputs" json:"pending_inputs"`   // 当前待处理输入队列深度
+	DesyncDetected      bool               `msgpack:"desync_detected" json:"desync_detected"` // 是否已检测到 desync
 	MaxPlayers          int                `msgpack:"max_players" json:"max_players"`
 	OnlineCount         int                `msgpack:"online_count" json:"online_count"`
 	TotalPlayers        int                `msgpack:"total_players" json:"total_players"`
@@ -267,6 +275,49 @@ type KVEntryWire struct {
 	PlayerId int32  `msgpack:"player_id" json:"player_id"`
 	Key      int32  `msgpack:"key" json:"key"`
 	Value    []byte `msgpack:"value" json:"value"`
+}
+
+// ===================== Push: desync =====================
+
+// DesyncPush — topic: desync（单次推送，desync 检测到后立即推）
+type DesyncPush struct {
+	RoomID       int32            `msgpack:"room_id"`
+	FrameNumber  uint32           `msgpack:"frame_number"`
+	PlayerHashes []PlayerHashWire `msgpack:"player_hashes"`
+}
+
+type PlayerHashWire struct {
+	Pid  int32  `msgpack:"pid"`
+	Hash uint32 `msgpack:"hash"`
+}
+
+// ===================== RPC: get_room_frames =====================
+
+type GetRoomFramesPayload struct {
+	RoomID     int32  `msgpack:"room_id"`
+	AfterFrame uint32 `msgpack:"after_frame,omitempty"`
+}
+
+type GetRoomFramesResult struct {
+	Ok     bool        `msgpack:"ok"`
+	RoomID int32       `msgpack:"room_id"`
+	Frames []FrameWire `msgpack:"frames"`
+}
+
+type FrameWire struct {
+	FrameNumber uint32 `msgpack:"frame_number"`
+	Data        []byte `msgpack:"data"`
+}
+
+// ===================== RPC: broadcast =====================
+
+type BroadcastPayload struct {
+	Message string `msgpack:"message"` // 人可读公告文本（游戏层可用 OnDataChanged 接收）
+}
+
+type BroadcastResult struct {
+	Ok   bool  `msgpack:"ok"`
+	Sent int   `msgpack:"sent"` // 实际发送到的玩家数
 }
 
 // ===================== 编码辅助 =====================
