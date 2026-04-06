@@ -945,3 +945,47 @@ ok  github.com/boomlulu/boomnetwork/transport      3.1s
 ok  github.com/boomlulu/boomnetwork/cmd/framesync  2.1s
 ok  github.com/boomlulu/boomnetwork/framesync      5.2s
 ```
+
+---
+
+## 六、VSRenderer Jobs 性能基准（2026-04-07）
+
+> 测试环境：Apple M silicon, Unity Editor, VampireSurvivors Demo
+> 测量方式：Stopwatch + 100 帧滑动平均，`[VSRenderer Perf|Jobs]` 日志
+
+### 512 敌人 — MainThread vs Jobs（立即 Complete）
+
+| 指标 | MainThread | Jobs（立即 Complete） |
+|------|-----------|----------------------|
+| SyncEnemies | 0.073 ms | 0.131 ms |
+| Total | 0.214 ms | 0.294 ms |
+
+**结论：** Jobs 反而更慢。Schedule/Complete 开销 > 并行收益（512 敌人量级太小）。
+
+---
+
+### 2048 敌人 — MainThread vs Jobs（立即 Complete）
+
+| 指标 | MainThread | Jobs（立即 Complete） |
+|------|-----------|----------------------|
+| SyncEnemies | 0.401 ms | 0.337 ms |
+| Total | 0.855 ms | 0.901 ms |
+
+---
+
+### 2048 敌人 — MainThread vs Jobs（延迟 Complete，正确用法）
+
+延迟 Complete 策略：Schedule 后先跑主线程剩余任务，最后再 Complete。
+
+| 指标 | MainThread | Jobs（延迟 Complete） |
+|------|-----------|----------------------|
+| SyncEnemies / Prep | 0.418 ms | Prep 0.343 ms |
+| SyncEnemies / Wait | — | 0.001 ms |
+| SyncProj | 0.144 ms | 0.176 ms（主线程） |
+| SyncGems | 0.263 ms | 0.271 ms（主线程） |
+| Total | 0.883 ms | **0.850 ms** |
+
+**结论：**
+- 延迟 Complete 后 Wait ≈ 0，说明并行有效（Job 跑完时主线程还在做其他事）
+- 整体快 ~3.7%，但 SyncProj/SyncGems 仍在主线程，是下一步优化点
+- 只 Jobs 化 Enemy 时，收益受限于 Amdahl 定律（Enemy 占比 ~40%）
