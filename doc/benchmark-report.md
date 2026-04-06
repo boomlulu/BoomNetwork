@@ -989,3 +989,18 @@ ok  github.com/boomlulu/boomnetwork/framesync      5.2s
 - 延迟 Complete 后 Wait ≈ 0，说明并行有效（Job 跑完时主线程还在做其他事）
 - 整体快 ~3.7%，但 SyncProj/SyncGems 仍在主线程，是下一步优化点
 - 只 Jobs 化 Enemy 时，收益受限于 Amdahl 定律（Enemy 占比 ~40%）
+
+---
+
+### 2048 敌人 — 三 Job 并行（Enemy + Proj + Gem）
+
+| 子系统 | MainThread | Jobs (Prep+Wait) |
+|--|--|--|
+| SyncPlayers | 0.016 ms | 0.012 ms |
+| SyncEnemies | 0.391 ms | 0.315 + 0.001 = 0.316 ms |
+| SyncProj | 0.132 ms | 0.160 + 0.000 = 0.160 ms |
+| SyncGems | 0.245 ms | 0.274 + 0.000 = 0.274 ms |
+| **Total** | **0.829 ms** | **0.804 ms (快 3%)** |
+
+结论：三 Job Wait 全部 ~0ms（并行完全实现），但总收益仅 3%。
+瓶颈在主线程 Pass1（SetActive/Material/CopyIn），不在 Transform 写入。

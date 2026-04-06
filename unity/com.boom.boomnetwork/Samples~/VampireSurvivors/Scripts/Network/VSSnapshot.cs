@@ -14,7 +14,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
         public static byte[] Serialize(VSSimulation sim)
         {
             var state = sim.State;
-            using var ms = new MemoryStream(8192);
+            using var ms = new MemoryStream(524288);
             using var w = new BinaryWriter(ms);
 
             w.Write(Magic);

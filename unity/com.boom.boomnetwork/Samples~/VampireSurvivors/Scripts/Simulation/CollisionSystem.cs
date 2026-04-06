@@ -9,7 +9,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
     public static class CollisionSystem
     {
         static readonly FInt CellSize = FInt.FromInt(2);
-        const int GridCells = 20;
+        const int GridCells = 128;
         const int TotalCells = GridCells * GridCells;
 
         static readonly int[] BucketHeads = new int[TotalCells];

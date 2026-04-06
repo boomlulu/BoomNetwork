@@ -148,19 +148,19 @@ namespace BoomNetwork.Samples.VampireSurvivors
     public class GameState
     {
         public const int MaxPlayers = 4;
-        public const int MaxEnemies = 512;
-        public const int MaxProjectiles = 256;
-        public const int MaxGems = 512;
-        public const int MaxLightningFlashes = 32;
+        public const int MaxEnemies = 5120;
+        public const int MaxProjectiles = 2048;
+        public const int MaxGems = 5120;
+        public const int MaxLightningFlashes = 256;
         public const int MaxRevivalTotems = MaxPlayers;
 
-        public static readonly FInt ArenaHalfSize = FInt.FromInt(20);
+        public static readonly FInt ArenaHalfSize = FInt.FromInt(80);
 
-        public static readonly FInt PlayerSpeed = new FInt(7168);
+        public static readonly FInt PlayerSpeed = new FInt(12288);
         public static readonly FInt PlayerRadius = new FInt(409);
-        public const int PlayerMaxHp = 200;
+        public const int PlayerMaxHp = 750;
         public const int PlayerBaseXpToLevel = 8;
-        public const uint InvincibilityDuration = 30;
+        public const uint InvincibilityDuration = 80;
 
         public static readonly FInt ZombieSpeed = new FInt(2252);
         public static readonly FInt ZombieRadius = new FInt(409);
@@ -189,24 +189,24 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
         public static readonly FInt KnifeSpeed = FInt.FromInt(14);
         public static readonly FInt KnifeRadius = new FInt(204);
-        public const int KnifeDamage = 2;
+        public const int KnifeDamage = 25;
         public const uint KnifeBaseCooldown = 6;
-        public const uint KnifeLifetimeFrames = 40;
+        public const uint KnifeLifetimeFrames = 100;
 
         public static readonly FInt OrbOrbitRadius = new FInt(1843);
         public static readonly FInt OrbAngularSpeed = FInt.FromInt(220);
         public static readonly FInt OrbHitRadius = new FInt(512);
-        public const int OrbDamage = 3;
+        public const int OrbDamage = 40;
 
-        public static readonly FInt LightningRange = FInt.FromInt(8);
-        public const int LightningDamage = 5;
+        public static readonly FInt LightningRange = FInt.FromInt(22);
+        public const int LightningDamage = 50;
         public const uint LightningBaseCooldown = 20;
         public const int LightningBaseChains = 4;
 
-        public static readonly FInt HolyWaterBaseRadius = FInt.FromInt(2);
+        public static readonly FInt HolyWaterBaseRadius = FInt.FromInt(7);
         public const uint HolyWaterBaseCooldown = 50;
         public const uint HolyWaterLifetime = 100;
-        public const int HolyWaterDamage = 2;
+        public const int HolyWaterDamage = 30;
         public const uint HolyWaterDamageTick = 6;
 
         // Old Boss (kept for completeness)
@@ -247,8 +247,8 @@ namespace BoomNetwork.Samples.VampireSurvivors
         public const int RevivalHpPercent = 50;
 
         // FrostNova
-        public static readonly FInt FrostNovaBaseRadius = FInt.FromInt(5);
-        public const uint FrostNovaSlowFrames = 60;
+        public static readonly FInt FrostNovaBaseRadius = FInt.FromInt(8);
+        public const uint FrostNovaSlowFrames = 90;
         public const uint FrostNovaBaseCooldown = 60;
 
         // FireTrail
@@ -259,7 +259,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
         public const uint FireTrailCooldown = 12;
 
         // MagnetField
-        public static readonly FInt MagnetFieldRadius = FInt.FromInt(8);
+        public static readonly FInt MagnetFieldRadius = FInt.FromInt(25);
         public static readonly FInt MagnetFieldForce = new FInt(2048);
 
         // SplitShot
@@ -274,7 +274,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
         // TwinCore
         public static readonly FInt TwinCoreRadius = new FInt(614);
         public static readonly FInt TwinCoreOffset = new FInt(1843);
-        public const int TwinCoreHpPerCore = 200;
+        public const int TwinCoreHpPerCore = 800;
         public const int TwinCoreDamage = 20;
         public const int TwinCoreXpValue = 80;
         public const uint TwinCoreHitWindow = 40;
@@ -283,7 +283,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
         // SplitBoss
         public static readonly FInt SplitBossRadius = new FInt(1843);
-        public const int SplitBossHp = 400;
+        public const int SplitBossHp = 1600;
         public const int SplitBossDamage = 30;
         public const int SplitBossXpValue = 100;
         public static readonly FInt SplitBossSpeed = new FInt(1229);
@@ -299,7 +299,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
         public const int MaxWeaponLevel = 10;
 
         public static readonly FInt XpPickupRadius = new FInt(1536);
-        public static readonly FInt XpMagnetRadius = FInt.FromInt(5);
+        public static readonly FInt XpMagnetRadius = FInt.FromInt(18);
         public static readonly FInt XpMagnetBaseSpeed = FInt.FromInt(8);
         public static readonly FInt XpMagnetMaxSpeed = FInt.FromInt(25);
 
