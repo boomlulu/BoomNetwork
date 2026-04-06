@@ -5,10 +5,10 @@ namespace BoomNetwork.Samples.VampireSurvivors
 {
     public static class WaveSystem
     {
-        const uint WaveGapFrames = 100;
-        const uint SpawnIntervalFrames = 5;
-        const int BaseEnemyCount = 15;
-        const int EnemiesPerWave = 10;
+        const uint WaveGapFrames = 40;
+        const uint SpawnIntervalFrames = 1;
+        const int BaseEnemyCount = 200;
+        const int EnemiesPerWave = 200;
 
         public static void Tick(GameState state, bool isMultiplayer = true)
         {

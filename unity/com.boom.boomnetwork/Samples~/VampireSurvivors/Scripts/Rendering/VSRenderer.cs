@@ -118,9 +118,9 @@ namespace BoomNetwork.Samples.VampireSurvivors
         float[] _frostRingScale = new float[MaxFrostRings];
 
         // ==================== Camera ====================
-        static readonly Vector3 IsoOffset = new Vector3(0f, 18f, -14f);
+        static readonly Vector3 IsoOffset = new Vector3(0f, 35f, -27f);
         static readonly Quaternion IsoRotation = Quaternion.Euler(52f, 0f, 0f);
-        const float IsoOrthoSize = 13f;
+        const float IsoOrthoSize = 25f;
         const float CamSmoothSpeed = 8f;
         Vector3 _camCurrentPos;
 
