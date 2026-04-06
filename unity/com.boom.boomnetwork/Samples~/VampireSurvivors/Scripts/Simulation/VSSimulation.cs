@@ -1,7 +1,7 @@
 // BoomNetwork VampireSurvivors Demo — Deterministic Simulation (Fixed-Point)
 //
-// Upgrade pause: when ANY player has PendingLevelUp, simulation freezes.
-// Only upgrade-choice inputs are processed during pause.
+// DESIGN PRINCIPLE 1 — GameState mutation 只通过两条确定性路径。
+// DESIGN PRINCIPLE 2 — Level-Triggered Pause Convergence。
 
 using BoomNetwork.Core.FrameSync;
 
@@ -11,10 +11,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
     {
         public readonly GameState State = new GameState();
 
-        // PlayerId → slot mapping. Server PlayerIDs are globally incrementing
-        // (not per-room), so we cannot assume pid == slot+1.
-        // Mapping is built deterministically: first unique pid seen gets slot 0, etc.
-        readonly int[] _pidSlotMap = new int[256]; // pid → slot (-1 = unmapped)
+        readonly int[] _pidSlotMap = new int[256];
         int _nextSlot;
 
         public int PidToSlot(int pid)
@@ -25,16 +22,12 @@ namespace BoomNetwork.Samples.VampireSurvivors
             return _pidSlotMap[pid];
         }
 
-        // Snapshot support: expose mapping for serialization
         public void GetPidMap(out int[] map, out int nextSlot) { map = _pidSlotMap; nextSlot = _nextSlot; }
         public void SetPidMap(int[] map, int nextSlot)
         {
             System.Array.Copy(map, _pidSlotMap, System.Math.Min(map.Length, _pidSlotMap.Length));
             _nextSlot = nextSlot;
         }
-
-        static readonly WeaponType[] UpgradePool =
-            { WeaponType.Knife, WeaponType.Orb, WeaponType.Lightning, WeaponType.HolyWater };
 
         public void Init(FInt dt, uint rngSeed)
         {
@@ -44,7 +37,8 @@ namespace BoomNetwork.Samples.VampireSurvivors
             State.WaveSpawnTimer = 40;
             State.WaveSpawnRemaining = 0;
             State.FrameNumber = 0;
-            // Reset pid mapping
+            State.FocusFireTarget = -1;
+            State.FocusFireTimer = 0;
             for (int i = 0; i < _pidSlotMap.Length; i++) _pidSlotMap[i] = -1;
             _nextSlot = 0;
         }
@@ -53,14 +47,10 @@ namespace BoomNetwork.Samples.VampireSurvivors
         {
             State.FrameNumber = frame.FrameNumber;
 
-            // Always process inputs (upgrade choices must go through even when paused)
             ApplyInputs(frame);
 
-            // If any player is choosing an upgrade, freeze the simulation
-            if (IsAnyPlayerUpgrading())
-                return;
+            if (IsAnyPlayerUpgrading()) return;
 
-            // Normal simulation
             WaveSystem.Tick(State);
             EnemySystem.Tick(State);
             WeaponSystem.Tick(State);
@@ -96,23 +86,17 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 if (slot < 0 || slot >= GameState.MaxPlayers) continue;
                 ref var player = ref State.Players[slot];
 
-                // Auto-init: first input from this player → deterministic spawn
-                // All clients see the same FrameData, so this is frame-exact.
-                if (!player.IsActive)
-                    State.InitPlayer(slot);
-
+                if (!player.IsActive) State.InitPlayer(slot);
                 if (!player.IsAlive) continue;
 
                 VSInput.Decode(input.Data, 0, out FInt dirX, out FInt dirZ, out byte abilityMask);
 
-                // Upgrade choice is always processed
                 if (player.PendingLevelUp && abilityMask > 0)
                 {
                     ApplyUpgrade(ref player, abilityMask);
                     player.PendingLevelUp = false;
                 }
 
-                // Movement only when NOT paused
                 if (!paused && (dirX != FInt.Zero || dirZ != FInt.Zero))
                 {
                     FInt lenSq = FInt.LengthSqr(dirX, dirZ);
@@ -134,14 +118,18 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
         void ApplyUpgrade(ref PlayerState player, byte abilityMask)
         {
+            // 解码选择（bit 0→opt0, bit 1→opt1, bit 2→opt2, bit 3→opt3）
             int choice = -1;
             if ((abilityMask & 1) != 0) choice = 0;
             else if ((abilityMask & 2) != 0) choice = 1;
             else if ((abilityMask & 4) != 0) choice = 2;
             else if ((abilityMask & 8) != 0) choice = 3;
-            if (choice < 0 || choice >= UpgradePool.Length) return;
+            if (choice < 0 || choice > 3) return;
 
-            WeaponType wtype = UpgradePool[choice];
+            // 使用 PlayerState 中存储的随机选项（确定性）
+            WeaponType wtype = (WeaponType)player.GetUpgradeOpt(choice);
+            if (wtype == WeaponType.None) return;
+
             int existingSlot = player.FindWeaponSlot(wtype);
             if (existingSlot >= 0)
             {
@@ -156,6 +144,8 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 {
                     var w = new WeaponSlot { Type = wtype, Level = 1, Cooldown = 0 };
                     player.SetWeapon(emptySlot, w);
+
+                    // 初始化特殊武器
                     if (wtype == WeaponType.Orb)
                     {
                         player.SetOrb(0, new OrbState { Active = true, AngleDeg = FInt.Zero });

@@ -123,8 +123,16 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
         // ── Fields ────────────────────────────────────────────────────────────
 
-        static readonly string[] WeaponNames = { "", "Knife", "Orb", "Lightning", "Holy Water" };
-        static readonly string[] WeaponIcons = { "", "\ud83d\udde1", "\ud83d\udd2e", "\u26a1", "\ud83d\udca7" };
+        static readonly string[] WeaponNames = {
+            "", "Knife", "Orb", "Lightning", "Holy Water",
+            "Link Beam", "Heal Aura", "Shield Wall", "Chain Lightning+", "Focus Fire",
+            "Revival Totem", "Frost Nova", "Fire Trail", "Magnet Field", "Split Shot"
+        };
+        static readonly string[] WeaponIcons = {
+            "", "\ud83d\udde1", "\ud83d\udd2e", "\u26a1", "\ud83d\udca7",
+            "\ud83d\udd17", "\ud83d\udc9a", "\ud83d\udee1", "\u26a1\u26a1", "\ud83c\udfaf",
+            "\ud83e\uddf9", "\u2744", "\ud83d\udd25", "\ud83e\uddf2", "\u2194"
+        };
 
         Canvas      _canvas;
         GameObject  _root;
@@ -302,11 +310,15 @@ namespace BoomNetwork.Samples.VampireSurvivors
         {
             for (int i = 0; i < 4; i++)
             {
-                var wt = (WeaponType)(i + 1);
+                var wt = (WeaponType)player.GetUpgradeOpt(i);
+                if (wt == WeaponType.None) { _upgradeBtnLabels[i].text = $"[{i + 1}] —"; continue; }
                 int slot = player.FindWeaponSlot(wt);
+                int wtIdx = (int)wt;
+                string icon = wtIdx < WeaponIcons.Length ? WeaponIcons[wtIdx] : "?";
+                string name = wtIdx < WeaponNames.Length ? WeaponNames[wtIdx] : wt.ToString();
                 _upgradeBtnLabels[i].text = slot >= 0
-                    ? $"[{i + 1}] {WeaponIcons[(int)wt]} {WeaponNames[(int)wt]} Lv{player.GetWeapon(slot).Level} \u2192 Lv{player.GetWeapon(slot).Level + 1}"
-                    : $"[{i + 1}] {WeaponIcons[(int)wt]} {WeaponNames[(int)wt]} (NEW)";
+                    ? $"[{i + 1}] {icon} {name} Lv{player.GetWeapon(slot).Level} \u2192 Lv{player.GetWeapon(slot).Level + 1}"
+                    : $"[{i + 1}] {icon} {name} (NEW)";
             }
         }
 

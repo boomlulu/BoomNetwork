@@ -24,6 +24,16 @@ namespace BoomNetwork.Samples.VampireSurvivors
             w.Write(state.WaveNumber);
             w.Write(state.WaveSpawnTimer);
             w.Write(state.WaveSpawnRemaining);
+            w.Write(state.FocusFireTarget);
+            w.Write(state.FocusFireTimer);
+
+            for (int t = 0; t < GameState.MaxRevivalTotems; t++)
+            {
+                ref var totem = ref state.RevivalTotems[t];
+                w.Write(totem.Active);
+                w.Write(totem.PosX.Raw); w.Write(totem.PosZ.Raw);
+                w.Write(totem.OwnerSlot); w.Write(totem.ReviveProgress);
+            }
 
             for (int i = 0; i < GameState.MaxPlayers; i++)
             {
@@ -36,6 +46,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 w.Write(p.InvincibilityFrames);
                 w.Write(p.KillCount);
                 w.Write(p.PendingLevelUp); w.Write(p.UpgradeChoice);
+                w.Write(p.UpgradeOpt0); w.Write(p.UpgradeOpt1); w.Write(p.UpgradeOpt2); w.Write(p.UpgradeOpt3);
 
                 for (int ws = 0; ws < PlayerState.MaxWeaponSlots; ws++)
                 {
@@ -62,6 +73,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 w.Write(e.PosX.Raw); w.Write(e.PosZ.Raw);
                 w.Write(e.DirX.Raw); w.Write(e.DirZ.Raw);
                 w.Write(e.Hp); w.Write(e.TargetPlayerId); w.Write(e.BehaviorTimer);
+                w.Write(e.SlowFrames); w.Write(e.LinkedEnemyIdx); w.Write(e.HitWindowTimer);
             }
 
             // Projectiles: write slot index
@@ -129,6 +141,16 @@ namespace BoomNetwork.Samples.VampireSurvivors
             state.WaveNumber = r.ReadInt32();
             state.WaveSpawnTimer = r.ReadUInt32();
             state.WaveSpawnRemaining = r.ReadUInt32();
+            state.FocusFireTarget = r.ReadInt32();
+            state.FocusFireTimer = r.ReadUInt32();
+
+            for (int t = 0; t < GameState.MaxRevivalTotems; t++)
+            {
+                ref var totem = ref state.RevivalTotems[t];
+                totem.Active = r.ReadBoolean();
+                totem.PosX = new FInt(r.ReadInt32()); totem.PosZ = new FInt(r.ReadInt32());
+                totem.OwnerSlot = r.ReadInt32(); totem.ReviveProgress = r.ReadUInt32();
+            }
 
             for (int i = 0; i < GameState.MaxPlayers; i++)
             {
@@ -141,6 +163,8 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 p.InvincibilityFrames = r.ReadUInt32();
                 p.KillCount = r.ReadInt32();
                 p.PendingLevelUp = r.ReadBoolean(); p.UpgradeChoice = r.ReadByte();
+                p.UpgradeOpt0 = r.ReadByte(); p.UpgradeOpt1 = r.ReadByte();
+                p.UpgradeOpt2 = r.ReadByte(); p.UpgradeOpt3 = r.ReadByte();
 
                 for (int ws = 0; ws < PlayerState.MaxWeaponSlots; ws++)
                 {
@@ -173,6 +197,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 e.PosX = new FInt(r.ReadInt32()); e.PosZ = new FInt(r.ReadInt32());
                 e.DirX = new FInt(r.ReadInt32()); e.DirZ = new FInt(r.ReadInt32());
                 e.Hp = r.ReadInt32(); e.TargetPlayerId = r.ReadInt32(); e.BehaviorTimer = r.ReadUInt32();
+                e.SlowFrames = r.ReadUInt32(); e.LinkedEnemyIdx = r.ReadInt32(); e.HitWindowTimer = r.ReadUInt32();
             }
 
             // Projectiles: restore to original slot index

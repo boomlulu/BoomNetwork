@@ -3,6 +3,8 @@
 // Isometric camera following local player. Kill explosions + screen shake.
 // Gem magnet visual. Floating damage numbers. Growth-curve weapon scaling.
 // Boss pulsing visual + warning banner.
+// NEW: LinkBeam line, ShieldWall, HealAura ring, FrostNova ring, FocusFire marker,
+//      RevivalTotem pillar, TwinCore dual orbs, SplitBoss/SplitHalf rendering.
 
 using UnityEngine;
 
@@ -22,7 +24,22 @@ namespace BoomNetwork.Samples.VampireSurvivors
         Material _matKnife, _matBoneShard;
         Material _matGem, _matGround;
         Material _matOrb, _matLightning, _matHolyWater;
-        Material _matEnemyFlash; // white flash on death
+        Material _matEnemyFlash;
+        // New weapon materials
+        Material _matLinkBeam;       // 青绿光束
+        Material _matHealAura;       // 绿色治疗光环
+        Material _matShieldWall;     // 蓝色护盾墙
+        Material _matFocusFireMark;  // 红色集火标记
+        Material _matRevivalTotem;   // 金色复活图腾
+        Material _matFrostNova;      // 蓝白冰冻光环
+        Material _matFireTrail;      // 橙色火焰地面
+        Material _matTwinCoreA;      // TwinCore 核心 A（红色）
+        Material _matTwinCoreB;      // TwinCore 核心 B（紫色）
+        Material _matTwinCoreHit;    // TwinCore 命中后高亮（白色）
+        Material _matSplitBoss;      // 分裂 Boss（暗红橙）
+        Material _matSplitHalf;      // 分裂半体（橙色）
+        Material _matSplitShotMain;  // 分裂弹主弹
+        Material _matSplitShotSplinter; // 分裂弹碎片
 
         // ==================== Pools ====================
         GameObject[] _playerObjs = new GameObject[GameState.MaxPlayers];
@@ -37,48 +54,55 @@ namespace BoomNetwork.Samples.VampireSurvivors
         Material[] _orbMats = new Material[TotalOrbs];
         GameObject[] _flashPool = new GameObject[GameState.MaxLightningFlashes];
 
-        // ==================== Camera (Feature 1) ====================
+        // New pools
+        const int MaxLinkBeamLines = GameState.MaxPlayers * (GameState.MaxPlayers - 1) / 2; // 6 pairs
+        GameObject[] _linkBeamPool = new GameObject[MaxLinkBeamLines];
+        const int MaxShieldWalls = MaxLinkBeamLines;
+        GameObject[] _shieldWallPool = new GameObject[MaxShieldWalls];
+        GameObject[] _revivalTotemPool = new GameObject[GameState.MaxRevivalTotems];
+        GameObject[] _focusFireMarkPool = new GameObject[1]; // 只有 1 个集火目标
+        Material _focusFireMarkMat;
+        // FrostNova ring (per player, pulsing effect handled by scale)
+        const int MaxFrostRings = GameState.MaxPlayers;
+        GameObject[] _frostRingPool = new GameObject[MaxFrostRings];
+        float[] _frostRingScale = new float[MaxFrostRings];
+
+        // ==================== Camera ====================
         static readonly Vector3 IsoOffset = new Vector3(0f, 18f, -14f);
         static readonly Quaternion IsoRotation = Quaternion.Euler(52f, 0f, 0f);
         const float IsoOrthoSize = 13f;
         const float CamSmoothSpeed = 8f;
         Vector3 _camCurrentPos;
 
-        // ==================== Player Interpolation (jitter buffer) ====================
-        // Store previous and current sim positions to interpolate between frames.
-        // SyncVisuals runs at ~20fps (server tick), but Update runs at 60fps+.
-        // Dynamic jitter buffer: render N ms behind real time (N adapts to measured jitter).
+        // ==================== Player Interpolation ====================
         Vector3[] _playerPrevPos = new Vector3[GameState.MaxPlayers];
         Vector3[] _playerCurPos = new Vector3[GameState.MaxPlayers];
         Quaternion[] _playerPrevRot = new Quaternion[GameState.MaxPlayers];
         Quaternion[] _playerCurRot = new Quaternion[GameState.MaxPlayers];
-        float _interpT; // 0→1 between sim frames
-        float _simFrameInterval; // seconds between sim ticks (e.g. 0.05)
-        float _timeSinceLastSync; // diagnostic only
-        float _prevFrameWallTime; // realtimeSinceStartup when prev frame arrived
-        float _curFrameWallTime;  // realtimeSinceStartup when cur frame arrived
-        // Dynamic jitter buffer: EMA of |arrival_interval - expected|, scaled by 2×, clamped.
-        float _measuredJitter;    // EMA of absolute deviation from expected frame interval
-        float _jitterBuffer;      // current effective buffer in seconds (smoothed)
-        const float JitterEmaAlpha   = 0.15f; // how fast jitter estimate reacts
-        const float JitterSmoothAlpha = 0.1f; // how fast buffer target is chased
-        const float JitterMinSec     = 0.010f; // 10ms floor (always some buffer)
-        const float JitterMaxFraction = 0.75f; // never exceed 75% of one frame
+        float _interpT;
+        float _simFrameInterval;
+        float _timeSinceLastSync;
+        float _prevFrameWallTime;
+        float _curFrameWallTime;
+        float _measuredJitter;
+        float _jitterBuffer;
+        const float JitterEmaAlpha   = 0.15f;
+        const float JitterSmoothAlpha = 0.1f;
+        const float JitterMinSec     = 0.010f;
+        const float JitterMaxFraction = 0.75f;
 
-        // ==================== Jitter Diagnostic ====================
         float _lastSyncTime;
         int _syncCount;
         float _diagTimer;
 
-        // ==================== Backward-Move Detector ====================
         Vector3[] _lastRenderPos = new Vector3[GameState.MaxPlayers];
 
-        // ==================== Shadow Copy (delta detection) ====================
+        // ==================== Shadow Copy ====================
         int[] _prevEnemyHp = new int[GameState.MaxEnemies];
         bool[] _prevEnemyAlive = new bool[GameState.MaxEnemies];
         int[] _prevPlayerHp = new int[GameState.MaxPlayers];
 
-        // ==================== Death Pop + Screen Shake (Feature 2) ====================
+        // ==================== Death Pop + Screen Shake ====================
         struct DeathPop { public bool Active; public int Frame; public Vector3 Origin; public bool IsBoss; }
         DeathPop[] _deathPops = new DeathPop[GameState.MaxEnemies];
         Vector3 _shakeOffset;
@@ -86,20 +110,20 @@ namespace BoomNetwork.Samples.VampireSurvivors
         const float ShakePerKill = 0.08f;
         const float ShakeMax = 0.6f;
 
-        // ==================== Gem Magnet (Feature 3) ====================
+        // ==================== Gem Magnet ====================
         Vector3[] _gemVisualPos = new Vector3[GameState.MaxGems];
         bool[] _gemWasAlive = new bool[GameState.MaxGems];
         const float GemMagnetRadius = 4f;
         const float GemMagnetLerpSpeed = 8f;
 
-        // ==================== Damage Numbers (Feature 4) ====================
+        // ==================== Damage Numbers ====================
         const int DmgNumPoolSize = 64;
         struct DamageNumber { public bool Active; public GameObject Obj; public TextMesh Text; public Vector3 Vel; public float TimeLeft; public float Total; }
         DamageNumber[] _dmgPool = new DamageNumber[DmgNumPoolSize];
         const float DmgNumDuration = 0.5f;
         const float DmgNumRiseSpeed = 2.5f;
 
-        // ==================== Boss Warning (Feature 6) ====================
+        // ==================== Boss Warning ====================
         float _bossWarningTimer;
 
         static readonly Color[] PlayerColors =
@@ -131,8 +155,8 @@ namespace BoomNetwork.Samples.VampireSurvivors
             CreateOrbPool();
             CreateFlashPool();
             CreateDamageNumberPool();
+            CreateNewWeaponPools();
 
-            // Init interpolation arrays
             for (int i = 0; i < GameState.MaxPlayers; i++)
             {
                 _playerPrevRot[i] = Quaternion.identity;
@@ -140,7 +164,6 @@ namespace BoomNetwork.Samples.VampireSurvivors
             }
             _jitterBuffer = JitterMinSec;
 
-            // Snap camera to player or center
             if (_localSlot >= 0 && _localSlot < GameState.MaxPlayers && state.Players[_localSlot].IsActive)
                 _camCurrentPos = new Vector3(state.Players[_localSlot].PosX.ToFloat(), 0f, state.Players[_localSlot].PosZ.ToFloat()) + IsoOffset;
             else
@@ -154,25 +177,47 @@ namespace BoomNetwork.Samples.VampireSurvivors
         {
             var shader = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
 
-            _matPlayer = new Material(shader) { color = PlayerColors[0] };
-            _matPlayerHit = new Material(shader) { color = new Color(1f, 0.5f, 0.5f, 0.7f) };
-            _matZombie = new Material(shader) { color = new Color(0.9f, 0.2f, 0.15f) };
-            _matBat = new Material(shader) { color = new Color(0.5f, 0.1f, 0.6f) };
-            _matMage = new Material(shader) { color = new Color(0.2f, 0.2f, 0.8f) };
-            _matBoss = new Material(shader) { color = new Color(0.6f, 0f, 0f) };
-            _matKnife = new Material(shader) { color = Color.white };
-            _matBoneShard = new Material(shader) { color = new Color(0.9f, 0.85f, 0.7f) };
-            _matGem = new Material(shader) { color = new Color(0.3f, 1f, 0.5f) };
-            _matGround = new Material(shader) { color = new Color(0.15f, 0.15f, 0.2f) };
-            _matOrb = new Material(shader) { color = new Color(0.4f, 0.7f, 1f) };
+            _matPlayer      = new Material(shader) { color = PlayerColors[0] };
+            _matPlayerHit   = new Material(shader) { color = new Color(1f, 0.5f, 0.5f, 0.7f) };
+            _matZombie      = new Material(shader) { color = new Color(0.9f, 0.2f, 0.15f) };
+            _matBat         = new Material(shader) { color = new Color(0.5f, 0.1f, 0.6f) };
+            _matMage        = new Material(shader) { color = new Color(0.2f, 0.2f, 0.8f) };
+            _matBoss        = new Material(shader) { color = new Color(0.6f, 0f, 0f) };
+            _matKnife       = new Material(shader) { color = Color.white };
+            _matBoneShard   = new Material(shader) { color = new Color(0.9f, 0.85f, 0.7f) };
+            _matGem         = new Material(shader) { color = new Color(0.3f, 1f, 0.5f) };
+            _matGround      = new Material(shader) { color = new Color(0.15f, 0.15f, 0.2f) };
+            _matOrb         = new Material(shader) { color = new Color(0.4f, 0.7f, 1f) };
             _matOrb.SetFloat("_Smoothness", 0.9f);
-            _matLightning = new Material(shader) { color = new Color(1f, 1f, 0.5f) };
+            _matLightning   = new Material(shader) { color = new Color(1f, 1f, 0.5f) };
             _matLightning.EnableKeyword("_EMISSION");
-            _matHolyWater = new Material(shader) { color = new Color(0.3f, 0.5f, 1f, 0.5f) };
-            _matEnemyFlash = new Material(shader) { color = Color.white };
+            _matHolyWater   = new Material(shader) { color = new Color(0.3f, 0.5f, 1f, 0.5f) };
+            _matEnemyFlash  = new Material(shader) { color = Color.white };
+
+            // New weapon materials
+            _matLinkBeam       = new Material(shader) { color = new Color(0f, 1f, 0.9f, 0.8f) };
+            _matLinkBeam.EnableKeyword("_EMISSION");
+            _matHealAura       = new Material(shader) { color = new Color(0.2f, 1f, 0.4f, 0.5f) };
+            _matShieldWall     = new Material(shader) { color = new Color(0.3f, 0.6f, 1f, 0.6f) };
+            _matFocusFireMark  = new Material(shader) { color = new Color(1f, 0.2f, 0.1f) };
+            _matFocusFireMark.EnableKeyword("_EMISSION");
+            _matRevivalTotem   = new Material(shader) { color = new Color(1f, 0.85f, 0.1f) };
+            _matRevivalTotem.EnableKeyword("_EMISSION");
+            _matFrostNova      = new Material(shader) { color = new Color(0.5f, 0.85f, 1f, 0.4f) };
+            _matFireTrail      = new Material(shader) { color = new Color(1f, 0.5f, 0f, 0.6f) };
+            _matTwinCoreA      = new Material(shader) { color = new Color(1f, 0.15f, 0.1f) };
+            _matTwinCoreA.EnableKeyword("_EMISSION");
+            _matTwinCoreB      = new Material(shader) { color = new Color(0.8f, 0.1f, 0.9f) };
+            _matTwinCoreB.EnableKeyword("_EMISSION");
+            _matTwinCoreHit    = new Material(shader) { color = Color.white };
+            _matTwinCoreHit.EnableKeyword("_EMISSION");
+            _matSplitBoss      = new Material(shader) { color = new Color(0.9f, 0.4f, 0f) };
+            _matSplitHalf      = new Material(shader) { color = new Color(1f, 0.55f, 0.1f) };
+            _matSplitShotMain      = new Material(shader) { color = new Color(1f, 0.85f, 0f) };
+            _matSplitShotSplinter  = new Material(shader) { color = new Color(1f, 0.6f, 0.1f) };
         }
 
-        // ==================== Camera (Feature 1: Isometric) ====================
+        // ==================== Camera ====================
 
         void CreateCamera()
         {
@@ -192,8 +237,6 @@ namespace BoomNetwork.Samples.VampireSurvivors
             if (mainCam != null && mainCam != _cam) mainCam.gameObject.SetActive(false);
         }
 
-        // Camera runs in LateUpdate (every render frame, 60fps+) not SyncVisuals (20fps).
-        // SyncVisuals only updates _camTarget; LateUpdate smoothly interpolates.
         Vector3 _camTarget;
 
         void SyncCamera()
@@ -208,52 +251,43 @@ namespace BoomNetwork.Samples.VampireSurvivors
         {
             if (!_initialized || _state == null) return;
 
-            // Dynamic jitter buffer: render behind real time by _jitterBuffer seconds
-            // so frame-arrival jitter is absorbed and interpT stays monotonically increasing.
-            _timeSinceLastSync += Time.deltaTime; // diagnostic only
+            _timeSinceLastSync += Time.deltaTime;
             float window = _curFrameWallTime - _prevFrameWallTime;
             float renderTime = Time.realtimeSinceStartup - _jitterBuffer;
             _interpT = (window > 0.001f)
                 ? Mathf.Clamp01((renderTime - _prevFrameWallTime) / window)
                 : 1f;
 
-            // Interpolate player positions between prev and current sim positions
             for (int i = 0; i < GameState.MaxPlayers; i++)
             {
                 if (_playerObjs[i] == null || !_playerObjs[i].activeSelf) continue;
-
                 Vector3 interpPos = Vector3.Lerp(_playerPrevPos[i], _playerCurPos[i], _interpT);
-
-                // Backward-move detector: log if render position moves opposite to sim direction
-                Vector3 simDir = _playerCurPos[i] - _playerPrevPos[i];
-                Vector3 renderDelta = interpPos - _lastRenderPos[i];
-                if (_lastRenderPos[i] != Vector3.zero && simDir.sqrMagnitude > 0.0001f && renderDelta.sqrMagnitude > 0.0001f)
-                {
-                    if (Vector3.Dot(renderDelta.normalized, simDir.normalized) < -0.5f)
-                        Debug.LogWarning($"[VS-Backward] p{i} renderDelta={renderDelta:F3} simDir={simDir:F3} interpT={_interpT:F3} timeSince={_timeSinceLastSync*1000f:F1}ms prev={_playerPrevPos[i]:F3} cur={_playerCurPos[i]:F3}");
-                }
-                _lastRenderPos[i] = interpPos;
-
                 _playerObjs[i].transform.position = interpPos;
-
                 Quaternion interpRot = Quaternion.Slerp(_playerPrevRot[i], _playerCurRot[i], _interpT);
                 _playerObjs[i].transform.rotation = interpRot;
+                _lastRenderPos[i] = interpPos;
+            }
+
+            // Animate FrostNova rings
+            for (int i = 0; i < MaxFrostRings; i++)
+            {
+                if (_frostRingPool[i] == null || !_frostRingPool[i].activeSelf) continue;
+                _frostRingScale[i] -= Time.deltaTime * 3f;
+                if (_frostRingScale[i] <= 0f) { _frostRingPool[i].SetActive(false); continue; }
+                float s = _frostRingScale[i];
+                _frostRingPool[i].transform.localScale = new Vector3(s, 0.05f, s);
             }
         }
 
         void LateUpdate()
         {
             if (!_initialized || _cam == null) return;
-
-            // Camera follows interpolated local player position (not sim position)
             if (_localSlot >= 0 && _localSlot < GameState.MaxPlayers
                 && _playerObjs[_localSlot] != null && _playerObjs[_localSlot].activeSelf)
             {
                 _camTarget = _playerObjs[_localSlot].transform.position
-                    - new Vector3(0f, 0.5f, 0f) // remove capsule Y offset
-                    + IsoOffset;
+                    - new Vector3(0f, 0.5f, 0f) + IsoOffset;
             }
-
             UpdateShake();
             _cam.transform.position = _camTarget + _shakeOffset;
             _cam.transform.rotation = IsoRotation;
@@ -283,8 +317,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
         void MakeLine(float x, float y, float z, float sx, float sy, float sz)
         {
             var obj = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            obj.name = "VS_Border";
-            obj.transform.SetParent(transform);
+            obj.name = "VS_Border"; obj.transform.SetParent(transform);
             obj.transform.position = new Vector3(x, y, z);
             obj.transform.localScale = new Vector3(sx, sy, sz);
             obj.GetComponent<Renderer>().sharedMaterial = _matGem;
@@ -293,8 +326,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
         void CreateLight()
         {
-            var obj = new GameObject("VS_Light");
-            obj.transform.SetParent(transform);
+            var obj = new GameObject("VS_Light"); obj.transform.SetParent(transform);
             obj.transform.rotation = Quaternion.Euler(50f, -30f, 0f);
             var light = obj.AddComponent<Light>();
             light.type = LightType.Directional;
@@ -309,8 +341,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             for (int i = 0; i < GameState.MaxPlayers; i++)
             {
                 var obj = GameObject.CreatePrimitive(PrimitiveType.Capsule);
-                obj.name = $"VS_Player_{i}";
-                obj.transform.SetParent(transform);
+                obj.name = $"VS_Player_{i}"; obj.transform.SetParent(transform);
                 obj.transform.localScale = new Vector3(0.7f, 0.5f, 0.7f);
                 var mat = new Material(_matPlayer) { color = PlayerColors[i] };
                 obj.GetComponent<Renderer>().sharedMaterial = mat;
@@ -326,8 +357,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             for (int i = 0; i < GameState.MaxEnemies; i++)
             {
                 var obj = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                obj.name = "VS_Enemy";
-                obj.transform.SetParent(transform);
+                obj.name = "VS_Enemy"; obj.transform.SetParent(transform);
                 obj.transform.localScale = new Vector3(0.7f, 0.9f, 0.7f);
                 _enemyRenderers[i] = obj.GetComponent<Renderer>();
                 _enemyRenderers[i].sharedMaterial = _matZombie;
@@ -342,8 +372,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             for (int i = 0; i < GameState.MaxProjectiles; i++)
             {
                 var obj = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                obj.name = "VS_Proj";
-                obj.transform.SetParent(transform);
+                obj.name = "VS_Proj"; obj.transform.SetParent(transform);
                 obj.transform.localScale = new Vector3(0.1f, 0.1f, 0.35f);
                 _projRenderers[i] = obj.GetComponent<Renderer>();
                 _projRenderers[i].sharedMaterial = _matKnife;
@@ -358,8 +387,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             for (int i = 0; i < GameState.MaxGems; i++)
             {
                 var obj = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-                obj.name = "VS_Gem";
-                obj.transform.SetParent(transform);
+                obj.name = "VS_Gem"; obj.transform.SetParent(transform);
                 obj.transform.localScale = new Vector3(0.25f, 0.25f, 0.25f);
                 obj.GetComponent<Renderer>().sharedMaterial = _matGem;
                 DestroyCollider(obj);
@@ -373,8 +401,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             for (int i = 0; i < TotalOrbs; i++)
             {
                 var obj = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-                obj.name = "VS_Orb";
-                obj.transform.SetParent(transform);
+                obj.name = "VS_Orb"; obj.transform.SetParent(transform);
                 obj.transform.localScale = new Vector3(0.35f, 0.35f, 0.35f);
                 var mat = new Material(_matOrb);
                 mat.EnableKeyword("_EMISSION");
@@ -391,8 +418,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             for (int i = 0; i < GameState.MaxLightningFlashes; i++)
             {
                 var obj = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-                obj.name = "VS_Flash";
-                obj.transform.SetParent(transform);
+                obj.name = "VS_Flash"; obj.transform.SetParent(transform);
                 obj.transform.localScale = new Vector3(0.6f, 2f, 0.6f);
                 obj.GetComponent<Renderer>().sharedMaterial = _matLightning;
                 DestroyCollider(obj);
@@ -405,15 +431,73 @@ namespace BoomNetwork.Samples.VampireSurvivors
         {
             for (int i = 0; i < DmgNumPoolSize; i++)
             {
-                var obj = new GameObject("VS_DmgNum");
-                obj.transform.SetParent(transform);
+                var obj = new GameObject("VS_DmgNum"); obj.transform.SetParent(transform);
                 var tm = obj.AddComponent<TextMesh>();
-                tm.fontSize = 48;
-                tm.characterSize = 0.05f;
-                tm.anchor = TextAnchor.MiddleCenter;
-                tm.alignment = TextAlignment.Center;
+                tm.fontSize = 48; tm.characterSize = 0.05f;
+                tm.anchor = TextAnchor.MiddleCenter; tm.alignment = TextAlignment.Center;
                 obj.SetActive(false);
                 _dmgPool[i] = new DamageNumber { Obj = obj, Text = tm };
+            }
+        }
+
+        void CreateNewWeaponPools()
+        {
+            // LinkBeam lines (thin horizontal cubes)
+            for (int i = 0; i < MaxLinkBeamLines; i++)
+            {
+                var obj = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                obj.name = "VS_LinkBeam"; obj.transform.SetParent(transform);
+                obj.GetComponent<Renderer>().sharedMaterial = _matLinkBeam;
+                DestroyCollider(obj);
+                obj.SetActive(false);
+                _linkBeamPool[i] = obj;
+            }
+
+            // ShieldWall (thin vertical planes)
+            for (int i = 0; i < MaxShieldWalls; i++)
+            {
+                var obj = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                obj.name = "VS_ShieldWall"; obj.transform.SetParent(transform);
+                obj.GetComponent<Renderer>().sharedMaterial = _matShieldWall;
+                DestroyCollider(obj);
+                obj.SetActive(false);
+                _shieldWallPool[i] = obj;
+            }
+
+            // Revival totems (golden pillars)
+            for (int i = 0; i < GameState.MaxRevivalTotems; i++)
+            {
+                var obj = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+                obj.name = "VS_RevivalTotem"; obj.transform.SetParent(transform);
+                obj.transform.localScale = new Vector3(0.4f, 1.5f, 0.4f);
+                obj.GetComponent<Renderer>().sharedMaterial = _matRevivalTotem;
+                DestroyCollider(obj);
+                obj.SetActive(false);
+                _revivalTotemPool[i] = obj;
+            }
+
+            // FocusFire mark (tall red spike above enemy)
+            {
+                var obj = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+                obj.name = "VS_FocusFireMark"; obj.transform.SetParent(transform);
+                obj.transform.localScale = new Vector3(0.2f, 1.5f, 0.2f);
+                _focusFireMarkMat = new Material(_matFocusFireMark);
+                _focusFireMarkMat.EnableKeyword("_EMISSION");
+                obj.GetComponent<Renderer>().sharedMaterial = _focusFireMarkMat;
+                DestroyCollider(obj);
+                obj.SetActive(false);
+                _focusFireMarkPool[0] = obj;
+            }
+
+            // FrostNova rings (flat disk, animated in Update)
+            for (int i = 0; i < MaxFrostRings; i++)
+            {
+                var obj = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+                obj.name = "VS_FrostRing"; obj.transform.SetParent(transform);
+                obj.GetComponent<Renderer>().sharedMaterial = _matFrostNova;
+                DestroyCollider(obj);
+                obj.SetActive(false);
+                _frostRingPool[i] = obj;
             }
         }
 
@@ -429,6 +513,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             SyncGems();
             SyncOrbs();
             SyncFlashes();
+            SyncNewWeaponEffects();
             UpdateDeathExplosions();
             UpdateDamageNumbers();
             UpdateBossWarning();
@@ -439,29 +524,18 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
         void SyncPlayers()
         {
-            // === Jitter Diagnostic ===
             float now = Time.realtimeSinceStartup;
             float syncDelta = now - _lastSyncTime;
-            _lastSyncTime = now;
-            _syncCount++;
-            _diagTimer += syncDelta;
+            _lastSyncTime = now; _syncCount++; _diagTimer += syncDelta;
             if (_diagTimer >= 2f)
             {
                 float avgHz = _syncCount / _diagTimer;
-                Debug.Log($"[VS-Jitter] SyncPlayers avg rate: {avgHz:F1} Hz (expected ~{1f/_simFrameInterval:F0}), interval: {syncDelta*1000f:F1}ms, renderFPS: {1f/Time.deltaTime:F0}, jitterEMA: {_measuredJitter*1000f:F1}ms, buffer: {_jitterBuffer*1000f:F1}ms");
-                _diagTimer = 0f;
-                _syncCount = 0;
+                Debug.Log($"[VS-Jitter] avg rate: {avgHz:F1} Hz, interval: {syncDelta*1000f:F1}ms");
+                _diagTimer = 0f; _syncCount = 0;
             }
 
-            // Log if frame arrived while last interpolation wasn't complete (early) or overshot (late)
-            float interpAtReceipt = (_simFrameInterval > 0f) ? _timeSinceLastSync / _simFrameInterval : 1f;
-            if (interpAtReceipt < 0.7f || interpAtReceipt > 1.5f)
-                Debug.LogWarning($"[VS-FrameTiming] Frame arrived at interpT={interpAtReceipt:F2} (timeSince={_timeSinceLastSync*1000f:F1}ms, expected {_simFrameInterval*1000f:F0}ms)");
-
-            // Record wall-clock arrival time for jitter-buffered interpolation
             _prevFrameWallTime = _curFrameWallTime;
             float newArrival = Time.realtimeSinceStartup;
-            // Update dynamic jitter buffer from actual inter-frame deviation
             if (_curFrameWallTime > 0f && _simFrameInterval > 0f)
             {
                 float actualInterval = newArrival - _curFrameWallTime;
@@ -471,7 +545,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 _jitterBuffer = Mathf.Lerp(_jitterBuffer, targetBuffer, JitterSmoothAlpha);
             }
             _curFrameWallTime = newArrival;
-            _timeSinceLastSync = 0f; // diagnostic only
+            _timeSinceLastSync = 0f;
 
             for (int i = 0; i < GameState.MaxPlayers; i++)
             {
@@ -480,18 +554,13 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 _playerObjs[i].SetActive(show);
                 if (!show) { _lastRenderPos[i] = Vector3.zero; continue; }
 
-                // Feature 5a: player scale by level
                 float pScale = 1f + Mathf.Min(p.Level - 1, 9) * 0.015f;
                 _playerObjs[i].transform.localScale = new Vector3(0.7f * pScale, 0.5f * pScale, 0.7f * pScale);
 
-                // Capture previous → current for interpolation
                 Vector3 newPos = new Vector3(p.PosX.ToFloat(), 0.5f, p.PosZ.ToFloat());
                 _playerPrevPos[i] = _playerCurPos[i];
                 _playerCurPos[i] = newPos;
-
-                // Snap on first frame (prev == zero)
-                if (_playerPrevPos[i] == Vector3.zero)
-                    _playerPrevPos[i] = newPos;
+                if (_playerPrevPos[i] == Vector3.zero) _playerPrevPos[i] = newPos;
 
                 Quaternion newRot;
                 if (p.FacingX != FInt.Zero || p.FacingZ != FInt.Zero)
@@ -499,10 +568,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
                     float angle = Mathf.Atan2(p.FacingX.ToFloat(), p.FacingZ.ToFloat()) * Mathf.Rad2Deg;
                     newRot = Quaternion.Euler(0f, angle, 0f);
                 }
-                else
-                {
-                    newRot = _playerCurRot[i];
-                }
+                else newRot = _playerCurRot[i];
                 _playerPrevRot[i] = _playerCurRot[i];
                 _playerCurRot[i] = newRot;
 
@@ -518,15 +584,13 @@ namespace BoomNetwork.Samples.VampireSurvivors
             {
                 ref var e = ref _state.Enemies[i];
                 bool show = e.IsAlive;
-
-                // Don't hide if death pop is active (UpdateDeathExplosions manages it)
                 if (!_deathPops[i].Active) _enemyPool[i].SetActive(show);
 
-                // Feature 2: detect death transition
                 if (!e.IsAlive && _prevEnemyAlive[i])
                 {
                     Vector3 lastPos = _enemyPool[i].transform.position;
-                    bool isBoss = (e.Type == EnemyType.Boss);
+                    bool isBoss = (e.Type == EnemyType.Boss || e.Type == EnemyType.TwinCore
+                        || e.Type == EnemyType.SplitBoss || e.Type == EnemyType.SplitHalf);
                     _deathPops[i] = new DeathPop { Active = true, Frame = 0, Origin = lastPos, IsBoss = isBoss };
                     _shakeIntensity = Mathf.Min(_shakeIntensity + (isBoss ? ShakeMax : ShakePerKill), ShakeMax);
                 }
@@ -540,25 +604,57 @@ namespace BoomNetwork.Samples.VampireSurvivors
                     case EnemyType.Zombie:
                         _enemyPool[i].transform.localScale = new Vector3(0.7f, 0.9f, 0.7f);
                         _enemyPool[i].transform.position = new Vector3(ex, 0.45f, ez);
-                        _enemyRenderers[i].sharedMaterial = _matZombie;
+                        _enemyRenderers[i].sharedMaterial = e.SlowFrames > 0 ? _matFrostNova : _matZombie;
                         break;
                     case EnemyType.Bat:
                         _enemyPool[i].transform.localScale = new Vector3(0.5f, 0.4f, 0.5f);
                         _enemyPool[i].transform.position = new Vector3(ex, 0.8f, ez);
-                        _enemyRenderers[i].sharedMaterial = _matBat;
+                        _enemyRenderers[i].sharedMaterial = e.SlowFrames > 0 ? _matFrostNova : _matBat;
                         break;
                     case EnemyType.SkeletonMage:
                         _enemyPool[i].transform.localScale = new Vector3(0.6f, 1.1f, 0.6f);
                         _enemyPool[i].transform.position = new Vector3(ex, 0.45f, ez);
-                        _enemyRenderers[i].sharedMaterial = _matMage;
+                        _enemyRenderers[i].sharedMaterial = e.SlowFrames > 0 ? _matFrostNova : _matMage;
                         break;
                     case EnemyType.Boss:
-                        // Feature 6: big pulsing boss
                         float bossS = 3f + Mathf.Sin(_state.FrameNumber * 0.15f) * 0.15f;
                         _enemyPool[i].transform.localScale = new Vector3(bossS, bossS * 1.2f, bossS);
                         _enemyPool[i].transform.position = new Vector3(ex, bossS * 0.6f, ez);
                         float pulse = (Mathf.Sin(_state.FrameNumber * 0.2f) + 1f) * 0.5f;
                         _enemyRenderers[i].material.color = Color.Lerp(new Color(0.15f, 0f, 0f), new Color(0.8f, 0f, 0f), pulse);
+                        break;
+
+                    case EnemyType.TwinCore:
+                        // 红色/紫色双核，被标记时高亮白色
+                        bool isLinkedA = e.LinkedEnemyIdx >= 0;
+                        float coreS = 1.5f + Mathf.Sin(_state.FrameNumber * 0.2f) * 0.1f;
+                        _enemyPool[i].transform.localScale = new Vector3(coreS, coreS, coreS);
+                        _enemyPool[i].transform.position = new Vector3(ex, coreS * 0.5f, ez);
+                        if (e.HitWindowTimer > 0)
+                            _enemyRenderers[i].sharedMaterial = _matTwinCoreHit;
+                        else
+                            _enemyRenderers[i].sharedMaterial = (i % 2 == 0) ? _matTwinCoreA : _matTwinCoreB;
+                        break;
+
+                    case EnemyType.SplitBoss:
+                        float sbS = 2.5f + Mathf.Sin(_state.FrameNumber * 0.12f) * 0.2f;
+                        _enemyPool[i].transform.localScale = new Vector3(sbS, sbS * 1.1f, sbS);
+                        _enemyPool[i].transform.position = new Vector3(ex, sbS * 0.55f, ez);
+                        // 闪烁提示快分裂
+                        float splitT = e.BehaviorTimer / (float)GameState.SplitBossSplitTimer;
+                        float r = Mathf.Lerp(1f, 0.5f, splitT);
+                        _enemyRenderers[i].material.color = new Color(r, 0.35f * splitT, 0f);
+                        break;
+
+                    case EnemyType.SplitHalf:
+                        float shS = 1.8f;
+                        _enemyPool[i].transform.localScale = new Vector3(shS, shS, shS);
+                        _enemyPool[i].transform.position = new Vector3(ex, shS * 0.5f, ez);
+                        // 死亡窗口期间闪烁红色
+                        if (e.HitWindowTimer > 0 && (_state.FrameNumber % 6 < 3))
+                            _enemyRenderers[i].material.color = Color.red;
+                        else
+                            _enemyRenderers[i].sharedMaterial = _matSplitHalf;
                         break;
                 }
             }
@@ -577,7 +673,6 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 {
                     case ProjectileType.Knife:
                     {
-                        // Feature 5b: knife scale by level
                         int kLvl = GetWeaponLevel(p.OwnerPlayerId, WeaponType.Knife);
                         float kS = Mathf.Lerp(1f, 2f, (kLvl - 1) / 4f);
                         float kLen = kLvl >= 3 ? 0.35f * kS * 1.5f : 0.35f * kS;
@@ -601,51 +696,67 @@ namespace BoomNetwork.Samples.VampireSurvivors
                             _projPool[i].transform.rotation = Quaternion.Euler(0f, angle, 0f);
                         }
                         break;
-
                     case ProjectileType.HolyPuddle:
                     {
                         float diameter = p.Radius.ToFloat() * 2f;
                         _projPool[i].transform.localScale = new Vector3(diameter, 0.05f, diameter);
                         _projPool[i].transform.position = new Vector3(p.PosX.ToFloat(), 0.02f, p.PosZ.ToFloat());
                         _projPool[i].transform.rotation = Quaternion.identity;
-                        // Feature 5e: holy water color intensity by level
                         float hwT = Mathf.Clamp01((p.Radius.ToFloat() - 2f) / 3f);
                         _projRenderers[i].material.color = Color.Lerp(
-                            new Color(0.3f, 0.5f, 1f, 0.5f),
-                            new Color(0.5f, 0.9f, 1f, 0.8f), hwT);
+                            new Color(0.3f, 0.5f, 1f, 0.5f), new Color(0.5f, 0.9f, 1f, 0.8f), hwT);
                         break;
                     }
+                    case ProjectileType.FireTrailPuddle:
+                    {
+                        float diameter = p.Radius.ToFloat() * 2f;
+                        _projPool[i].transform.localScale = new Vector3(diameter, 0.06f, diameter);
+                        _projPool[i].transform.position = new Vector3(p.PosX.ToFloat(), 0.03f, p.PosZ.ToFloat());
+                        _projPool[i].transform.rotation = Quaternion.identity;
+                        float fade = p.LifetimeFrames / (float)GameState.FireTrailLifetime;
+                        _projRenderers[i].material.color = new Color(1f, 0.4f + fade * 0.2f, 0f, 0.5f + fade * 0.3f);
+                        break;
+                    }
+                    case ProjectileType.SplitShotMain:
+                        _projPool[i].transform.localScale = new Vector3(0.18f, 0.18f, 0.32f);
+                        _projPool[i].transform.position = new Vector3(p.PosX.ToFloat(), 0.5f, p.PosZ.ToFloat());
+                        _projRenderers[i].sharedMaterial = _matSplitShotMain;
+                        if (p.DirX != FInt.Zero || p.DirZ != FInt.Zero)
+                        {
+                            float angle = Mathf.Atan2(p.DirX.ToFloat(), p.DirZ.ToFloat()) * Mathf.Rad2Deg;
+                            _projPool[i].transform.rotation = Quaternion.Euler(0f, angle, 0f);
+                        }
+                        break;
+                    case ProjectileType.SplitShotSplinter:
+                        _projPool[i].transform.localScale = new Vector3(0.1f, 0.1f, 0.18f);
+                        _projPool[i].transform.position = new Vector3(p.PosX.ToFloat(), 0.5f, p.PosZ.ToFloat());
+                        _projRenderers[i].sharedMaterial = _matSplitShotSplinter;
+                        if (p.DirX != FInt.Zero || p.DirZ != FInt.Zero)
+                        {
+                            float angle = Mathf.Atan2(p.DirX.ToFloat(), p.DirZ.ToFloat()) * Mathf.Rad2Deg;
+                            _projPool[i].transform.rotation = Quaternion.Euler(0f, angle, 0f);
+                        }
+                        break;
                 }
             }
         }
 
         void SyncGems()
         {
-            // Feature 3: gem magnet visual
             for (int i = 0; i < GameState.MaxGems; i++)
             {
                 ref var g = ref _state.Gems[i];
                 bool show = g.IsAlive;
                 _gemPool[i].SetActive(show);
-                if (!show)
-                {
-                    _gemWasAlive[i] = false;
-                    continue;
-                }
+                if (!show) { _gemWasAlive[i] = false; continue; }
 
                 float simX = g.PosX.ToFloat(), simZ = g.PosZ.ToFloat();
                 float bob = Mathf.Sin((_state.FrameNumber + i * 7) * 0.15f) * 0.1f;
                 Vector3 simPos = new Vector3(simX, 0.2f + bob, simZ);
 
-                // Snap on first frame after spawn to avoid lerping from stale slot position
-                if (!_gemWasAlive[i])
-                {
-                    _gemVisualPos[i] = simPos;
-                    _gemWasAlive[i] = true;
-                }
+                if (!_gemWasAlive[i]) { _gemVisualPos[i] = simPos; _gemWasAlive[i] = true; }
                 else
                 {
-                    // Find closest player within magnet radius
                     Vector3 pullTarget = simPos;
                     float bestSq = GemMagnetRadius * GemMagnetRadius;
                     bool inMagnet = false;
@@ -658,7 +769,6 @@ namespace BoomNetwork.Samples.VampireSurvivors
                         float dSq = dx * dx + dz * dz;
                         if (dSq < bestSq) { bestSq = dSq; pullTarget = new Vector3(pl.PosX.ToFloat(), 0.3f, pl.PosZ.ToFloat()); inMagnet = true; }
                     }
-
                     Vector3 targetVisual = inMagnet ? pullTarget : simPos;
                     _gemVisualPos[i] = Vector3.Lerp(_gemVisualPos[i], targetVisual, Time.deltaTime * GemMagnetLerpSpeed);
                 }
@@ -684,7 +794,6 @@ namespace BoomNetwork.Samples.VampireSurvivors
                     float oz = player.PosZ.ToFloat() + Mathf.Sin(rad) * GameState.OrbOrbitRadius.ToFloat();
                     _orbPool[poolIdx].transform.position = new Vector3(ox, 0.5f, oz);
 
-                    // Feature 5c: orb size + emission by level
                     int orbLvl = GetWeaponLevel(p, WeaponType.Orb);
                     float orbScale = 0.35f + (orbLvl - 1) * 0.06f;
                     _orbPool[poolIdx].transform.localScale = new Vector3(orbScale, orbScale, orbScale);
@@ -696,7 +805,6 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
         void SyncFlashes()
         {
-            // Feature 5d: lightning bolt width by level
             float lvl = GetMaxWeaponLevel(WeaponType.Lightning);
             float boltW = 0.6f + (lvl - 1) * 0.15f;
             for (int i = 0; i < GameState.MaxLightningFlashes; i++)
@@ -712,7 +820,173 @@ namespace BoomNetwork.Samples.VampireSurvivors
             }
         }
 
-        // ==================== Feature 2: Death Explosions ====================
+        // ==================== New Weapon Visual Effects ====================
+
+        void SyncNewWeaponEffects()
+        {
+            SyncLinkBeams();
+            SyncShieldWalls();
+            SyncRevivalTotems();
+            SyncFocusFireMark();
+            SyncFrostNovaRings();
+        }
+
+        void SyncLinkBeams()
+        {
+            int beamIdx = 0;
+            for (int a = 0; a < GameState.MaxPlayers && beamIdx < MaxLinkBeamLines; a++)
+            {
+                ref var pA = ref _state.Players[a];
+                bool aHasBeam = pA.IsActive && pA.IsAlive && pA.FindWeaponSlot(WeaponType.LinkBeam) >= 0;
+
+                for (int b = a + 1; b < GameState.MaxPlayers && beamIdx < MaxLinkBeamLines; b++)
+                {
+                    ref var pB = ref _state.Players[b];
+                    bool bHasBeam = pB.IsActive && pB.IsAlive && pB.FindWeaponSlot(WeaponType.LinkBeam) >= 0;
+
+                    bool show = aHasBeam || bHasBeam;
+                    show = show && pA.IsActive && pA.IsAlive && pB.IsActive && pB.IsAlive;
+                    _linkBeamPool[beamIdx].SetActive(show);
+
+                    if (show)
+                    {
+                        Vector3 posA = new Vector3(pA.PosX.ToFloat(), 0.5f, pA.PosZ.ToFloat());
+                        Vector3 posB = new Vector3(pB.PosX.ToFloat(), 0.5f, pB.PosZ.ToFloat());
+                        Vector3 mid = (posA + posB) * 0.5f;
+                        float len = (posB - posA).magnitude;
+                        Vector3 dir = (posB - posA).normalized;
+
+                        _linkBeamPool[beamIdx].transform.position = mid;
+                        _linkBeamPool[beamIdx].transform.localScale = new Vector3(0.06f, 0.06f, len);
+                        if (dir.sqrMagnitude > 0.001f)
+                            _linkBeamPool[beamIdx].transform.rotation = Quaternion.LookRotation(dir);
+
+                        // 近距离时光束更亮
+                        float dist = len;
+                        bool close = dist < GameState.LinkBeamCloseDist.ToFloat();
+                        _linkBeamPool[beamIdx].GetComponent<Renderer>().material.color =
+                            close ? new Color(0f, 1f, 0.8f, 1f) : new Color(0f, 0.7f, 0.6f, 0.6f);
+                    }
+                    beamIdx++;
+                }
+            }
+            for (; beamIdx < MaxLinkBeamLines; beamIdx++)
+                _linkBeamPool[beamIdx].SetActive(false);
+        }
+
+        void SyncShieldWalls()
+        {
+            int wallIdx = 0;
+            for (int a = 0; a < GameState.MaxPlayers && wallIdx < MaxShieldWalls; a++)
+            {
+                ref var pA = ref _state.Players[a];
+                bool aHasWall = pA.IsActive && pA.IsAlive && pA.FindWeaponSlot(WeaponType.ShieldWall) >= 0;
+
+                for (int b = a + 1; b < GameState.MaxPlayers && wallIdx < MaxShieldWalls; b++)
+                {
+                    ref var pB = ref _state.Players[b];
+                    bool bHasWall = pB.IsActive && pB.IsAlive && pB.FindWeaponSlot(WeaponType.ShieldWall) >= 0;
+
+                    bool show = (aHasWall || bHasWall) && pA.IsActive && pA.IsAlive && pB.IsActive && pB.IsAlive;
+                    _shieldWallPool[wallIdx].SetActive(show);
+
+                    if (show)
+                    {
+                        Vector3 posA = new Vector3(pA.PosX.ToFloat(), 0f, pA.PosZ.ToFloat());
+                        Vector3 posB = new Vector3(pB.PosX.ToFloat(), 0f, pB.PosZ.ToFloat());
+                        Vector3 mid = (posA + posB) * 0.5f + Vector3.up;
+                        float len = (posB - posA).magnitude;
+                        Vector3 dir = (posB - posA).normalized;
+
+                        _shieldWallPool[wallIdx].transform.position = mid;
+                        // 竖立的盾墙：沿连线方向，高 2，薄 0.1
+                        _shieldWallPool[wallIdx].transform.localScale = new Vector3(0.1f, 2f, len * 0.33f);
+                        if (dir.sqrMagnitude > 0.001f)
+                            _shieldWallPool[wallIdx].transform.rotation = Quaternion.LookRotation(dir);
+
+                        float alpha = 0.5f + 0.3f * Mathf.Sin(Time.time * 4f);
+                        _shieldWallPool[wallIdx].GetComponent<Renderer>().material.color =
+                            new Color(0.3f, 0.6f, 1f, alpha);
+                    }
+                    wallIdx++;
+                }
+            }
+            for (; wallIdx < MaxShieldWalls; wallIdx++)
+                _shieldWallPool[wallIdx].SetActive(false);
+        }
+
+        void SyncRevivalTotems()
+        {
+            for (int i = 0; i < GameState.MaxRevivalTotems; i++)
+            {
+                ref var totem = ref _state.RevivalTotems[i];
+                _revivalTotemPool[i].SetActive(totem.Active);
+                if (!totem.Active) continue;
+
+                float px = totem.PosX.ToFloat(), pz = totem.PosZ.ToFloat();
+                _revivalTotemPool[i].transform.position = new Vector3(px, 1.5f, pz);
+
+                // 进度越高越亮
+                float progress = totem.ReviveProgress / (float)GameState.RevivalRequiredFrames;
+                float emissionIntensity = progress * 3f;
+                _revivalTotemPool[i].GetComponent<Renderer>().material.SetColor("_EmissionColor",
+                    new Color(1f, 0.8f, 0f) * emissionIntensity);
+                _revivalTotemPool[i].GetComponent<Renderer>().material.color =
+                    Color.Lerp(new Color(0.6f, 0.5f, 0f), new Color(1f, 0.9f, 0.2f), progress);
+
+                // 复活进度环：用缩放表示
+                float ringS = 0.4f + progress * 1.5f;
+                _revivalTotemPool[i].transform.localScale = new Vector3(0.4f, 1.5f + progress * 0.8f, 0.4f);
+            }
+        }
+
+        void SyncFocusFireMark()
+        {
+            bool hasFocus = _state.FocusFireTarget >= 0 && _state.FocusFireTarget < GameState.MaxEnemies
+                && _state.Enemies[_state.FocusFireTarget].IsAlive && _state.FocusFireTimer > 0;
+
+            _focusFireMarkPool[0].SetActive(hasFocus);
+            if (hasFocus)
+            {
+                ref var e = ref _state.Enemies[_state.FocusFireTarget];
+                float blink = Mathf.Sin(Time.time * 8f) * 0.5f + 0.5f;
+                _focusFireMarkPool[0].transform.position = new Vector3(
+                    e.PosX.ToFloat(), 3f + blink * 0.3f, e.PosZ.ToFloat());
+                _focusFireMarkPool[0].transform.localScale = new Vector3(0.25f, 1.5f, 0.25f);
+                float alpha = _state.FocusFireTimer / (float)GameState.FocusFireDuration;
+                _focusFireMarkMat.SetColor("_EmissionColor", new Color(1f, 0.1f, 0f) * (2f + blink));
+                _focusFireMarkMat.color = new Color(1f, 0.2f, 0.1f, alpha);
+            }
+        }
+
+        void SyncFrostNovaRings()
+        {
+            // FrostNova ring: triggered when a player fires FrostNova
+            // We detect it by checking if any enemy just got SlowFrames applied this frame
+            // (detected via prev vs current, but we don't track that here)
+            // Instead: keep rings active per-player with FrostNova weapon, pulsing every cooldown
+            for (int i = 0; i < MaxFrostRings; i++)
+            {
+                // If ring is animating (handled in Update via _frostRingScale[i])
+                // Just position it over the player it belongs to
+                if (_frostRingPool[i] == null || !_frostRingPool[i].activeSelf) continue;
+                // Position is already set when triggered; just let Update animate it
+            }
+        }
+
+        /// <summary>外部调用：当 FrostNova 触发时生成视觉环。</summary>
+        public void TriggerFrostNovaRing(int playerSlot, float radius)
+        {
+            if (!_initialized) return;
+            ref var p = ref _state.Players[playerSlot];
+            int ringIdx = playerSlot % MaxFrostRings;
+            _frostRingPool[ringIdx].SetActive(true);
+            _frostRingPool[ringIdx].transform.position = new Vector3(p.PosX.ToFloat(), 0.05f, p.PosZ.ToFloat());
+            _frostRingScale[ringIdx] = radius * 2f; // diameter, decays in Update
+            _frostRingPool[ringIdx].transform.localScale = new Vector3(_frostRingScale[ringIdx], 0.05f, _frostRingScale[ringIdx]);
+        }
+
+        // ==================== Death Explosions ====================
 
         void UpdateDeathExplosions()
         {
@@ -736,7 +1010,6 @@ namespace BoomNetwork.Samples.VampireSurvivors
                     float s = Mathf.Lerp(1f, maxScale, t);
                     obj.SetActive(true);
                     obj.transform.localScale = new Vector3(0.7f * s, 0.9f * s, 0.7f * s);
-                    float fade = 1f - t;
                     _enemyRenderers[i].sharedMaterial = _matEnemyFlash;
                 }
                 else
@@ -748,8 +1021,6 @@ namespace BoomNetwork.Samples.VampireSurvivors
             }
         }
 
-        // ==================== Feature 2: Screen Shake ====================
-
         void UpdateShake()
         {
             if (_shakeIntensity <= 0.001f) { _shakeOffset = Vector3.zero; _shakeIntensity = 0f; return; }
@@ -760,34 +1031,34 @@ namespace BoomNetwork.Samples.VampireSurvivors
             _shakeIntensity *= 0.6f;
         }
 
-        // ==================== Feature 4: Damage Numbers ====================
+        // ==================== Damage Numbers ====================
 
         void UpdateDamageNumbers()
         {
-            // Detect enemy damage
             for (int i = 0; i < GameState.MaxEnemies; i++)
             {
                 ref var e = ref _state.Enemies[i];
                 if (_prevEnemyAlive[i] && e.IsAlive && e.Hp < _prevEnemyHp[i])
                 {
                     int dmg = _prevEnemyHp[i] - e.Hp;
+                    bool isFocus = _state.FocusFireTarget == i;
                     bool isLightning = IsNearLightningFlash(e.PosX.ToFloat(), e.PosZ.ToFloat());
-                    SpawnDamageNumber(_enemyPool[i].transform.position, dmg,
-                        isLightning ? Color.yellow : Color.white);
+                    Color col = isFocus ? new Color(1f, 0.3f, 0.1f)
+                        : isLightning ? Color.yellow : Color.white;
+                    SpawnDamageNumber(_enemyPool[i].transform.position, dmg, col);
                 }
             }
-
-            // Detect player damage
             for (int p = 0; p < GameState.MaxPlayers; p++)
             {
                 ref var pl = ref _state.Players[p];
                 if (!pl.IsActive) continue;
                 if (pl.Hp < _prevPlayerHp[p] && _prevPlayerHp[p] > 0)
-                    SpawnDamageNumber(_playerObjs[p].transform.position,
-                        _prevPlayerHp[p] - pl.Hp, new Color(1f, 0.3f, 0.3f));
+                    SpawnDamageNumber(_playerObjs[p].transform.position, _prevPlayerHp[p] - pl.Hp, new Color(1f, 0.3f, 0.3f));
+                // Heal numbers (green, positive)
+                if (pl.Hp > _prevPlayerHp[p] && _prevPlayerHp[p] > 0 && _prevPlayerHp[p] < pl.MaxHp)
+                    SpawnDamageNumber(_playerObjs[p].transform.position, pl.Hp - _prevPlayerHp[p], new Color(0.2f, 1f, 0.4f));
             }
 
-            // Tick active numbers
             float dt = Time.deltaTime;
             for (int i = 0; i < DmgNumPoolSize; i++)
             {
@@ -796,9 +1067,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 d.TimeLeft -= dt;
                 if (d.TimeLeft <= 0f) { d.Active = false; d.Obj.SetActive(false); continue; }
                 d.Obj.transform.position += d.Vel * dt;
-                // Billboard: face camera
                 d.Obj.transform.rotation = _cam.transform.rotation;
-                // Fade out
                 var c = d.Text.color; c.a = d.TimeLeft / d.Total; d.Text.color = c;
             }
         }
@@ -810,8 +1079,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 ref var d = ref _dmgPool[i];
                 if (d.Active) continue;
                 d.Active = true;
-                d.TimeLeft = DmgNumDuration;
-                d.Total = DmgNumDuration;
+                d.TimeLeft = DmgNumDuration; d.Total = DmgNumDuration;
                 d.Vel = new Vector3((Random.value - 0.5f) * 0.5f, DmgNumRiseSpeed, (Random.value - 0.5f) * 0.3f);
                 d.Text.text = amount.ToString();
                 d.Text.color = color;
@@ -828,47 +1096,82 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 ref var f = ref _state.Flashes[i];
                 if (f.FramesLeft == 0) continue;
                 float dx = f.PosX.ToFloat() - x, dz = f.PosZ.ToFloat() - z;
-                if (dx * dx + dz * dz < 2.25f) return true; // 1.5^2
+                if (dx * dx + dz * dz < 2.25f) return true;
             }
             return false;
         }
 
-        // ==================== Feature 6: Boss Warning ====================
+        // ==================== Boss Warning ====================
 
         void UpdateBossWarning()
         {
-            // Show warning at start of boss waves
-            if (_state.WaveNumber > 0 && _state.WaveNumber % GameState.BossWaveInterval == 0 && IsBossAlive())
+            if (_state.WaveNumber > 0 && _state.WaveNumber % GameState.BossWaveInterval == 0 && IsNewBossAlive())
                 _bossWarningTimer = 2f;
             if (_bossWarningTimer > 0f) _bossWarningTimer -= Time.deltaTime;
         }
 
-        bool IsBossAlive()
+        bool IsNewBossAlive()
         {
             for (int i = 0; i < GameState.MaxEnemies; i++)
-                if (_state.Enemies[i].IsAlive && _state.Enemies[i].Type == EnemyType.Boss)
+            {
+                var t = _state.Enemies[i].Type;
+                if (_state.Enemies[i].IsAlive && (t == EnemyType.Boss || t == EnemyType.TwinCore
+                    || t == EnemyType.SplitBoss || t == EnemyType.SplitHalf))
                     return true;
+            }
             return false;
         }
 
         GUIStyle _bossWarnStyle;
+        GUIStyle _coopHintStyle;
 
         void OnGUI()
         {
-            if (!_initialized || _bossWarningTimer <= 0f) return;
-            if (_bossWarnStyle == null)
-                _bossWarnStyle = new GUIStyle(GUI.skin.label)
+            if (!_initialized) return;
+
+            // Boss warning
+            if (_bossWarningTimer > 0f)
+            {
+                if (_bossWarnStyle == null)
+                    _bossWarnStyle = new GUIStyle(GUI.skin.label)
+                    {
+                        fontSize = 32, fontStyle = FontStyle.Bold,
+                        alignment = TextAnchor.MiddleCenter,
+                        normal = { textColor = Color.red }
+                    };
+                float alpha = Mathf.Clamp01(_bossWarningTimer);
+                var prev = GUI.color; GUI.color = new Color(1f, 1f, 1f, alpha);
+                // Show boss type hint
+                bool isTwinCore = false;
+                for (int i = 0; i < GameState.MaxEnemies; i++)
+                    if (_state.Enemies[i].IsAlive && _state.Enemies[i].Type == EnemyType.TwinCore) { isTwinCore = true; break; }
+                string bossHint = isTwinCore
+                    ? "! TWIN CORE — 双人同时攻击两核！!"
+                    : "! SPLIT BOSS — 同时击杀两分裂体！!";
+                GUI.Label(new Rect(Screen.width / 2f - 220f, Screen.height * 0.15f, 440f, 60f),
+                    bossHint, _bossWarnStyle);
+                GUI.color = prev;
+            }
+
+            // TwinCore hint: show hit window status
+            if (_coopHintStyle == null)
+                _coopHintStyle = new GUIStyle(GUI.skin.label)
                 {
-                    fontSize = 32, fontStyle = FontStyle.Bold,
-                    alignment = TextAnchor.MiddleCenter,
-                    normal = { textColor = Color.red }
+                    fontSize = 16, alignment = TextAnchor.UpperLeft,
+                    normal = { textColor = new Color(0.8f, 0.9f, 1f) }
                 };
-            float alpha = Mathf.Clamp01(_bossWarningTimer);
-            var prev = GUI.color;
-            GUI.color = new Color(1f, 1f, 1f, alpha);
-            GUI.Label(new Rect(Screen.width / 2f - 150f, Screen.height * 0.15f, 300f, 60f),
-                "! BOSS INCOMING !", _bossWarnStyle);
-            GUI.color = prev;
+            bool anyTwinCore = false;
+            for (int i = 0; i < GameState.MaxEnemies; i++)
+            {
+                ref var e = ref _state.Enemies[i];
+                if (!e.IsAlive || e.Type != EnemyType.TwinCore) continue;
+                if (e.HitWindowTimer > 0 && !anyTwinCore)
+                {
+                    anyTwinCore = true;
+                    GUI.Label(new Rect(10f, Screen.height - 80f, 300f, 30f),
+                        $"核心已标记！快击中另一核！({e.HitWindowTimer}帧)", _coopHintStyle);
+                }
+            }
         }
 
         // ==================== Shadow Copy ====================
@@ -921,10 +1224,14 @@ namespace BoomNetwork.Samples.VampireSurvivors
             Destroy(_matGem); Destroy(_matGround);
             Destroy(_matOrb); Destroy(_matLightning); Destroy(_matHolyWater);
             Destroy(_matEnemyFlash);
-            for (int i = 0; i < _playerMats.Length; i++)
-                if (_playerMats[i] != null) Destroy(_playerMats[i]);
-            for (int i = 0; i < _orbMats.Length; i++)
-                if (_orbMats[i] != null) Destroy(_orbMats[i]);
+            Destroy(_matLinkBeam); Destroy(_matHealAura); Destroy(_matShieldWall);
+            Destroy(_matFocusFireMark); Destroy(_matRevivalTotem); Destroy(_matFrostNova);
+            Destroy(_matFireTrail); Destroy(_matTwinCoreA); Destroy(_matTwinCoreB);
+            Destroy(_matTwinCoreHit); Destroy(_matSplitBoss); Destroy(_matSplitHalf);
+            Destroy(_matSplitShotMain); Destroy(_matSplitShotSplinter);
+            for (int i = 0; i < _playerMats.Length; i++) if (_playerMats[i] != null) Destroy(_playerMats[i]);
+            for (int i = 0; i < _orbMats.Length; i++) if (_orbMats[i] != null) Destroy(_orbMats[i]);
+            if (_focusFireMarkMat != null) Destroy(_focusFireMarkMat);
         }
     }
 }
