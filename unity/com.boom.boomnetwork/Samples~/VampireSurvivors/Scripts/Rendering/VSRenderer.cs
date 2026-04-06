@@ -7,11 +7,12 @@
 //      RevivalTotem pillar, TwinCore dual orbs, SplitBoss/SplitHalf rendering.
 
 using System.Diagnostics;
-using Unity.Burst;
-using Unity.Collections;
-using Unity.Jobs;
-using UnityEngine;
-using UnityEngine.Jobs;
+using global::Unity.Burst;
+using global::Unity.Collections;
+using global::Unity.Jobs;
+using global::Unity.Mathematics;
+using global::UnityEngine;
+using global::UnityEngine.Jobs;
 
 namespace BoomNetwork.Samples.VampireSurvivors
 {
@@ -99,7 +100,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 var d = Data[i];
                 t.position   = new Vector3(d.PosX, d.PosY, d.PosZ);
                 t.localScale = new Vector3(d.SX, d.SY, d.SZ);
-                t.rotation   = Unity.Mathematics.quaternion.RotateY(d.RotYRad);
+                t.rotation   = quaternion.RotateY(d.RotYRad);
             }
         }
 
