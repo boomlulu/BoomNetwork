@@ -344,7 +344,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
         static Texture2D  _darkBarTex;
 
         static Font BuiltinFont =>
-            _builtinFont ??= Resources.GetBuiltinResource<Font>("Arial.ttf");
+            _builtinFont ??= Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
 
         static Sprite DarkSprite()
         {
