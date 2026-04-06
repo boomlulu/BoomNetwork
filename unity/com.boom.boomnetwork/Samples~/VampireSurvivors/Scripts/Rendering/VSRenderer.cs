@@ -10,7 +10,6 @@ using System.Diagnostics;
 using global::Unity.Burst;
 using global::Unity.Collections;
 using global::Unity.Jobs;
-using global::Unity.Mathematics;
 using global::UnityEngine;
 using global::UnityEngine.Jobs;
 
@@ -82,11 +81,11 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
         // ==================== Projectile Job Struct ====================
 
-        struct ProjectileJobData  // blittable (7 floats)
+        struct ProjectileJobData  // blittable (10 floats)
         {
             public float PosX, PosY, PosZ;
             public float SX, SY, SZ;
-            public float RotYRad;   // Y-axis rotation in radians (0 = identity)
+            public float QX, QY, QZ, QW;   // pre-computed Quaternion (main thread Pass1)
         }
 
         [BurstCompile]
@@ -100,7 +99,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 var d = Data[i];
                 t.position   = new Vector3(d.PosX, d.PosY, d.PosZ);
                 t.localScale = new Vector3(d.SX, d.SY, d.SZ);
-                t.rotation   = quaternion.RotateY(d.RotYRad);
+                t.rotation   = new Quaternion(d.QX, d.QY, d.QZ, d.QW);
             }
         }
 
@@ -1225,7 +1224,8 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 if (!show) continue;
 
                 float px = p.PosX.ToFloat(), pz = p.PosZ.ToFloat();
-                float py, sx, sy, sz, rotYRad = 0f;
+                float py, sx, sy, sz;
+                Quaternion rot = Quaternion.identity;
 
                 switch (p.Type)
                 {
@@ -1238,14 +1238,14 @@ namespace BoomNetwork.Samples.VampireSurvivors
                         py = 0.5f;
                         _projRenderers[i].sharedMaterial = _matKnife;
                         if (p.DirX != FInt.Zero || p.DirZ != FInt.Zero)
-                            rotYRad = Mathf.Atan2(p.DirX.ToFloat(), p.DirZ.ToFloat());
+                            rot = Quaternion.Euler(0f, Mathf.Atan2(p.DirX.ToFloat(), p.DirZ.ToFloat()) * Mathf.Rad2Deg, 0f);
                         break;
                     }
                     case ProjectileType.BoneShard:
                         sx = 0.15f; sy = 0.15f; sz = 0.25f; py = 0.6f;
                         _projRenderers[i].sharedMaterial = _matBoneShard;
                         if (p.DirX != FInt.Zero || p.DirZ != FInt.Zero)
-                            rotYRad = Mathf.Atan2(p.DirX.ToFloat(), p.DirZ.ToFloat());
+                            rot = Quaternion.Euler(0f, Mathf.Atan2(p.DirX.ToFloat(), p.DirZ.ToFloat()) * Mathf.Rad2Deg, 0f);
                         break;
                     case ProjectileType.HolyPuddle:
                     {
@@ -1268,13 +1268,13 @@ namespace BoomNetwork.Samples.VampireSurvivors
                         sx = 0.18f; sy = 0.18f; sz = 0.32f; py = 0.5f;
                         _projRenderers[i].sharedMaterial = _matSplitShotMain;
                         if (p.DirX != FInt.Zero || p.DirZ != FInt.Zero)
-                            rotYRad = Mathf.Atan2(p.DirX.ToFloat(), p.DirZ.ToFloat());
+                            rot = Quaternion.Euler(0f, Mathf.Atan2(p.DirX.ToFloat(), p.DirZ.ToFloat()) * Mathf.Rad2Deg, 0f);
                         break;
                     case ProjectileType.SplitShotSplinter:
                         sx = 0.1f; sy = 0.1f; sz = 0.18f; py = 0.5f;
                         _projRenderers[i].sharedMaterial = _matSplitShotSplinter;
                         if (p.DirX != FInt.Zero || p.DirZ != FInt.Zero)
-                            rotYRad = Mathf.Atan2(p.DirX.ToFloat(), p.DirZ.ToFloat());
+                            rot = Quaternion.Euler(0f, Mathf.Atan2(p.DirX.ToFloat(), p.DirZ.ToFloat()) * Mathf.Rad2Deg, 0f);
                         break;
                     default:
                         sx = 0.1f; sy = 0.1f; sz = 0.35f; py = 0.5f;
@@ -1282,7 +1282,8 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 }
 
                 _projJobData[i] = new ProjectileJobData
-                    { PosX = px, PosY = py, PosZ = pz, SX = sx, SY = sy, SZ = sz, RotYRad = rotYRad };
+                    { PosX = px, PosY = py, PosZ = pz, SX = sx, SY = sy, SZ = sz,
+                      QX = rot.x, QY = rot.y, QZ = rot.z, QW = rot.w };
             }
 
             return new SyncProjectileTransformsJob
