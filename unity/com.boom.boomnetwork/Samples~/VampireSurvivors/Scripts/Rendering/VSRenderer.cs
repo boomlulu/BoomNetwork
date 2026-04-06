@@ -31,12 +31,15 @@ namespace BoomNetwork.Samples.VampireSurvivors
         bool _jobsInitialized;
 
         // Perf accumulation (Stopwatch per sub-system)
-        readonly Stopwatch _swEnemies  = new Stopwatch();
-        readonly Stopwatch _swProj     = new Stopwatch();
-        readonly Stopwatch _swGems     = new Stopwatch();
-        readonly Stopwatch _swPlayers  = new Stopwatch();
-        readonly Stopwatch _swTotal    = new Stopwatch();
-        double _accumEnemies, _accumProj, _accumGems, _accumPlayers, _accumTotal;
+        readonly Stopwatch _swEnemies        = new Stopwatch();
+        readonly Stopwatch _swEnemiesPrepare = new Stopwatch(); // Jobs: Pass1+Schedule
+        readonly Stopwatch _swEnemiesWait    = new Stopwatch(); // Jobs: Complete() wait
+        readonly Stopwatch _swProj           = new Stopwatch();
+        readonly Stopwatch _swGems           = new Stopwatch();
+        readonly Stopwatch _swPlayers        = new Stopwatch();
+        readonly Stopwatch _swTotal          = new Stopwatch();
+        double _accumEnemies, _accumEnemiesPrepare, _accumEnemiesWait;
+        double _accumProj, _accumGems, _accumPlayers, _accumTotal;
         int _perfFrameCount;
 
         // ==================== Enemy Job Struct ====================
@@ -657,45 +660,100 @@ namespace BoomNetwork.Samples.VampireSurvivors
             SyncPlayers();
             _swPlayers.Stop();
 
-            _swEnemies.Restart();
-            SyncEnemies();
-            _swEnemies.Stop();
+            if (_useJobs)
+            {
+                // Schedule enemy Job, then immediately let main thread do other work in parallel
+                _swEnemiesPrepare.Restart();
+                JobHandle enemyHandle = SyncEnemiesJobsPrepareAndSchedule();
+                _swEnemiesPrepare.Stop();
 
-            _swProj.Restart();
-            SyncProjectiles();
-            _swProj.Stop();
+                _swProj.Restart();
+                SyncProjectiles();   // runs while Job is in flight
+                _swProj.Stop();
 
-            _swGems.Restart();
-            SyncGems();
-            _swGems.Stop();
+                _swGems.Restart();
+                SyncGems();          // runs while Job is in flight
+                _swGems.Stop();
 
-            SyncOrbs();
-            SyncFlashes();
-            SyncNewWeaponEffects();
-            UpdateDeathExplosions();
-            UpdateDamageNumbers();
-            UpdateBossWarning();
-            CaptureFrameShadow();
+                SyncOrbs();
+                SyncFlashes();
+                SyncNewWeaponEffects();
+                UpdateDeathExplosions();
+                UpdateDamageNumbers();
+                UpdateBossWarning();
+                CaptureFrameShadow();
+
+                // Complete last — Job is likely already done
+                _swEnemiesWait.Restart();
+                enemyHandle.Complete();
+                _swEnemiesWait.Stop();
+            }
+            else
+            {
+                _swEnemies.Restart();
+                SyncEnemiesMainThread();
+                _swEnemies.Stop();
+
+                _swProj.Restart();
+                SyncProjectiles();
+                _swProj.Stop();
+
+                _swGems.Restart();
+                SyncGems();
+                _swGems.Stop();
+
+                SyncOrbs();
+                SyncFlashes();
+                SyncNewWeaponEffects();
+                UpdateDeathExplosions();
+                UpdateDamageNumbers();
+                UpdateBossWarning();
+                CaptureFrameShadow();
+            }
 
             _swTotal.Stop();
             _accumPlayers += _swPlayers.Elapsed.TotalMilliseconds;
-            _accumEnemies += _swEnemies.Elapsed.TotalMilliseconds;
             _accumProj    += _swProj.Elapsed.TotalMilliseconds;
             _accumGems    += _swGems.Elapsed.TotalMilliseconds;
             _accumTotal   += _swTotal.Elapsed.TotalMilliseconds;
+            if (_useJobs)
+            {
+                _accumEnemiesPrepare += _swEnemiesPrepare.Elapsed.TotalMilliseconds;
+                _accumEnemiesWait    += _swEnemiesWait.Elapsed.TotalMilliseconds;
+            }
+            else
+            {
+                _accumEnemies += _swEnemies.Elapsed.TotalMilliseconds;
+            }
 
             _perfFrameCount++;
             if (_perfFrameCount >= 100)
             {
                 string strategy = _useJobs ? "Jobs" : "MainThread";
-                UnityEngine.Debug.Log(
-                    $"[VSRenderer Perf|{strategy}] avg over 100 frames:\n" +
-                    $"  SyncPlayers:  {_accumPlayers / 100:F3} ms\n" +
-                    $"  SyncEnemies:  {_accumEnemies / 100:F3} ms\n" +
-                    $"  SyncProj:     {_accumProj    / 100:F3} ms\n" +
-                    $"  SyncGems:     {_accumGems    / 100:F3} ms\n" +
-                    $"  Total:        {_accumTotal   / 100:F3} ms");
-                _accumPlayers = _accumEnemies = _accumProj = _accumGems = _accumTotal = 0;
+                if (_useJobs)
+                {
+                    UnityEngine.Debug.Log(
+                        $"[VSRenderer Perf|{strategy}] avg over 100 frames:\n" +
+                        $"  SyncPlayers:      {_accumPlayers       / 100:F3} ms\n" +
+                        $"  SyncEnemies.Prep: {_accumEnemiesPrepare/ 100:F3} ms  (Pass1+Schedule)\n" +
+                        $"  SyncEnemies.Wait: {_accumEnemiesWait   / 100:F3} ms  (Complete, ~0 if parallel)\n" +
+                        $"  SyncProj:         {_accumProj          / 100:F3} ms\n" +
+                        $"  SyncGems:         {_accumGems          / 100:F3} ms\n" +
+                        $"  Total:            {_accumTotal         / 100:F3} ms");
+                    _accumEnemiesPrepare = _accumEnemiesWait = 0;
+                }
+                else
+                {
+                    UnityEngine.Debug.Log(
+                        $"[VSRenderer Perf|{strategy}] avg over 100 frames:\n" +
+                        $"  SyncPlayers:  {_accumPlayers / 100:F3} ms\n" +
+                        $"  SyncEnemies:  {_accumEnemies / 100:F3} ms\n" +
+                        $"  SyncProj:     {_accumProj    / 100:F3} ms\n" +
+                        $"  SyncGems:     {_accumGems    / 100:F3} ms\n" +
+                        $"  Total:        {_accumTotal   / 100:F3} ms");
+                    _accumEnemies = 0;
+                }
+                _accumPlayers = _accumProj = _accumGems = _accumTotal = 0;
                 _perfFrameCount = 0;
             }
         }
@@ -758,13 +816,6 @@ namespace BoomNetwork.Samples.VampireSurvivors
             }
         }
 
-        void SyncEnemies()
-        {
-            if (_useJobs)
-                SyncEnemiesJobs();
-            else
-                SyncEnemiesMainThread();
-        }
 
         // --- Main-thread path (original logic) ---
         void SyncEnemiesMainThread()
@@ -893,7 +944,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
         }
 
         // --- Jobs path: Pass1 (SetActive + materials + CopyIn), Pass2 Job (transform writes) ---
-        void SyncEnemiesJobs()
+        JobHandle SyncEnemiesJobsPrepareAndSchedule()
         {
             for (int i = 0; i < GameState.MaxEnemies; i++)
             {
@@ -971,12 +1022,12 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 _enemyJobData[i] = new EnemyJobData { PosX = ex, PosY = ey, PosZ = ez, SX = sx, SY = sy, SZ = sz };
             }
 
-            // Burst-compiled parallel transform write
-            new SyncEnemyTransformsJob
+            // Burst-compiled parallel transform write — caller is responsible for Complete()
+            return new SyncEnemyTransformsJob
             {
                 Data    = _enemyJobData,
                 IsAlive = _enemyJobAlive,
-            }.Schedule(_enemyTransformArray).Complete();
+            }.Schedule(_enemyTransformArray);
         }
 
         void SyncProjectiles()
