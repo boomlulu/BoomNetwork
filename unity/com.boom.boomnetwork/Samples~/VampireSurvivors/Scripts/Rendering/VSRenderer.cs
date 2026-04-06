@@ -6,12 +6,62 @@
 // NEW: LinkBeam line, ShieldWall, HealAura ring, FrostNova ring, FocusFire marker,
 //      RevivalTotem pillar, TwinCore dual orbs, SplitBoss/SplitHalf rendering.
 
+using System.Diagnostics;
+using Unity.Burst;
+using Unity.Collections;
+using Unity.Jobs;
 using UnityEngine;
+using UnityEngine.Jobs;
 
 namespace BoomNetwork.Samples.VampireSurvivors
 {
+    public enum RenderStrategy { Auto, MainThread, Jobs }
+
     public class VSRenderer : MonoBehaviour
     {
+        // ==================== Strategy + Perf ====================
+
+        [SerializeField] RenderStrategy _strategyType = RenderStrategy.Auto;
+        bool _useJobs;
+
+        // Jobs: enemy TransformAccessArray
+        TransformAccessArray _enemyTransformArray;
+        NativeArray<EnemyJobData> _enemyJobData;   // positions + scales packed
+        NativeArray<byte>         _enemyJobAlive;
+        bool _jobsInitialized;
+
+        // Perf accumulation (Stopwatch per sub-system)
+        readonly Stopwatch _swEnemies  = new Stopwatch();
+        readonly Stopwatch _swProj     = new Stopwatch();
+        readonly Stopwatch _swGems     = new Stopwatch();
+        readonly Stopwatch _swPlayers  = new Stopwatch();
+        readonly Stopwatch _swTotal    = new Stopwatch();
+        double _accumEnemies, _accumProj, _accumGems, _accumPlayers, _accumTotal;
+        int _perfFrameCount;
+
+        // ==================== Enemy Job Struct ====================
+
+        struct EnemyJobData   // blittable (6 floats)
+        {
+            public float PosX, PosY, PosZ;
+            public float SX, SY, SZ;
+        }
+
+        [BurstCompile]
+        struct SyncEnemyTransformsJob : IJobParallelForTransform
+        {
+            [ReadOnly] public NativeArray<EnemyJobData> Data;
+            [ReadOnly] public NativeArray<byte>         IsAlive;
+            public void Execute(int i, TransformAccess t)
+            {
+                if (IsAlive[i] == 0) return;
+                var d = Data[i];
+                t.position   = new Vector3(d.PosX, d.PosY, d.PosZ);
+                t.localScale = new Vector3(d.SX,   d.SY,   d.SZ);
+            }
+        }
+
+
         GameState _state;
         int _localSlot;
         bool _initialized;
@@ -157,6 +207,13 @@ namespace BoomNetwork.Samples.VampireSurvivors
             CreateDamageNumberPool();
             CreateNewWeaponPools();
 
+            // Resolve strategy: Jobs not supported on WebGL
+            _useJobs = _strategyType == RenderStrategy.Jobs
+                    || (_strategyType == RenderStrategy.Auto
+                        && Application.platform != RuntimePlatform.WebGLPlayer);
+
+            if (_useJobs) InitEnemyJobs();
+
             for (int i = 0; i < GameState.MaxPlayers; i++)
             {
                 _playerPrevRot[i] = Quaternion.identity;
@@ -169,6 +226,30 @@ namespace BoomNetwork.Samples.VampireSurvivors
             else
                 _camCurrentPos = IsoOffset;
             _cam.transform.position = _camCurrentPos;
+        }
+
+        // ==================== Jobs Init ====================
+
+        void InitEnemyJobs()
+        {
+            if (_jobsInitialized) return;
+            _jobsInitialized = true;
+            var transforms = new Transform[GameState.MaxEnemies];
+            for (int i = 0; i < GameState.MaxEnemies; i++)
+                transforms[i] = _enemyPool[i].transform;
+            _enemyTransformArray = new TransformAccessArray(transforms);
+            _enemyJobData  = new NativeArray<EnemyJobData>(GameState.MaxEnemies, Allocator.Persistent);
+            _enemyJobAlive = new NativeArray<byte>(GameState.MaxEnemies, Allocator.Persistent);
+        }
+
+        /// <summary>Switch render strategy at runtime (e.g. from UI toggle).</summary>
+        public void SetStrategy(RenderStrategy s)
+        {
+            _strategyType = s;
+            bool wantJobs = s == RenderStrategy.Jobs
+                || (s == RenderStrategy.Auto && Application.platform != RuntimePlatform.WebGLPlayer);
+            if (wantJobs && !_jobsInitialized) InitEnemyJobs();
+            _useJobs = wantJobs && _jobsInitialized;
         }
 
         // ==================== Material Creation ====================
@@ -507,10 +588,24 @@ namespace BoomNetwork.Samples.VampireSurvivors
         {
             if (!_initialized || _state == null) return;
 
+            _swTotal.Restart();
+
+            _swPlayers.Restart();
             SyncPlayers();
+            _swPlayers.Stop();
+
+            _swEnemies.Restart();
             SyncEnemies();
+            _swEnemies.Stop();
+
+            _swProj.Restart();
             SyncProjectiles();
+            _swProj.Stop();
+
+            _swGems.Restart();
             SyncGems();
+            _swGems.Stop();
+
             SyncOrbs();
             SyncFlashes();
             SyncNewWeaponEffects();
@@ -518,6 +613,28 @@ namespace BoomNetwork.Samples.VampireSurvivors
             UpdateDamageNumbers();
             UpdateBossWarning();
             CaptureFrameShadow();
+
+            _swTotal.Stop();
+            _accumPlayers += _swPlayers.Elapsed.TotalMilliseconds;
+            _accumEnemies += _swEnemies.Elapsed.TotalMilliseconds;
+            _accumProj    += _swProj.Elapsed.TotalMilliseconds;
+            _accumGems    += _swGems.Elapsed.TotalMilliseconds;
+            _accumTotal   += _swTotal.Elapsed.TotalMilliseconds;
+
+            _perfFrameCount++;
+            if (_perfFrameCount >= 100)
+            {
+                string strategy = _useJobs ? "Jobs" : "MainThread";
+                UnityEngine.Debug.Log(
+                    $"[VSRenderer Perf|{strategy}] avg over 100 frames:\n" +
+                    $"  SyncPlayers:  {_accumPlayers / 100:F3} ms\n" +
+                    $"  SyncEnemies:  {_accumEnemies / 100:F3} ms\n" +
+                    $"  SyncProj:     {_accumProj    / 100:F3} ms\n" +
+                    $"  SyncGems:     {_accumGems    / 100:F3} ms\n" +
+                    $"  Total:        {_accumTotal   / 100:F3} ms");
+                _accumPlayers = _accumEnemies = _accumProj = _accumGems = _accumTotal = 0;
+                _perfFrameCount = 0;
+            }
         }
 
         // ==================== Sync Methods ====================
@@ -579,6 +696,15 @@ namespace BoomNetwork.Samples.VampireSurvivors
         }
 
         void SyncEnemies()
+        {
+            if (_useJobs)
+                SyncEnemiesJobs();
+            else
+                SyncEnemiesMainThread();
+        }
+
+        // --- Main-thread path (original logic) ---
+        void SyncEnemiesMainThread()
         {
             for (int i = 0; i < GameState.MaxEnemies; i++)
             {
@@ -658,6 +784,93 @@ namespace BoomNetwork.Samples.VampireSurvivors
                         break;
                 }
             }
+        }
+
+        // --- Jobs path: Pass1 (SetActive + materials + CopyIn), Pass2 Job (transform writes) ---
+        void SyncEnemiesJobs()
+        {
+            for (int i = 0; i < GameState.MaxEnemies; i++)
+            {
+                ref var e = ref _state.Enemies[i];
+                bool show = e.IsAlive;
+                if (!_deathPops[i].Active) _enemyPool[i].SetActive(show);
+
+                if (!e.IsAlive && _prevEnemyAlive[i])
+                {
+                    Vector3 lastPos = _enemyPool[i].transform.position;
+                    bool isBoss = (e.Type == EnemyType.Boss || e.Type == EnemyType.TwinCore
+                        || e.Type == EnemyType.SplitBoss || e.Type == EnemyType.SplitHalf);
+                    _deathPops[i] = new DeathPop { Active = true, Frame = 0, Origin = lastPos, IsBoss = isBoss };
+                    _shakeIntensity = Mathf.Min(_shakeIntensity + (isBoss ? ShakeMax : ShakePerKill), ShakeMax);
+                }
+
+                _enemyJobAlive[i] = (byte)(show ? 1 : 0);
+                if (!show) continue;
+
+                // FInt.ToFloat() = Raw / 1024f (SCALE=1024)
+                float ex = e.PosX.Raw * (1f / FInt.SCALE);
+                float ez = e.PosZ.Raw * (1f / FInt.SCALE);
+                float ey, sx, sy, sz;
+
+                switch (e.Type)
+                {
+                    case EnemyType.Zombie:
+                        ey = 0.45f; sx = 0.7f; sy = 0.9f; sz = 0.7f;
+                        _enemyRenderers[i].sharedMaterial = e.SlowFrames > 0 ? _matFrostNova : _matZombie;
+                        break;
+                    case EnemyType.Bat:
+                        ey = 0.8f; sx = 0.5f; sy = 0.4f; sz = 0.5f;
+                        _enemyRenderers[i].sharedMaterial = e.SlowFrames > 0 ? _matFrostNova : _matBat;
+                        break;
+                    case EnemyType.SkeletonMage:
+                        ey = 0.45f; sx = 0.6f; sy = 1.1f; sz = 0.6f;
+                        _enemyRenderers[i].sharedMaterial = e.SlowFrames > 0 ? _matFrostNova : _matMage;
+                        break;
+                    case EnemyType.Boss:
+                    {
+                        float bossS = 3f + Mathf.Sin(_state.FrameNumber * 0.15f) * 0.15f;
+                        ey = bossS * 0.6f; sx = bossS; sy = bossS * 1.2f; sz = bossS;
+                        float pulse = (Mathf.Sin(_state.FrameNumber * 0.2f) + 1f) * 0.5f;
+                        _enemyRenderers[i].material.color = Color.Lerp(new Color(0.15f, 0f, 0f), new Color(0.8f, 0f, 0f), pulse);
+                        break;
+                    }
+                    case EnemyType.TwinCore:
+                    {
+                        float coreS = 1.5f + Mathf.Sin(_state.FrameNumber * 0.2f) * 0.1f;
+                        ey = coreS * 0.5f; sx = coreS; sy = coreS; sz = coreS;
+                        _enemyRenderers[i].sharedMaterial = e.HitWindowTimer > 0 ? _matTwinCoreHit
+                            : (i % 2 == 0 ? _matTwinCoreA : _matTwinCoreB);
+                        break;
+                    }
+                    case EnemyType.SplitBoss:
+                    {
+                        float sbS = 2.5f + Mathf.Sin(_state.FrameNumber * 0.12f) * 0.2f;
+                        ey = sbS * 0.55f; sx = sbS; sy = sbS * 1.1f; sz = sbS;
+                        float splitT2 = e.BehaviorTimer / (float)GameState.SplitBossSplitTimer;
+                        _enemyRenderers[i].material.color = new Color(Mathf.Lerp(1f, 0.5f, splitT2), 0.35f * splitT2, 0f);
+                        break;
+                    }
+                    default: // SplitHalf
+                    {
+                        const float shS = 1.8f;
+                        ey = shS * 0.5f; sx = shS; sy = shS; sz = shS;
+                        if (e.HitWindowTimer > 0 && (_state.FrameNumber % 6 < 3))
+                            _enemyRenderers[i].material.color = Color.red;
+                        else
+                            _enemyRenderers[i].sharedMaterial = _matSplitHalf;
+                        break;
+                    }
+                }
+
+                _enemyJobData[i] = new EnemyJobData { PosX = ex, PosY = ey, PosZ = ez, SX = sx, SY = sy, SZ = sz };
+            }
+
+            // Burst-compiled parallel transform write
+            new SyncEnemyTransformsJob
+            {
+                Data    = _enemyJobData,
+                IsAlive = _enemyJobAlive,
+            }.Schedule(_enemyTransformArray).Complete();
         }
 
         void SyncProjectiles()
@@ -1218,6 +1431,13 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
         void OnDestroy()
         {
+            if (_jobsInitialized)
+            {
+                _enemyTransformArray.Dispose();
+                _enemyJobData.Dispose();
+                _enemyJobAlive.Dispose();
+            }
+
             Destroy(_matPlayer); Destroy(_matPlayerHit);
             Destroy(_matZombie); Destroy(_matBat); Destroy(_matMage); Destroy(_matBoss);
             Destroy(_matKnife); Destroy(_matBoneShard);
