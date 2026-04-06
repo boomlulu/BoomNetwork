@@ -49,7 +49,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             }
         }
 
-        public static void Resolve(GameState state)
+        public static void Resolve(GameState state, bool isMultiplayer = true)
         {
             ResolveKnivesVsEnemies(state);
             ResolveSplitShotVsEnemies(state);
@@ -381,7 +381,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
                         player.Hp = Math.Min(player.Hp + 40, player.MaxHp);
                         player.PendingLevelUp = true;
                         // 确定性生成升级选项
-                        WeaponSystem.GenerateUpgradeOptions(ref player, ref state.RngState);
+                        WeaponSystem.GenerateUpgradeOptions(ref player, ref state.RngState, isMultiplayer);
                     }
                 }
             }

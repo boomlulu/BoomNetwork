@@ -10,7 +10,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
         const int BaseEnemyCount = 15;
         const int EnemiesPerWave = 10;
 
-        public static void Tick(GameState state)
+        public static void Tick(GameState state, bool isMultiplayer = true)
         {
             if (!state.HasAlivePlayers()) return;
 
@@ -21,7 +21,8 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 state.WaveSpawnRemaining = (uint)(BaseEnemyCount + state.WaveNumber * EnemiesPerWave);
                 state.WaveSpawnTimer = SpawnIntervalFrames;
 
-                if (state.WaveNumber % GameState.BossWaveInterval == 0)
+                // Boss 只在多人模式生成
+                if (isMultiplayer && state.WaveNumber % GameState.BossWaveInterval == 0)
                     SpawnBoss(state);
 
                 return;

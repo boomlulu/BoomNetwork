@@ -11,6 +11,9 @@ namespace BoomNetwork.Samples.VampireSurvivors
     {
         public readonly GameState State = new GameState();
 
+        /// <summary>true = 多人模式（解锁全部武器 + Boss）；false = 单人模式。由 VSNetworkManager 在 Init 前设置。</summary>
+        public bool IsMultiplayer = true;
+
         readonly int[] _pidSlotMap = new int[256];
         int _nextSlot;
 
@@ -51,13 +54,13 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
             if (IsAnyPlayerUpgrading()) return;
 
-            WaveSystem.Tick(State);
+            WaveSystem.Tick(State, IsMultiplayer);
             EnemySystem.Tick(State);
             WeaponSystem.Tick(State);
             CollisionSystem.AttractGems(State);
             CollisionSystem.CachePositions(State);
             CollisionSystem.Rebuild(State);
-            CollisionSystem.Resolve(State);
+            CollisionSystem.Resolve(State, IsMultiplayer);
 
             for (int i = 0; i < GameState.MaxPlayers; i++)
             {

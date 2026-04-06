@@ -25,6 +25,12 @@ namespace BoomNetwork.Samples.VampireSurvivors
         /// <summary>Fired when the player taps an upgrade button. Byte is a weapon bitmask (1<<slot).</summary>
         public event Action<byte> OnUpgradeSelected;
 
+        /// <summary>Fired when the Solo button is clicked on the lobby panel.</summary>
+        public event Action OnSoloClicked;
+
+        /// <summary>Fired when the Multiplayer button is clicked on the lobby panel.</summary>
+        public event Action OnMultiClicked;
+
         /// <summary>Factory — call once in Start(). Creates Canvas + all child panels.</summary>
         public static VSUIManager Create()
         {
@@ -58,6 +64,9 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
         /// <summary>Show/hide all VS UI (hidden before sync starts).</summary>
         public void SetVisible(bool visible) => _root.SetActive(visible);
+
+        /// <summary>Show/hide the lobby panel.</summary>
+        public void ShowLobby(bool visible) => _lobbyPanel.SetActive(visible);
 
         /// <summary>
         /// Update all panels every frame.
@@ -147,6 +156,9 @@ namespace BoomNetwork.Samples.VampireSurvivors
         Text[]       _xpTexts          = new Text[GameState.MaxPlayers];
         Text[]       _weaponLabels     = new Text[GameState.MaxPlayers];
 
+        // Lobby panel (shown before game starts, sibling to _root)
+        GameObject _lobbyPanel;
+
         // Overlays
         GameObject _desyncOverlay;
         Text       _desyncLabel;
@@ -176,6 +188,35 @@ namespace BoomNetwork.Samples.VampireSurvivors
             BuildUpgradePanel();
 
             _root.SetActive(false); // hidden until sync starts
+
+            // Lobby panel is a sibling of _root (not affected by _root.SetActive)
+            BuildLobbyPanel();
+        }
+
+        void BuildLobbyPanel()
+        {
+            // Center panel: title + Solo button + Multiplayer button
+            _lobbyPanel = MakePanel("LobbyPanel", transform,
+                anchorMin: new Vector2(0.5f, 0.5f), anchorMax: new Vector2(0.5f, 0.5f),
+                pivot: new Vector2(0.5f, 0.5f),
+                sizeDelta: new Vector2(420f, 210f), anchoredPos: Vector2.zero);
+
+            var vlg = _lobbyPanel.AddComponent<VerticalLayoutGroup>();
+            vlg.padding              = new RectOffset(16, 16, 16, 16);
+            vlg.spacing              = 12f;
+            vlg.childForceExpandWidth  = true;
+            vlg.childForceExpandHeight = false;
+
+            var title = MakeText("Title", _lobbyPanel.transform, 26, FontStyle.Bold, new Color(1f, 0.9f, 0.2f));
+            title.alignment = TextAnchor.MiddleCenter;
+            title.text = "Vampire Survivors";
+            LE(title.gameObject, 388f, 36f);
+
+            MakeButton("BtnSolo", _lobbyPanel.transform, 60f, () => OnSoloClicked?.Invoke())
+                .GetComponentInChildren<Text>().text = VSLocalization.Get(Str.SoloMode);
+
+            MakeButton("BtnMulti", _lobbyPanel.transform, 60f, () => OnMultiClicked?.Invoke())
+                .GetComponentInChildren<Text>().text = VSLocalization.Get(Str.MultiMode);
         }
 
         void BuildHUD()

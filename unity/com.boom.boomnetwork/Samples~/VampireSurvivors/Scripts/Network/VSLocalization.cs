@@ -18,6 +18,8 @@ namespace BoomNetwork.Samples.VampireSurvivors
         TwinCoreName, SplitBossName,
         // UI misc
         LangToggle,
+        // Lobby
+        SoloMode, MultiMode,
     }
 
     public static class VSLocalization
@@ -67,6 +69,8 @@ namespace BoomNetwork.Samples.VampireSurvivors
             /* TwinCoreName       */ new[]{ "Twin Core",                  "双核 Boss" },
             /* SplitBossName      */ new[]{ "Split Boss",                 "分裂 Boss" },
             /* LangToggle         */ new[]{ "中文",                        "EN" },
+            /* SoloMode           */ new[]{ "Solo",                        "单人模式" },
+            /* MultiMode          */ new[]{ "Multiplayer",                 "多人匹配" },
         };
     }
 }

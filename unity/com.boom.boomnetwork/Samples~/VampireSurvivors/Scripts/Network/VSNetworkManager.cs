@@ -43,6 +43,8 @@ namespace BoomNetwork.Samples.VampireSurvivors
         uint _desyncFrame;
         byte _pendingUpgradeChoice;
         bool _firstInputSent;
+        bool _isSolo;
+        string _soloKey;
 
         // Mobile virtual joystick — null on PC/Editor
         VSVirtualJoystick _joystick;
@@ -65,8 +67,10 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
             _ui = VSUIManager.Create();
             _ui.OnUpgradeSelected += choice => _pendingUpgradeChoice = choice;
+            _ui.OnSoloClicked     += StartSolo;
+            _ui.OnMultiClicked    += StartMultiplayer;
 
-            _network.QuickStart();
+            _ui.ShowLobby(true);
         }
 
         void Update()
@@ -108,11 +112,35 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
             // Deadlock-breaker: while server is paused, OnFrame never fires.
             // RequestGameResume unblocks frame delivery after upgrade choice is sent.
-            if (ability != 0)
+            // Solo mode skips this — the server is never paused in solo.
+            if (ability != 0 && !_isSolo)
             {
                 Debug.Log($"[VS] Upgrade choice sent: ability={ability}, IsGamePaused={_network.Client.IsGamePaused}");
                 _network.Client.RequestGameResume();
             }
+        }
+
+        // ==================== Lobby ===================================
+
+        void StartSolo()
+        {
+            _isSolo = true;
+            _soloKey = "solo_" + UnityEngine.Random.Range(0, 999999);
+            _ui.ShowLobby(false);
+            var c = _network.Client;
+            c.OnConnected += SoloOnConnected;
+            c.OnReady     += SoloOnReady;
+            _network.Connect();
+        }
+
+        void SoloOnConnected() => _network.Client.MatchRoom(1, _soloKey);
+        void SoloOnReady()     => _network.Client.RequestStart();
+
+        void StartMultiplayer()
+        {
+            _isSolo = false;
+            _ui.ShowLobby(false);
+            _network.QuickStart();
         }
 
         // ==================== Network Events ====================
@@ -121,6 +149,8 @@ namespace BoomNetwork.Samples.VampireSurvivors
         {
             FInt dt = FInt.FromInt(init.FrameInterval) / FInt.FromInt(1000);
             uint seed = (uint)(init.StartTime & 0xFFFFFFFF);
+
+            _sim.IsMultiplayer = !_isSolo;
 
             if (!_snapshotLoaded)
             {
@@ -195,11 +225,16 @@ namespace BoomNetwork.Samples.VampireSurvivors
             _network.Client.SendFrameHash(frame.FrameNumber, hash);
 
             // Level-Triggered Pause Convergence (see DESIGN PRINCIPLE 2 at top of file)
+            // Solo mode: no network pause needed — only 1 player, no deadlock possible.
+            // Simulation still freezes locally (IsAnyPlayerUpgrading guard in Tick).
             bool wantsPause = _sim.IsAnyPlayerUpgrading();
-            if (wantsPause && !_network.Client.IsGamePaused)
-                _network.Client.RequestGamePause();
-            else if (!wantsPause && _network.Client.IsGamePaused)
-                _network.Client.RequestGameResume();
+            if (!_isSolo)
+            {
+                if (wantsPause && !_network.Client.IsGamePaused)
+                    _network.Client.RequestGamePause();
+                else if (!wantsPause && _network.Client.IsGamePaused)
+                    _network.Client.RequestGameResume();
+            }
 
             _ui.UpdateHUD(_sim, _localSlot, (int)_network.Client.RttMs);
         }

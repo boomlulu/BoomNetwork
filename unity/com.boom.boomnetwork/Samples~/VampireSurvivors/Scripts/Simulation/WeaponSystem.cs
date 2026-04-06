@@ -14,12 +14,19 @@ namespace BoomNetwork.Samples.VampireSurvivors
         static readonly FInt _360 = FInt.FromInt(360);
         static readonly FInt _30 = FInt.FromInt(30);
 
-        // 全部 14 种武器，用于升级选项随机池
+        // 全部 14 种武器，用于多人升级选项随机池
         static readonly WeaponType[] AllWeapons = new WeaponType[]
         {
             WeaponType.Knife, WeaponType.Orb, WeaponType.Lightning, WeaponType.HolyWater,
             WeaponType.LinkBeam, WeaponType.HealAura, WeaponType.ShieldWall,
             WeaponType.ChainLightningPlus, WeaponType.FocusFire, WeaponType.RevivalTotem,
+            WeaponType.FrostNova, WeaponType.FireTrail, WeaponType.MagnetField, WeaponType.SplitShot,
+        };
+
+        // 单人模式武器池（移除 6 个协作技能）
+        static readonly WeaponType[] SoloWeapons = new WeaponType[]
+        {
+            WeaponType.Knife, WeaponType.Orb, WeaponType.Lightning, WeaponType.HolyWater,
             WeaponType.FrostNova, WeaponType.FireTrail, WeaponType.MagnetField, WeaponType.SplitShot,
         };
 
@@ -639,29 +646,31 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
         /// <summary>
         /// 确定性生成 4 个升级选项：优先当前武器（可升级），剩余从全池随机补。
+        /// isMultiplayer=false 时只从单人池选（排除 6 个协作技能）。
         /// </summary>
-        public static void GenerateUpgradeOptions(ref PlayerState p, ref uint rng)
+        public static void GenerateUpgradeOptions(ref PlayerState p, ref uint rng, bool isMultiplayer = true)
         {
+            var pool = isMultiplayer ? AllWeapons : SoloWeapons;
             byte[] opts = new byte[4];
             int count = 0;
 
-            // 先塞入当前持有但未满级的武器（最多 2 个）
+            // 先塞入当前持有但未满级的武器（最多 2 个），排除不在当前池中的协作武器
             for (int ws = 0; ws < PlayerState.MaxWeaponSlots && count < 2; ws++)
             {
                 var w = p.GetWeapon(ws);
-                if (w.Type != WeaponType.None && w.Level < GameState.MaxWeaponLevel)
-                {
-                    opts[count++] = (byte)w.Type;
-                }
+                if (w.Type == WeaponType.None || w.Level >= GameState.MaxWeaponLevel) continue;
+                bool inPool = false;
+                for (int pi = 0; pi < pool.Length; pi++) if (pool[pi] == w.Type) { inPool = true; break; }
+                if (inPool) opts[count++] = (byte)w.Type;
             }
 
-            // 从全池随机补足 4 个（避免重复）
+            // 从当前池随机补足 4 个（避免重复）
             int attempts = 0;
             while (count < 4 && attempts < 50)
             {
                 attempts++;
-                int r = DeterministicRng.RangeInt(ref rng, 0, AllWeapons.Length);
-                byte pick = (byte)AllWeapons[r];
+                int r = DeterministicRng.RangeInt(ref rng, 0, pool.Length);
+                byte pick = (byte)pool[r];
                 bool dup = false;
                 for (int i = 0; i < count; i++) if (opts[i] == pick) { dup = true; break; }
                 if (!dup) opts[count++] = pick;
