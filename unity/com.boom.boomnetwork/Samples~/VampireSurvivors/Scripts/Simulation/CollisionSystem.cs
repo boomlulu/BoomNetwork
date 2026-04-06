@@ -58,7 +58,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             ResolveFireTrailVsEnemies(state);
             ResolveEnemiesVsPlayers(state);
             ResolveBoneShardsVsPlayers(state);
-            ResolvePlayersVsGems(state);
+            ResolvePlayersVsGems(state, isMultiplayer);
             TickRevivalTotems(state);
         }
 
@@ -354,7 +354,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             }
         }
 
-        static void ResolvePlayersVsGems(GameState state)
+        static void ResolvePlayersVsGems(GameState state, bool isMultiplayer)
         {
             long rSq = (long)GameState.XpPickupRadius.Raw * GameState.XpPickupRadius.Raw;
             for (int p = 0; p < GameState.MaxPlayers; p++)
