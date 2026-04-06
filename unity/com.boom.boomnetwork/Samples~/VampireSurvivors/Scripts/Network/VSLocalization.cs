@@ -1,4 +1,7 @@
 // BoomNetwork VampireSurvivors Demo — Localization (EN / ZH)
+// Auto-detects system language on first use. Call Toggle() for manual override.
+
+using UnityEngine;
 
 namespace BoomNetwork.Samples.VampireSurvivors
 {
@@ -24,12 +27,24 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
     public static class VSLocalization
     {
-        static int _lang; // 0=EN, 1=ZH
+        static int _lang = -1; // -1 = uninitialized; 0=EN, 1=ZH
+
+        static void EnsureInit()
+        {
+            if (_lang >= 0) return;
+            var sys = Application.systemLanguage;
+            _lang = (sys == SystemLanguage.Chinese
+                  || sys == SystemLanguage.ChineseSimplified
+                  || sys == SystemLanguage.ChineseTraditional) ? 1 : 0;
+        }
 
         public static void SetLanguage(int lang) => _lang = lang;
-        public static int Language => _lang;
+        public static int Language { get { EnsureInit(); return _lang; } }
 
-        public static string Get(Str s) => _table[(int)s][_lang];
+        /// <summary>Toggle between EN and ZH.</summary>
+        public static void Toggle() { EnsureInit(); _lang = _lang == 0 ? 1 : 0; }
+
+        public static string Get(Str s) { EnsureInit(); return _table[(int)s][_lang]; }
 
         static readonly string[][] _table =
         {

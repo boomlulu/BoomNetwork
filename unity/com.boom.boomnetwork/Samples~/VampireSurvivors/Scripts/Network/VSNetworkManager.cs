@@ -91,9 +91,13 @@ namespace BoomNetwork.Samples.VampireSurvivors
             if (_sendTimer < 50f) return;
             _sendTimer -= 50f;
 
-            // Unified input: virtual joystick on mobile, keyboard on PC.
-            float h = _joystick != null ? _joystick.Direction.x : Input.GetAxisRaw("Horizontal");
-            float v = _joystick != null ? _joystick.Direction.y : Input.GetAxisRaw("Vertical");
+            // Unified input: joystick OR keyboard, joystick takes priority when active.
+            // Keyboard always available as fallback (PC + mobile with physical keyboard).
+            float jx = _joystick != null ? _joystick.Direction.x : 0f;
+            float jy = _joystick != null ? _joystick.Direction.y : 0f;
+            bool joystickActive = jx != 0f || jy != 0f;
+            float h = joystickActive ? jx : Input.GetAxisRaw("Horizontal");
+            float v = joystickActive ? jy : Input.GetAxisRaw("Vertical");
             byte ability = _pendingUpgradeChoice;
             _pendingUpgradeChoice = 0;
 

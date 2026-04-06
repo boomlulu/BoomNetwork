@@ -102,6 +102,18 @@ namespace BoomNetwork.Samples.VampireSurvivors
         bool[] _prevEnemyAlive = new bool[GameState.MaxEnemies];
         int[] _prevPlayerHp = new int[GameState.MaxPlayers];
 
+        // ==================== Enemy HP Bars (Feature 7) ====================
+        static readonly Quaternion HpBarRot = Quaternion.Euler(52f, 0f, 0f);
+        const float HpBarHideDelay = 3f;
+        const float HpBarWidth = 0.8f;
+        const float HpBarHeight = 0.1f;
+        int[] _enemyMaxHp = new int[GameState.MaxEnemies];
+        float[] _enemyHpBarTimer = new float[GameState.MaxEnemies];
+        GameObject[] _hpBarBgObjs = new GameObject[GameState.MaxEnemies];
+        GameObject[] _hpBarFillObjs = new GameObject[GameState.MaxEnemies];
+        SpriteRenderer[] _hpBarFill = new SpriteRenderer[GameState.MaxEnemies];
+        static Sprite _barSprite;
+
         // ==================== Death Pop + Screen Shake ====================
         struct DeathPop { public bool Active; public int Frame; public Vector3 Origin; public bool IsBoss; }
         DeathPop[] _deathPops = new DeathPop[GameState.MaxEnemies];
@@ -156,6 +168,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             CreateFlashPool();
             CreateDamageNumberPool();
             CreateNewWeaponPools();
+            CreateHpBars();
 
             for (int i = 0; i < GameState.MaxPlayers; i++)
             {
@@ -250,6 +263,18 @@ namespace BoomNetwork.Samples.VampireSurvivors
         void Update()
         {
             if (!_initialized || _state == null) return;
+
+            // Feature 7: Tick HP bar hide timers
+            for (int i = 0; i < GameState.MaxEnemies; i++)
+            {
+                if (_enemyHpBarTimer[i] <= 0f) continue;
+                _enemyHpBarTimer[i] -= Time.deltaTime;
+                if (_enemyHpBarTimer[i] <= 0f)
+                {
+                    _hpBarBgObjs[i].SetActive(false);
+                    _hpBarFillObjs[i].SetActive(false);
+                }
+            }
 
             _timeSinceLastSync += Time.deltaTime;
             float window = _curFrameWallTime - _prevFrameWallTime;
@@ -440,6 +465,44 @@ namespace BoomNetwork.Samples.VampireSurvivors
             }
         }
 
+        void CreateHpBars()
+        {
+            if (_barSprite == null)
+            {
+                var tex = new Texture2D(1, 1);
+                tex.SetPixel(0, 0, Color.white);
+                tex.Apply();
+                _barSprite = Sprite.Create(tex, new Rect(0, 0, 1, 1), new Vector2(0.5f, 0.5f), 1f);
+            }
+
+            for (int i = 0; i < GameState.MaxEnemies; i++)
+            {
+                // Background (dark red)
+                var bg = new GameObject("VS_HpBarBg");
+                bg.transform.SetParent(transform);
+                var bgSr = bg.AddComponent<SpriteRenderer>();
+                bgSr.sprite = _barSprite;
+                bgSr.color = new Color(0.4f, 0.05f, 0.05f);
+                bgSr.sortingOrder = 5;
+                bg.transform.localScale = new Vector3(HpBarWidth, HpBarHeight, 1f);
+                bg.transform.rotation = HpBarRot;
+                bg.SetActive(false);
+                _hpBarBgObjs[i] = bg;
+
+                // Fill (green → yellow → red based on HP ratio)
+                var fill = new GameObject("VS_HpBarFill");
+                fill.transform.SetParent(transform);
+                var fillSr = fill.AddComponent<SpriteRenderer>();
+                fillSr.sprite = _barSprite;
+                fillSr.color = new Color(0.1f, 0.85f, 0.2f);
+                fillSr.sortingOrder = 6;
+                fill.transform.rotation = HpBarRot;
+                fill.SetActive(false);
+                _hpBarFillObjs[i] = fill;
+                _hpBarFill[i] = fillSr;
+            }
+        }
+
         void CreateNewWeaponPools()
         {
             // LinkBeam lines (thin horizontal cubes)
@@ -593,11 +656,17 @@ namespace BoomNetwork.Samples.VampireSurvivors
                         || e.Type == EnemyType.SplitBoss || e.Type == EnemyType.SplitHalf);
                     _deathPops[i] = new DeathPop { Active = true, Frame = 0, Origin = lastPos, IsBoss = isBoss };
                     _shakeIntensity = Mathf.Min(_shakeIntensity + (isBoss ? ShakeMax : ShakePerKill), ShakeMax);
+
+                    // Feature 7: hide HP bar on death
+                    _enemyHpBarTimer[i] = 0f;
+                    _hpBarBgObjs[i].SetActive(false);
+                    _hpBarFillObjs[i].SetActive(false);
                 }
 
                 if (!show) continue;
 
                 float ex = e.PosX.ToFloat(), ez = e.PosZ.ToFloat();
+                float barY = 1.3f; // default HP bar height above ground
 
                 switch (e.Type)
                 {
@@ -605,16 +674,19 @@ namespace BoomNetwork.Samples.VampireSurvivors
                         _enemyPool[i].transform.localScale = new Vector3(0.7f, 0.9f, 0.7f);
                         _enemyPool[i].transform.position = new Vector3(ex, 0.45f, ez);
                         _enemyRenderers[i].sharedMaterial = e.SlowFrames > 0 ? _matFrostNova : _matZombie;
+                        barY = 1.2f;
                         break;
                     case EnemyType.Bat:
                         _enemyPool[i].transform.localScale = new Vector3(0.5f, 0.4f, 0.5f);
                         _enemyPool[i].transform.position = new Vector3(ex, 0.8f, ez);
                         _enemyRenderers[i].sharedMaterial = e.SlowFrames > 0 ? _matFrostNova : _matBat;
+                        barY = 1.2f;
                         break;
                     case EnemyType.SkeletonMage:
                         _enemyPool[i].transform.localScale = new Vector3(0.6f, 1.1f, 0.6f);
                         _enemyPool[i].transform.position = new Vector3(ex, 0.45f, ez);
                         _enemyRenderers[i].sharedMaterial = e.SlowFrames > 0 ? _matFrostNova : _matMage;
+                        barY = 1.5f;
                         break;
                     case EnemyType.Boss:
                         float bossS = 3f + Mathf.Sin(_state.FrameNumber * 0.15f) * 0.15f;
@@ -622,6 +694,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
                         _enemyPool[i].transform.position = new Vector3(ex, bossS * 0.6f, ez);
                         float pulse = (Mathf.Sin(_state.FrameNumber * 0.2f) + 1f) * 0.5f;
                         _enemyRenderers[i].material.color = Color.Lerp(new Color(0.15f, 0f, 0f), new Color(0.8f, 0f, 0f), pulse);
+                        barY = bossS * 1.2f + 0.5f;
                         break;
 
                     case EnemyType.TwinCore:
@@ -634,6 +707,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
                             _enemyRenderers[i].sharedMaterial = _matTwinCoreHit;
                         else
                             _enemyRenderers[i].sharedMaterial = (i % 2 == 0) ? _matTwinCoreA : _matTwinCoreB;
+                        barY = coreS * 1.2f + 0.3f;
                         break;
 
                     case EnemyType.SplitBoss:
@@ -644,6 +718,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
                         float splitT = e.BehaviorTimer / (float)GameState.SplitBossSplitTimer;
                         float r = Mathf.Lerp(1f, 0.5f, splitT);
                         _enemyRenderers[i].material.color = new Color(r, 0.35f * splitT, 0f);
+                        barY = sbS * 1.2f + 0.3f;
                         break;
 
                     case EnemyType.SplitHalf:
@@ -655,7 +730,38 @@ namespace BoomNetwork.Samples.VampireSurvivors
                             _enemyRenderers[i].material.color = Color.red;
                         else
                             _enemyRenderers[i].sharedMaterial = _matSplitHalf;
+                        barY = shS * 1.2f + 0.2f;
                         break;
+                }
+
+                // Feature 7: Enemy HP bars
+                // Record maxHp on spawn (first frame alive)
+                if (!_prevEnemyAlive[i] && e.IsAlive)
+                    _enemyMaxHp[i] = e.Hp;
+
+                // Detect damage → reset hide timer
+                if (e.IsAlive && _prevEnemyAlive[i] && e.Hp < _prevEnemyHp[i])
+                    _enemyHpBarTimer[i] = HpBarHideDelay;
+
+                bool showBar = e.IsAlive && _enemyMaxHp[i] > 0 && e.Hp < _enemyMaxHp[i] && _enemyHpBarTimer[i] > 0f;
+                _hpBarBgObjs[i].SetActive(showBar);
+                _hpBarFillObjs[i].SetActive(showBar);
+
+                if (showBar)
+                {
+                    float ratio = Mathf.Clamp01((float)e.Hp / _enemyMaxHp[i]);
+                    float fillW = HpBarWidth * ratio;
+
+                    // BG: centered at enemy position
+                    _hpBarBgObjs[i].transform.position = new Vector3(ex, barY, ez);
+
+                    // Fill: left-anchored (pivot center, so offset by half fill width from left edge)
+                    float leftEdge = ex - HpBarWidth * 0.5f;
+                    _hpBarFillObjs[i].transform.position = new Vector3(leftEdge + fillW * 0.5f, barY + 0.001f, ez);
+                    _hpBarFillObjs[i].transform.localScale = new Vector3(fillW, HpBarHeight, 1f);
+
+                    // Color: green → yellow → red
+                    _hpBarFill[i].color = Color.Lerp(new Color(0.9f, 0.1f, 0.1f), new Color(0.1f, 0.85f, 0.2f), ratio);
                 }
             }
         }
