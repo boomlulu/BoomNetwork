@@ -1,6 +1,8 @@
 {
   "name": "VampireSurvivors",
   "references": [
+    "BoomNetwork.Runtime",
+    "BoomNetwork.Unity",
     "Unity.Burst",
     "Unity.Collections",
     "Unity.Jobs"
