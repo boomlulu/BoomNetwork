@@ -201,7 +201,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             else if (!wantsPause && _network.Client.IsGamePaused)
                 _network.Client.RequestGameResume();
 
-            _ui.UpdateHUD(_sim, _localSlot, _network.Client.RttMs);
+            _ui.UpdateHUD(_sim, _localSlot, (int)_network.Client.RttMs);
         }
 
         void OnDesync(FrameHashMismatch mismatch)
