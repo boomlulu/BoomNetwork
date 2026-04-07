@@ -25,6 +25,16 @@ namespace BoomNetwork.Samples.VampireSurvivors
             return _pidSlotMap[pid];
         }
 
+        /// <summary>
+        /// 读取已确立的 Pid→Slot 映射，不分配新 slot。
+        /// 用于 OnFrameSyncStart / OnFrame lazy-resolve，避免在帧回放前抢占 slot 0。
+        /// </summary>
+        public int GetSlot(int pid)
+        {
+            if (pid < 0 || pid >= _pidSlotMap.Length) return -1;
+            return _pidSlotMap[pid]; // -1 = 尚未建立映射
+        }
+
         public void GetPidMap(out int[] map, out int nextSlot) { map = _pidSlotMap; nextSlot = _nextSlot; }
         public void SetPidMap(int[] map, int nextSlot)
         {

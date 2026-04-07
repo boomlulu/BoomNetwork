@@ -38,6 +38,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
         readonly byte[] _inputBuf = new byte[VSInput.InputSize];
         float _sendTimer;
+        float _frameIntervalSec;
         int _localSlot = -1;
         bool _syncing;
         bool _snapshotLoaded;
@@ -168,13 +169,17 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 Debug.Log($"[VS] FrameSync started (SnapshotResume). Pid={_network.PlayerId}, snapshotFrame={_sim.State.FrameNumber}, RngState=0x{_sim.State.RngState:X8}, Wave={_sim.State.WaveNumber}, dt={dt}, fps={init.FrameRate}");
             }
 
-            _localSlot = _sim.PidToSlot(_network.PlayerId);
+            // GetSlot (read-only) — 절대 PidToSlot을 여기서 호출하지 않는다.
+            // snapshot=False + late-joiner: 이 시점에 PidToSlot을 부르면 Pid2가 slot0를 선점해서
+            // replay 중 Pid1이 slot1을 받고 → Client1(Pid1=slot0, Pid2=slot1)과 불일치 → DESYNC.
+            // 대신 GetSlot으로 조회하고, 아직 미등록(-1)이면 OnFrame에서 lazy resolve한다.
+            _localSlot = _sim.GetSlot(_network.PlayerId);
             _syncing = true;
 
             _renderer = GetComponent<VSRenderer>();
             if (_renderer == null) _renderer = gameObject.AddComponent<VSRenderer>();
-            float frameIntervalSec = init.FrameInterval / 1000f;
-            _renderer.Init(_sim.State, _localSlot, frameIntervalSec);
+            _frameIntervalSec = init.FrameInterval / 1000f;
+            _renderer.Init(_sim.State, _localSlot, _frameIntervalSec);
 
             if (_joystick == null)
                 _joystick = VSVirtualJoystick.Create();
@@ -230,6 +235,18 @@ namespace BoomNetwork.Samples.VampireSurvivors
         void OnFrame(FrameData frame)
         {
             if (_desyncDetected) return;
+
+            // Lazy-resolve: slot map is populated by ApplyInputs/OnPlayerJoined during replay.
+            // By the time the first frame after replay fires, our Pid is already in the map.
+            if (_localSlot < 0)
+            {
+                _localSlot = _sim.GetSlot(_network.PlayerId);
+                if (_localSlot >= 0)
+                {
+                    Debug.Log($"[VS] LocalSlot resolved: Pid={_network.PlayerId} → slot {_localSlot} at frame {frame.FrameNumber}");
+                    _renderer?.Init(_sim.State, _localSlot, _frameIntervalSec); // re-init with correct slot (skips heavy setup, only updates slot)
+                }
+            }
 
             _sim.Tick(frame);
             if (_renderer != null) _renderer.SyncVisuals();
