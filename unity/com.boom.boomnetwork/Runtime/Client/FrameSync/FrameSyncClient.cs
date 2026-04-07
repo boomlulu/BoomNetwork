@@ -863,8 +863,11 @@ namespace BoomNetwork.Client.FrameSync
                         ScheduleSnapshotRetry();
                     }
                 },
-                onTimeout: _ =>
+                onTimeout: err =>
                 {
+                    // ConnectionDropped / SessionReset = CancelAllPending 强制取消，不是真正超时。
+                    // 断线重连流程（HandleReconnected）会清空 _pendingSnapshotData 并由服务器重新触发上传，无需重试。
+                    if (err.Code != ErrorCode.RequestTimeout) return;
                     Log($"Snapshot upload timeout (frame={_pendingSnapshotFrame}), scheduling retry {_snapshotRetryCount + 1}/{MaxSnapshotRetries}");
                     ScheduleSnapshotRetry();
                 });
