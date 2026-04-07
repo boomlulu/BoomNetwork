@@ -61,6 +61,11 @@
       "displayName": "Tower Defense",
       "description": "多人塔防 — 纯帧同步，7 种塔 + 5 种敌人 + 双层经济系统，展示 512 敌人零额外带宽",
       "path": "Samples~/TowerDefense"
+    },
+    {
+      "displayName": "Vampire Survivors",
+      "description": "弹幕生存 — 纯帧同步，512 怪零额外带宽，FInt 定点数，空间哈希碰撞",
+      "path": "Samples~/VampireSurvivors"
     }
   ],
   "repository": {
