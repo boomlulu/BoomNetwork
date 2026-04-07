@@ -8,7 +8,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
         const uint WaveGapFrames = 30;
         const int BaseEnemyCount = 5120;
         const int EnemiesPerWave = 500;
-        const int SpawnBatchSize = 64; // 每帧最多刷 64 只，80 帧内填满 5120
+        const int TargetFillSeconds = 20; // 动态批量：20 秒内刷完当波全部怪物
 
         public static void Tick(GameState state, bool isMultiplayer = true)
         {
@@ -28,9 +28,16 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 return;
             }
 
-            // 批量刷怪：每帧最多 SpawnBatchSize 只，无单只间隔
+            // 动态批量：fps × 20s = 目标帧数，每帧刷 ceil(remaining / targetFrames)
+            // FInt 22.10 格式：(FInt.One / Dt).Raw >> 10 = 整数 fps
+            int fps = state.Dt.Raw > 0 ? (FInt.One / state.Dt).Raw >> 10 : 30;
+            if (fps < 1) fps = 1;
+            int targetFrames = fps * TargetFillSeconds; // 30fps→600帧, 60fps→1200帧
+            int batchSize = ((int)state.WaveSpawnRemaining + targetFrames - 1) / targetFrames;
+            if (batchSize < 1) batchSize = 1;
+
             int count = 0;
-            while (state.WaveSpawnRemaining > 0 && count < SpawnBatchSize)
+            while (state.WaveSpawnRemaining > 0 && count < batchSize)
             {
                 int slot = state.AllocEnemy();
                 if (slot < 0) return; // 数组已满，等下一帧
