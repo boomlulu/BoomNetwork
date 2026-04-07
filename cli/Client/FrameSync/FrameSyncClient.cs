@@ -596,6 +596,11 @@ namespace BoomNetwork.Client.FrameSync
             else
             {
                 LastFrameNumber = context.ServerFrameNumber;
+                // 快速重连未走快照恢复路径：服务器可能未收到我们断线前的最后一次快照上传
+                // （上传中途断线 → CancelAllPending 触发超时 → HandleDisconnected 清空 _pendingSnapshotData）。
+                // 重置 _lastSnapshotFrame 强制 CheckSnapshotUpload 在下一帧边界重新上传，
+                // 避免 snapshotStaleFrames 在服务器端持续累积直至触发 SnapshotStale 暂停。
+                _lastSnapshotFrame = 0;
             }
 
             // 恢复服务器配置（跨重连保留）

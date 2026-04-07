@@ -651,6 +651,16 @@ func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
 		broadcastToRoom(room, playerId, codec.NewExtMessage(framesync.ExtCmdPlayerOnline, framesync.EncodePlayerId(playerId)))
 	}
 
+	// 先发 ReconnectRsp，再发补充消息（顺序保证：客户端先处理 Reconnect 再处理后续状态）
+	sendMsg(conn, codec.NewCoreMessage(framesync.CmdReconnectRsp, rsp))
+
+	// 若房间处于游戏级暂停，补发 FrameSyncPaused(GamePause) 给重连玩家。
+	// 客户端在 HandleDisconnected 时重置了 IsGamePaused=false；若此处不补发，
+	// 客户端永远不知道当前已暂停，也不会发 RequestGameResume，造成死锁。
+	if room.IsGamePaused() {
+		sendMsg(conn, codec.NewExtMessage(framesync.ExtCmdFrameSyncPaused, []byte{byte(framesync.PauseReasonGamePause)}))
+	}
+
 	// 异步补帧（P2-2: 分批发送，每批 replayBatchSize 帧后 sleep replayBatchDelay，防止撑爆 TCP 缓冲区）
 	if replayFrom > 0 && replayFrom < currentFrame {
 		go func() {
@@ -666,7 +676,7 @@ func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	}
 
 	slog.Info("player reconnected", "playerId", playerId, "roomId", room.ID, "serverFrame", currentFrame, "snapshotFrame", snapshotFrame)
-	return codec.NewCoreMessage(framesync.CmdReconnectRsp, rsp)
+	return nil
 }
 
 // ===================== 房间管理 Handler =====================
