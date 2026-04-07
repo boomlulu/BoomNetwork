@@ -151,7 +151,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
         public const int MaxEnemies = 5120;
         public const int MaxProjectiles = 2048;
         public const int MaxGems = 5120;
-        public const int MaxLightningFlashes = 256;
+        public const int MaxLightningFlashes = 255;
         public const int MaxRevivalTotems = MaxPlayers;
 
         public static readonly FInt ArenaHalfSize = FInt.FromInt(80);
