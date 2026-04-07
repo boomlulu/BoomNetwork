@@ -745,7 +745,9 @@ func (r *Room) stepFrame() {
 	r.mu.Lock()
 
 	// 快照新鲜度检查: 连续 3 个快照间隔未收到快照 → 暂停
-	if r.config.SnapshotIntervalFrames > 0 && r.frameNumber > 0 {
+	// gamePaused 期间 OnFrame 不触发，客户端无法调用 CheckSnapshotUpload，
+	// 不应将暂停时间计入过期计数（否则升级暂停必然触发 SnapshotStale 死循环）。
+	if r.config.SnapshotIntervalFrames > 0 && r.frameNumber > 0 && !r.gamePaused {
 		r.snapshotStaleFrames++
 		staleLimit := uint32(r.config.SnapshotIntervalFrames * 3)
 		if r.snapshotStaleFrames >= staleLimit && !r.snapshotPaused {
