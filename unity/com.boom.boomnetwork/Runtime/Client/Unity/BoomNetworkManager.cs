@@ -38,7 +38,7 @@ namespace BoomNetwork.Unity
     public class BoomNetworkManager : MonoBehaviour
     {
         [Header("Server")]
-        [SerializeField] private string host = ""; // L5: 不预填生产地址，避免开发者误连线上
+        [SerializeField] private string host = "124.220.6.174";
         [SerializeField] private int port = 9000;
 
         [Header("Transport")]
