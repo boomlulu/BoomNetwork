@@ -640,6 +640,8 @@ func (r *Room) Start() {
 	r.startedAt = time.Now()
 	r.frameRingPos = 0
 	r.frameRingLen = 0
+	r.snapshotFrame = 0  // 清除上一轮的快照，防止新会话迟加入者收到旧快照
+	r.snapshotData = nil
 	r.snapshotStaleFrames = 0
 	r.snapshotPaused = false
 	r.stopCh = make(chan struct{})
