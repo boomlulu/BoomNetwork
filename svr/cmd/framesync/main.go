@@ -779,13 +779,13 @@ func handleJoinRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 					snapshotMsg := framesync.EncodeSnapshot(snapshotFrame, snapshotData)
 					sendMsg(conn, codec.NewExtMessage(framesync.ExtCmdRoomSnapshot, snapshotMsg))
 					replayFrom = snapshotFrame
-					slog.Info("sent room snapshot to late-join player", "playerId", playerId, "snapshotFrame", snapshotFrame, "bytes", len(snapshotData))
+					slog.Info("late-join (joinRoom): sending snapshot", "playerId", playerId, "snapshotFrame", snapshotFrame, "snapshotBytes", len(snapshotData), "currentFrame", currentFrame)
 				} else {
 					oldestFrame := room.OldestBufferedFrame()
 					if oldestFrame > 0 {
 						replayFrom = oldestFrame - 1
 					}
-					slog.Warn("no snapshot for late-join player, replaying from oldest buffered frame", "playerId", playerId, "oldestFrame", oldestFrame)
+					slog.Info("late-join (joinRoom): no snapshot, replay from frames", "playerId", playerId, "oldestFrame", oldestFrame, "replayFrom", replayFrom, "currentFrame", currentFrame, "snapshotFrame", snapshotFrame)
 				}
 
 				initData := framesync.InitData{
@@ -931,11 +931,13 @@ func handleMatchRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 				snapshotMsg := framesync.EncodeSnapshot(snapshotFrame, snapshotData)
 				sendMsg(conn, codec.NewExtMessage(framesync.ExtCmdRoomSnapshot, snapshotMsg))
 				replayFrom = snapshotFrame
+				slog.Info("late-join (matchRoom): sending snapshot", "playerId", playerId, "snapshotFrame", snapshotFrame, "snapshotBytes", len(snapshotData), "currentFrame", currentFrame)
 			} else {
 				oldestFrame := room.OldestBufferedFrame()
 				if oldestFrame > 0 {
 					replayFrom = oldestFrame - 1
 				}
+				slog.Info("late-join (matchRoom): no snapshot, replay from frames", "playerId", playerId, "oldestFrame", oldestFrame, "replayFrom", replayFrom, "currentFrame", currentFrame, "snapshotFrame", snapshotFrame)
 			}
 
 			initData := framesync.InitData{
@@ -953,6 +955,9 @@ func handleMatchRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 				for _, cf := range frames {
 					sendMsg(conn, codec.NewCoreMessage(framesync.CmdPushFrames, cf.EncodedData))
 				}
+				slog.Info("late-join (matchRoom): replayed frames", "playerId", playerId, "count", len(frames), "fromFrame", replayFrom+1, "toFrame", currentFrame)
+			} else {
+				slog.Info("late-join (matchRoom): no replay needed", "playerId", playerId, "replayFrom", replayFrom, "currentFrame", currentFrame)
 			}
 		}()
 	}

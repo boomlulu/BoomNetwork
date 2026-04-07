@@ -648,6 +648,8 @@ func (r *Room) Start() {
 	d := r.delegate
 	r.mu.Unlock()
 
+	slog.Info("room started: snapshot cleared", "roomId", r.ID)
+
 	initData := &InitData{
 		FrameRate:           r.frameRate,
 		FrameInterval:       int32(r.frameInterval.Milliseconds()),

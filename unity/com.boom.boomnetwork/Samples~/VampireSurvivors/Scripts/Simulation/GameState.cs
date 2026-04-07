@@ -427,6 +427,163 @@ namespace BoomNetwork.Samples.VampireSurvivors
             }
         }
 
+        /// <summary>
+        /// 分系统哈希诊断结构，供 OnDesync 日志定位具体差异子系统。
+        /// </summary>
+        public struct HashDetail
+        {
+            public uint Wave;      // FrameNumber + RngState + Dt + WaveNumber + WaveSpawnTimer + WaveSpawnRemaining + FocusFire
+            public uint Players;   // 全部 PlayerState
+            public uint Enemies;   // 全部活跃 EnemyState
+            public uint Projectiles; // 全部活跃 ProjectileState
+            public uint Gems;      // 全部活跃 XpGemState
+            public uint Misc;      // LightningFlashes + RevivalTotems
+            public uint Final;     // 完整最终哈希（= ComputeHash()）
+        }
+
+        public HashDetail ComputeHashDetailed()
+        {
+            var d = new HashDetail();
+            uint h = 2166136261u;
+
+            // Wave
+            uint wh = 2166136261u;
+            wh = Fnv(wh, FrameNumber); wh = Fnv(wh, RngState); wh = Fnv(wh, (uint)Dt.Raw);
+            wh = Fnv(wh, (uint)WaveNumber); wh = Fnv(wh, WaveSpawnTimer); wh = Fnv(wh, WaveSpawnRemaining);
+            wh = Fnv(wh, (uint)FocusFireTarget); wh = Fnv(wh, FocusFireTimer);
+            d.Wave = wh;
+            h = Fnv(h, FrameNumber); h = Fnv(h, RngState); h = Fnv(h, (uint)Dt.Raw);
+            h = Fnv(h, (uint)WaveNumber); h = Fnv(h, WaveSpawnTimer); h = Fnv(h, WaveSpawnRemaining);
+            h = Fnv(h, (uint)FocusFireTarget); h = Fnv(h, FocusFireTimer);
+
+            // Players
+            uint ph = 2166136261u;
+            for (int i = 0; i < MaxPlayers; i++)
+            {
+                ref var p = ref Players[i];
+                ph = Fnv(ph, p.IsActive ? 1u : 0u); ph = Fnv(ph, p.IsAlive ? 1u : 0u);
+                ph = Fnv(ph, (uint)p.PosX.Raw); ph = Fnv(ph, (uint)p.PosZ.Raw);
+                ph = Fnv(ph, (uint)p.FacingX.Raw); ph = Fnv(ph, (uint)p.FacingZ.Raw);
+                ph = Fnv(ph, (uint)p.Hp); ph = Fnv(ph, (uint)p.MaxHp);
+                ph = Fnv(ph, (uint)p.Xp); ph = Fnv(ph, (uint)p.Level); ph = Fnv(ph, (uint)p.XpToNextLevel);
+                ph = Fnv(ph, p.InvincibilityFrames); ph = Fnv(ph, (uint)p.KillCount);
+                ph = Fnv(ph, p.PendingLevelUp ? 1u : 0u); ph = Fnv(ph, (uint)p.UpgradeChoice);
+                ph = Fnv(ph, p.UpgradeOpt0); ph = Fnv(ph, p.UpgradeOpt1);
+                ph = Fnv(ph, p.UpgradeOpt2); ph = Fnv(ph, p.UpgradeOpt3);
+                for (int ws = 0; ws < PlayerState.MaxWeaponSlots; ws++)
+                {
+                    var w = p.GetWeapon(ws);
+                    ph = Fnv(ph, (uint)w.Type); ph = Fnv(ph, (uint)w.Level); ph = Fnv(ph, w.Cooldown);
+                }
+                for (int o = 0; o < PlayerState.MaxOrbs; o++)
+                {
+                    var orb = p.GetOrb(o);
+                    ph = Fnv(ph, orb.Active ? 1u : 0u); ph = Fnv(ph, (uint)orb.AngleDeg.Raw);
+                }
+            }
+            d.Players = ph;
+
+            // also mix into main hash
+            for (int i = 0; i < MaxPlayers; i++)
+            {
+                ref var p = ref Players[i];
+                h = Fnv(h, p.IsActive ? 1u : 0u); h = Fnv(h, p.IsAlive ? 1u : 0u);
+                h = Fnv(h, (uint)p.PosX.Raw); h = Fnv(h, (uint)p.PosZ.Raw);
+                h = Fnv(h, (uint)p.FacingX.Raw); h = Fnv(h, (uint)p.FacingZ.Raw);
+                h = Fnv(h, (uint)p.Hp); h = Fnv(h, (uint)p.MaxHp);
+                h = Fnv(h, (uint)p.Xp); h = Fnv(h, (uint)p.Level); h = Fnv(h, (uint)p.XpToNextLevel);
+                h = Fnv(h, p.InvincibilityFrames); h = Fnv(h, (uint)p.KillCount);
+                h = Fnv(h, p.PendingLevelUp ? 1u : 0u); h = Fnv(h, (uint)p.UpgradeChoice);
+                h = Fnv(h, p.UpgradeOpt0); h = Fnv(h, p.UpgradeOpt1);
+                h = Fnv(h, p.UpgradeOpt2); h = Fnv(h, p.UpgradeOpt3);
+                for (int ws = 0; ws < PlayerState.MaxWeaponSlots; ws++)
+                {
+                    var w = p.GetWeapon(ws);
+                    h = Fnv(h, (uint)w.Type); h = Fnv(h, (uint)w.Level); h = Fnv(h, w.Cooldown);
+                }
+                for (int o = 0; o < PlayerState.MaxOrbs; o++)
+                {
+                    var orb = p.GetOrb(o);
+                    h = Fnv(h, orb.Active ? 1u : 0u); h = Fnv(h, (uint)orb.AngleDeg.Raw);
+                }
+            }
+
+            // Enemies
+            uint eh = 2166136261u;
+            for (int i = 0; i < MaxEnemies; i++)
+            {
+                ref var e = ref Enemies[i];
+                if (!e.IsAlive) continue;
+                eh = Fnv(eh, (uint)i); eh = Fnv(eh, (uint)e.Type);
+                eh = Fnv(eh, (uint)e.PosX.Raw); eh = Fnv(eh, (uint)e.PosZ.Raw);
+                eh = Fnv(eh, (uint)e.DirX.Raw); eh = Fnv(eh, (uint)e.DirZ.Raw);
+                eh = Fnv(eh, (uint)e.Hp); eh = Fnv(eh, (uint)e.TargetPlayerId); eh = Fnv(eh, e.BehaviorTimer);
+                eh = Fnv(eh, e.SlowFrames); eh = Fnv(eh, (uint)e.LinkedEnemyIdx); eh = Fnv(eh, e.HitWindowTimer);
+                h = Fnv(h, (uint)i); h = Fnv(h, (uint)e.Type);
+                h = Fnv(h, (uint)e.PosX.Raw); h = Fnv(h, (uint)e.PosZ.Raw);
+                h = Fnv(h, (uint)e.DirX.Raw); h = Fnv(h, (uint)e.DirZ.Raw);
+                h = Fnv(h, (uint)e.Hp); h = Fnv(h, (uint)e.TargetPlayerId); h = Fnv(h, e.BehaviorTimer);
+                h = Fnv(h, e.SlowFrames); h = Fnv(h, (uint)e.LinkedEnemyIdx); h = Fnv(h, e.HitWindowTimer);
+            }
+            d.Enemies = eh;
+
+            // Projectiles
+            uint prh = 2166136261u;
+            for (int i = 0; i < MaxProjectiles; i++)
+            {
+                ref var p = ref Projectiles[i];
+                if (!p.IsAlive) continue;
+                prh = Fnv(prh, (uint)i); prh = Fnv(prh, (uint)p.Type);
+                prh = Fnv(prh, (uint)p.PosX.Raw); prh = Fnv(prh, (uint)p.PosZ.Raw);
+                prh = Fnv(prh, (uint)p.DirX.Raw); prh = Fnv(prh, (uint)p.DirZ.Raw);
+                prh = Fnv(prh, (uint)p.Radius.Raw); prh = Fnv(prh, p.LifetimeFrames);
+                prh = Fnv(prh, (uint)p.OwnerPlayerId); prh = Fnv(prh, p.DamageTick);
+                h = Fnv(h, (uint)i); h = Fnv(h, (uint)p.Type);
+                h = Fnv(h, (uint)p.PosX.Raw); h = Fnv(h, (uint)p.PosZ.Raw);
+                h = Fnv(h, (uint)p.DirX.Raw); h = Fnv(h, (uint)p.DirZ.Raw);
+                h = Fnv(h, (uint)p.Radius.Raw); h = Fnv(h, p.LifetimeFrames);
+                h = Fnv(h, (uint)p.OwnerPlayerId); h = Fnv(h, p.DamageTick);
+            }
+            d.Projectiles = prh;
+
+            // Gems
+            uint gh = 2166136261u;
+            for (int i = 0; i < MaxGems; i++)
+            {
+                ref var g = ref Gems[i];
+                if (!g.IsAlive) continue;
+                gh = Fnv(gh, (uint)i); gh = Fnv(gh, g.Attracting ? 1u : 0u);
+                gh = Fnv(gh, (uint)g.PosX.Raw); gh = Fnv(gh, (uint)g.PosZ.Raw); gh = Fnv(gh, (uint)g.Value);
+                h = Fnv(h, (uint)i); h = Fnv(h, g.Attracting ? 1u : 0u);
+                h = Fnv(h, (uint)g.PosX.Raw); h = Fnv(h, (uint)g.PosZ.Raw); h = Fnv(h, (uint)g.Value);
+            }
+            d.Gems = gh;
+
+            // Misc (Flashes + RevivalTotems)
+            uint mh = 2166136261u;
+            for (int i = 0; i < MaxLightningFlashes; i++)
+            {
+                ref var f = ref Flashes[i];
+                if (f.FramesLeft == 0) continue;
+                mh = Fnv(mh, (uint)i); mh = Fnv(mh, (uint)f.PosX.Raw); mh = Fnv(mh, (uint)f.PosZ.Raw); mh = Fnv(mh, f.FramesLeft);
+                h = Fnv(h, (uint)i); h = Fnv(h, (uint)f.PosX.Raw); h = Fnv(h, (uint)f.PosZ.Raw); h = Fnv(h, f.FramesLeft);
+            }
+            for (int i = 0; i < MaxRevivalTotems; i++)
+            {
+                ref var t = ref RevivalTotems[i];
+                mh = Fnv(mh, t.Active ? 1u : 0u);
+                h = Fnv(h, t.Active ? 1u : 0u);
+                if (!t.Active) continue;
+                mh = Fnv(mh, (uint)t.PosX.Raw); mh = Fnv(mh, (uint)t.PosZ.Raw);
+                mh = Fnv(mh, (uint)t.OwnerSlot); mh = Fnv(mh, t.ReviveProgress);
+                h = Fnv(h, (uint)t.PosX.Raw); h = Fnv(h, (uint)t.PosZ.Raw);
+                h = Fnv(h, (uint)t.OwnerSlot); h = Fnv(h, t.ReviveProgress);
+            }
+            d.Misc = mh;
+            d.Final = h;
+            return d;
+        }
+
         public uint ComputeHash()
         {
             uint h = 2166136261u;
