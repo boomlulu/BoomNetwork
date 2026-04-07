@@ -798,7 +798,8 @@ func handleJoinRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 				sendMsg(conn, codec.NewCoreMessage(framesync.CmdStartFrameSync, framesync.EncodeInitData(&initData)))
 
 				// P2-2: 分批补帧，防止一次性发送 2400 帧撑爆 TCP 缓冲区
-				if replayFrom > 0 && replayFrom < currentFrame {
+				// replayFrom=0 时（无快照、oldestFrame=1）也需回放，GetFramesSince(0) 返回所有帧>0
+				if replayFrom < currentFrame {
 					frames := room.GetFramesSince(replayFrom)
 					for i, cf := range frames {
 						select {
@@ -946,7 +947,8 @@ func handleMatchRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 			}
 			sendMsg(conn, codec.NewCoreMessage(framesync.CmdStartFrameSync, framesync.EncodeInitData(&initData)))
 
-			if replayFrom > 0 && replayFrom < currentFrame {
+			// replayFrom=0 时（无快照、oldestFrame=1）也需回放，GetFramesSince(0) 返回所有帧>0
+			if replayFrom < currentFrame {
 				frames := room.GetFramesSince(replayFrom)
 				for _, cf := range frames {
 					sendMsg(conn, codec.NewCoreMessage(framesync.CmdPushFrames, cf.EncodedData))

@@ -518,15 +518,20 @@ namespace BoomNetwork.Samples.VampireSurvivors
         /// <summary>分裂弹命中时生成 3 个碎片（从 CollisionSystem 调用）。</summary>
         public static void SpawnSplitShotSplinters(GameState state, FInt hitX, FInt hitZ, FInt inDirX, FInt inDirZ, int ownerPlayerId)
         {
-            // 3 个方向：垂直左、垂直右、反射后方
+            // 5 个方向：垂直左、垂直右、反射后方、斜后左、斜后右
             FInt perpX = -inDirZ, perpZ = inDirX;
             FInt dirs0X = perpX, dirs0Z = perpZ;
             FInt dirs1X = -perpX, dirs1Z = -perpZ;
             FInt dirs2X = -inDirX, dirs2Z = -inDirZ;
+            // 斜后左 = (-dir + perp) normalized
+            FInt diag3X = perpX - inDirX, diag3Z = perpZ - inDirZ;
+            FInt diag4X = -perpX - inDirX, diag4Z = -perpZ - inDirZ;
 
             SpawnSplinter(state, hitX, hitZ, dirs0X, dirs0Z, ownerPlayerId);
             SpawnSplinter(state, hitX, hitZ, dirs1X, dirs1Z, ownerPlayerId);
             SpawnSplinter(state, hitX, hitZ, dirs2X, dirs2Z, ownerPlayerId);
+            SpawnSplinter(state, hitX, hitZ, diag3X, diag3Z, ownerPlayerId);
+            SpawnSplinter(state, hitX, hitZ, diag4X, diag4Z, ownerPlayerId);
         }
 
         static void SpawnSplinter(GameState state, FInt x, FInt z, FInt dX, FInt dZ, int owner)
