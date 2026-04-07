@@ -50,7 +50,12 @@ namespace BoomNetwork.Samples.VampireSurvivors
         {
             State.FrameNumber = frame.FrameNumber;
 
+            bool wasUpgrading = IsAnyPlayerUpgrading();
             ApplyInputs(frame);
+            // true = 本帧刚刚结束升级选择（PendingLevelUp 由 true→false）。
+            // 此时跳过宝石触发升级，防止附近宝石立即再次触发升级面板，
+            // 给玩家至少 1 帧的间隙确认升级已生效。
+            bool justAppliedUpgrade = wasUpgrading && !IsAnyPlayerUpgrading();
 
             if (IsAnyPlayerUpgrading()) return;
 
@@ -60,7 +65,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             CollisionSystem.AttractGems(State);
             CollisionSystem.CachePositions(State);
             CollisionSystem.Rebuild(State);
-            CollisionSystem.Resolve(State, IsMultiplayer);
+            CollisionSystem.Resolve(State, IsMultiplayer, justAppliedUpgrade);
 
             for (int i = 0; i < GameState.MaxPlayers; i++)
             {

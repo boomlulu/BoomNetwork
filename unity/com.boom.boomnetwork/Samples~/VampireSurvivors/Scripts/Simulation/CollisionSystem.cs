@@ -49,7 +49,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             }
         }
 
-        public static void Resolve(GameState state, bool isMultiplayer = true)
+        public static void Resolve(GameState state, bool isMultiplayer = true, bool skipLevelUp = false)
         {
             ResolveKnivesVsEnemies(state);
             ResolveSplitShotVsEnemies(state);
@@ -58,7 +58,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             ResolveFireTrailVsEnemies(state);
             ResolveEnemiesVsPlayers(state);
             ResolveBoneShardsVsPlayers(state);
-            ResolvePlayersVsGems(state, isMultiplayer);
+            ResolvePlayersVsGems(state, isMultiplayer, skipLevelUp);
             TickRevivalTotems(state);
         }
 
@@ -354,7 +354,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             }
         }
 
-        static void ResolvePlayersVsGems(GameState state, bool isMultiplayer)
+        static void ResolvePlayersVsGems(GameState state, bool isMultiplayer, bool skipLevelUp = false)
         {
             long rSq = (long)GameState.XpPickupRadius.Raw * GameState.XpPickupRadius.Raw;
             for (int p = 0; p < GameState.MaxPlayers; p++)
@@ -373,15 +373,20 @@ namespace BoomNetwork.Samples.VampireSurvivors
                     player.Xp += gem.Value;
                     gem.IsAlive = false;
 
-                    while (player.Xp >= player.XpToNextLevel)
+                    // skipLevelUp=true 时本帧刚结束升级选择，跳过升级触发，
+                    // 让升级面板有 1 帧间隙消失，下一帧 XP 再次触发正常流程。
+                    if (!skipLevelUp)
                     {
-                        player.Xp -= player.XpToNextLevel;
-                        player.Level++;
-                        player.XpToNextLevel = player.XpToNextLevel * 6 / 5 + 2;
-                        player.Hp = Math.Min(player.Hp + 40, player.MaxHp);
-                        player.PendingLevelUp = true;
-                        // 确定性生成升级选项
-                        WeaponSystem.GenerateUpgradeOptions(ref player, ref state.RngState, isMultiplayer);
+                        while (player.Xp >= player.XpToNextLevel)
+                        {
+                            player.Xp -= player.XpToNextLevel;
+                            player.Level++;
+                            player.XpToNextLevel = player.XpToNextLevel * 6 / 5 + 2;
+                            player.Hp = Math.Min(player.Hp + 40, player.MaxHp);
+                            player.PendingLevelUp = true;
+                            // 确定性生成升级选项
+                            WeaponSystem.GenerateUpgradeOptions(ref player, ref state.RngState, isMultiplayer);
+                        }
                     }
                 }
             }
