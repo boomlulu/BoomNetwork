@@ -192,6 +192,13 @@ namespace BoomNetwork.Client.FrameSync
         private uint _lastSnapshotFrame;
         private Message? _pendingStartMsg;
 
+        // --- FrameHash 节流（防止迟加入/重连补帧时 burst 超过服务器速率限制）---
+        // 同一 Tick 内处理多帧（补帧）时，只在第一个允许的时间窗口发送 hash；
+        // 稳态 20fps（50ms/帧）下每 2 帧发一次，节省带宽并降低速率限制风险。
+        private float _totalElapsedMs;
+        private float _lastHashSentMs = float.MinValue;
+        private const float HashThrottleMs = 100f; // ≥100ms 才发下一条 hash
+
         // --- 快照上传 ACK 重试 ---
         private int _snapshotRetryCount;
         private float _snapshotRetryTimer;  // 倒计时 ms，<=0 表示不在等待
@@ -237,6 +244,7 @@ namespace BoomNetwork.Client.FrameSync
         /// </summary>
         public void Tick(float deltaTimeMs)
         {
+            _totalElapsedMs += deltaTimeMs;
             _connMgr?.Tick(deltaTimeMs);
             TickSnapshotRetry(deltaTimeMs);
         }
@@ -442,6 +450,9 @@ namespace BoomNetwork.Client.FrameSync
         public void SendFrameHash(uint frameNumber, uint hash)
         {
             if (CurrentState != State.Syncing || IsGamePaused) return;
+            // 节流：补帧 burst 期间同一 100ms 窗口内只发一次，防止突发超过服务器速率限制
+            if (_totalElapsedMs - _lastHashSentMs < HashThrottleMs) return;
+            _lastHashSentMs = _totalElapsedMs;
             // P1-5: 复用类字段 _hashBuf，消除每帧 new byte[8] 分配（20fps × N 玩家高频路径）
             BinaryPrimitives.WriteUInt32LittleEndian(_hashBuf, frameNumber);
             BinaryPrimitives.WriteUInt32LittleEndian(_hashBuf.AsSpan(4), hash);
@@ -575,6 +586,7 @@ namespace BoomNetwork.Client.FrameSync
             _pendingSnapshotData = null;
             _snapshotRetryCount = 0;
             _snapshotRetryTimer = 0;
+            _lastHashSentMs = float.MinValue;
             CurrentState = State.Disconnected;
             Log("Disconnected");
             OnDisconnected?.Invoke();
@@ -767,6 +779,7 @@ namespace BoomNetwork.Client.FrameSync
             _frameSyncStarted = true;
             LastFrameNumber = 0;
             _lastSnapshotFrame = 0;
+            _lastHashSentMs = float.MinValue;
             CurrentState = State.Syncing;
             OnFrameSyncStart?.Invoke(init);
         }
