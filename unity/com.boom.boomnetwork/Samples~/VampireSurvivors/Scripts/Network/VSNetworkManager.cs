@@ -18,6 +18,8 @@
 //   handles same-tick consecutive state changes without any local memory.
 //   The Update() path provides the deadlock-breaker (RequestGameResume)
 //   for when the server is paused and OnFrame never fires.
+//   Applies to both solo and multiplayer — pausing frame sync saves bandwidth
+//   in all cases and is deadlock-safe because Update() always sends Resume.
 
 using UnityEngine;
 using BoomNetwork.Client.FrameSync;
@@ -116,8 +118,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
             // Deadlock-breaker: while server is paused, OnFrame never fires.
             // RequestGameResume unblocks frame delivery after upgrade choice is sent.
-            // Solo mode skips this — the server is never paused in solo.
-            if (ability != 0 && !_isSolo)
+            if (ability != 0)
             {
                 Debug.Log($"[VS] Upgrade choice sent: ability={ability}, IsGamePaused={_network.Client.IsGamePaused}");
                 _network.Client.RequestGameResume();
@@ -229,16 +230,13 @@ namespace BoomNetwork.Samples.VampireSurvivors
             _network.Client.SendFrameHash(frame.FrameNumber, hash);
 
             // Level-Triggered Pause Convergence (see DESIGN PRINCIPLE 2 at top of file)
-            // Solo mode: no network pause needed — only 1 player, no deadlock possible.
-            // Simulation still freezes locally (IsAnyPlayerUpgrading guard in Tick).
+            // Same for solo and multiplayer: pausing frame sync saves bandwidth and
+            // is deadlock-safe because Update() sends RequestGameResume after upgrade choice.
             bool wantsPause = _sim.IsAnyPlayerUpgrading();
-            if (!_isSolo)
-            {
-                if (wantsPause && !_network.Client.IsGamePaused)
-                    _network.Client.RequestGamePause();
-                else if (!wantsPause && _network.Client.IsGamePaused)
-                    _network.Client.RequestGameResume();
-            }
+            if (wantsPause && !_network.Client.IsGamePaused)
+                _network.Client.RequestGamePause();
+            else if (!wantsPause && _network.Client.IsGamePaused)
+                _network.Client.RequestGameResume();
 
             _ui.UpdateHUD(_sim, _localSlot, (int)_network.Client.RttMs);
         }
