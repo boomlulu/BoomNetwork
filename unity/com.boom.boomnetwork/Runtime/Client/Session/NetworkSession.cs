@@ -351,8 +351,17 @@ namespace BoomNetwork.Client.Session
             _cancelledRequests.Clear();
             _pendingRequests.CancelAll(_cancelledRequests);
 
-            foreach (var req in _cancelledRequests)
-                req.OnTimeout?.Invoke(new NetworkError(code, reason));
+            if (_cancelledRequests.Count == 0) return;
+
+            // 防止回调内部触发 Disconnect → CancelAllPending 重入导致
+            // "Collection was modified" InvalidOperationException：
+            // 先清空 _cancelledRequests，再从本地副本触发回调。
+            // 重入的 CancelAllPending 调用会看到空 _pendingRequests 直接返回。
+            var error = new NetworkError(code, reason);
+            var snapshot = _cancelledRequests.ToArray();
+            _cancelledRequests.Clear();
+            foreach (var req in snapshot)
+                req.OnTimeout?.Invoke(error);
         }
 
         private void HandleDisconnected()
