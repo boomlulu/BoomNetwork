@@ -6,9 +6,9 @@ namespace BoomNetwork.Samples.VampireSurvivors
     public static class WaveSystem
     {
         const uint WaveGapFrames = 30;
-        const uint SpawnIntervalFrames = 5;
-        const int BaseEnemyCount = 500;
+        const int BaseEnemyCount = 5120;
         const int EnemiesPerWave = 500;
+        const int SpawnBatchSize = 64; // 每帧最多刷 64 只，80 帧内填满 5120
 
         public static void Tick(GameState state, bool isMultiplayer = true)
         {
@@ -19,7 +19,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 if (state.WaveSpawnTimer > 0) { state.WaveSpawnTimer--; return; }
                 state.WaveNumber++;
                 state.WaveSpawnRemaining = (uint)(BaseEnemyCount + state.WaveNumber * EnemiesPerWave);
-                state.WaveSpawnTimer = SpawnIntervalFrames;
+                state.WaveSpawnTimer = 0;
 
                 // Boss 只在多人模式生成
                 if (isMultiplayer && state.WaveNumber % GameState.BossWaveInterval == 0)
@@ -27,14 +27,17 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
                 return;
             }
-            if (state.WaveSpawnTimer > 0) { state.WaveSpawnTimer--; return; }
 
-            int slot = state.AllocEnemy();
-            if (slot < 0) { state.WaveSpawnTimer = SpawnIntervalFrames; return; }
-
-            SpawnEnemy(state, slot);
-            state.WaveSpawnRemaining--;
-            state.WaveSpawnTimer = SpawnIntervalFrames;
+            // 批量刷怪：每帧最多 SpawnBatchSize 只，无单只间隔
+            int count = 0;
+            while (state.WaveSpawnRemaining > 0 && count < SpawnBatchSize)
+            {
+                int slot = state.AllocEnemy();
+                if (slot < 0) return; // 数组已满，等下一帧
+                SpawnEnemy(state, slot);
+                state.WaveSpawnRemaining--;
+                count++;
+            }
         }
 
         static void SpawnEnemy(GameState state, int slot)
