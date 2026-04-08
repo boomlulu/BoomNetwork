@@ -195,9 +195,11 @@ namespace BoomNetwork.Client.FrameSync
         // --- FrameHash 节流（防止迟加入/重连补帧时 burst 超过服务器速率限制）---
         // 同一 Tick 内处理多帧（补帧）时，只在第一个允许的时间窗口发送 hash；
         // 稳态 20fps（50ms/帧）下每 2 帧发一次，节省带宽并降低速率限制风险。
+        // 调试时可将 HashThrottleMs 设为 0 实现每帧上报。
         private float _totalElapsedMs;
         private float _lastHashSentMs = float.MinValue;
-        private const float HashThrottleMs = 100f; // ≥100ms 才发下一条 hash
+        /// <summary>Hash 上报节流间隔（ms）。0 = 每帧上报（调试用）；100 = 稳态 2 帧一次。</summary>
+        public float HashThrottleMs = 0f;
 
         // --- 快照上传 ACK 重试 ---
         private int _snapshotRetryCount;

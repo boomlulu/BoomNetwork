@@ -52,6 +52,21 @@ namespace BoomNetwork.Samples.VampireSurvivors
         // Mobile virtual joystick — null on PC/Editor
         VSVirtualJoystick _joystick;
 
+        // ==================== Desync Diagnostics ====================
+        // Hash history ring buffer — 5 秒（100 帧 @ 20fps）
+        struct HashEntry
+        {
+            public uint Frame, FinalHash, WaveRemaining, RngState;
+            public bool HasPlayers;
+        }
+        const int HistorySize = 100;
+        readonly HashEntry[] _hashHistory = new HashEntry[HistorySize];
+        int _hashHead;   // 下一个写入位置
+        int _hashCount;  // 有效条数
+        // 状态转变追踪（用于定位初始化时机）
+        bool _prevHasAlivePlayers;
+        uint _prevWaveRemaining;
+
         void Start()
         {
             _sim = new VSSimulation();
@@ -156,17 +171,26 @@ namespace BoomNetwork.Samples.VampireSurvivors
             FInt dt = FInt.FromInt(init.FrameInterval) / FInt.FromInt(1000);
             uint seed = (uint)(init.StartTime & 0xFFFFFFFF);
 
+            // Compute fps + targetFrames the same way WaveSystem does — for cross-client comparison.
+            int fps = dt.Raw > 0 ? (FInt.One / dt).Raw >> 10 : 30;
+            if (fps < 1) fps = 1;
+            int targetFrames = fps * 20; // WaveSystem.TargetFillSeconds = 20
+
             _sim.IsMultiplayer = !_isSolo;
+
+            // Reset diagnostic ring buffer
+            _hashHead = 0; _hashCount = 0;
+            _prevHasAlivePlayers = false; _prevWaveRemaining = 0;
 
             if (!_snapshotLoaded)
             {
                 _sim.Init(dt, seed);
-                Debug.Log($"[VS] FrameSync started (Init). Pid={_network.PlayerId}, seed=0x{seed:X8}, startTime={init.StartTime}, dt={dt}, fps={init.FrameRate}");
+                Debug.Log($"[VS] FrameSync started (Init). Pid={_network.PlayerId}, seed=0x{seed:X8}, startTime={init.StartTime}, frameInterval={init.FrameInterval}ms, dt.Raw={dt.Raw}, fps={fps}, targetFrames={targetFrames}");
             }
             else
             {
                 _sim.State.Dt = dt;
-                Debug.Log($"[VS] FrameSync started (SnapshotResume). Pid={_network.PlayerId}, snapshotFrame={_sim.State.FrameNumber}, RngState=0x{_sim.State.RngState:X8}, Wave={_sim.State.WaveNumber}, dt={dt}, fps={init.FrameRate}");
+                Debug.Log($"[VS] FrameSync started (SnapshotResume). Pid={_network.PlayerId}, snapshotFrame={_sim.State.FrameNumber}, RngState=0x{_sim.State.RngState:X8}, Wave={_sim.State.WaveNumber}, frameInterval={init.FrameInterval}ms, dt.Raw={dt.Raw}, fps={fps}, targetFrames={targetFrames}");
             }
 
             // GetSlot (read-only) — 절대 PidToSlot을 여기서 호출하지 않는다.
@@ -254,6 +278,34 @@ namespace BoomNetwork.Samples.VampireSurvivors
             uint hash = _sim.State.ComputeHash();
             _network.Client.SendFrameHash(frame.FrameNumber, hash);
 
+            // --- Hash history ring buffer ---
+            var s = _sim.State;
+            bool hasPlayers = s.HasAlivePlayers();
+            _hashHistory[_hashHead] = new HashEntry
+            {
+                Frame = frame.FrameNumber,
+                FinalHash = hash,
+                WaveRemaining = s.WaveSpawnRemaining,
+                RngState = s.RngState,
+                HasPlayers = hasPlayers
+            };
+            _hashHead = (_hashHead + 1) % HistorySize;
+            if (_hashCount < HistorySize) _hashCount++;
+
+            // --- Transition logging ---
+            if (!_prevHasAlivePlayers && hasPlayers)
+                Debug.Log($"[VS][DIAG] HasAlivePlayers: false→true at frame={frame.FrameNumber}, dt.Raw={s.Dt.Raw}");
+            _prevHasAlivePlayers = hasPlayers;
+
+            if (_prevWaveRemaining == 0 && s.WaveSpawnRemaining > 0)
+            {
+                int fps2 = s.Dt.Raw > 0 ? (FInt.One / s.Dt).Raw >> 10 : 30; if (fps2 < 1) fps2 = 1;
+                int targetFrames2 = fps2 * 20;
+                int batchSize = ((int)s.WaveSpawnRemaining + targetFrames2 - 1) / targetFrames2;
+                Debug.Log($"[VS][DIAG] Wave start at frame={frame.FrameNumber}, WaveNum={s.WaveNumber}, WaveRemaining={s.WaveSpawnRemaining}, fps={fps2}, targetFrames={targetFrames2}, batchSize={batchSize}, RngState=0x{s.RngState:X8}");
+            }
+            _prevWaveRemaining = s.WaveSpawnRemaining;
+
             // Level-Triggered Pause Convergence (see DESIGN PRINCIPLE 2 at top of file)
             // Same for solo and multiplayer: pausing frame sync saves bandwidth and
             // is deadlock-safe because Update() sends RequestGameResume after upgrade choice.
@@ -293,6 +345,21 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 ref var p = ref s.Players[i];
                 if (p.IsActive)
                     Debug.LogError($"[VS] DESYNC Player[{i}]: IsAlive={p.IsAlive}, Hp={p.Hp}, Level={p.Level}, Xp={p.Xp}, Pos=({p.PosX},{p.PosZ}), W0={p.Weapon0.Type}L{p.Weapon0.Level}");
+            }
+
+            // Dump hash history (chronological, oldest first)
+            if (_hashCount > 0)
+            {
+                int oldest = _hashCount < HistorySize ? 0 : _hashHead; // oldest entry start
+                var sb = new System.Text.StringBuilder();
+                sb.AppendLine($"[VS] DESYNC Hash History ({_hashCount} frames, newest last):");
+                sb.AppendLine("  Frame | FinalHash | WaveRemaining | RngState | HasPlayers");
+                for (int k = 0; k < _hashCount; k++)
+                {
+                    var e = _hashHistory[(oldest + k) % HistorySize];
+                    sb.AppendLine($"  {e.Frame,5} | 0x{e.FinalHash:X8} | {e.WaveRemaining,13} | 0x{e.RngState:X8} | {e.HasPlayers}");
+                }
+                Debug.LogError(sb.ToString());
             }
 
             _ui.ShowDesync(mismatch.FrameNumber);

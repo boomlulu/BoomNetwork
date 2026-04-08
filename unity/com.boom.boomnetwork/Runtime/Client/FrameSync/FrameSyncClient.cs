@@ -195,9 +195,11 @@ namespace BoomNetwork.Client.FrameSync
         // --- FrameHash 节流（防止迟加入/重连补帧时 burst 超过服务器速率限制）---
         // 同一 Tick 内处理多帧（补帧）时，只在第一个允许的时间窗口发送 hash；
         // 稳态 20fps（50ms/帧）下每 2 帧发一次，节省带宽并降低速率限制风险。
+        // 调试时可将 HashThrottleMs 设为 0 实现每帧上报。
         private float _totalElapsedMs;
         private float _lastHashSentMs = float.MinValue;
-        private const float HashThrottleMs = 100f; // ≥100ms 才发下一条 hash
+        /// <summary>Hash 上报节流间隔（ms）。0 = 每帧上报（调试用）；100 = 稳态 2 帧一次。</summary>
+        public float HashThrottleMs = 0f;
 
         // --- 快照上传 ACK 重试 ---
         private int _snapshotRetryCount;
@@ -450,7 +452,9 @@ namespace BoomNetwork.Client.FrameSync
         public void SendFrameHash(uint frameNumber, uint hash)
         {
             if (CurrentState != State.Syncing || IsGamePaused) return;
-            // 节流：补帧 burst 期间同一 100ms 窗口内只发一次，防止突发超过服务器速率限制
+            // 节流：同一 Tick 内补帧时只发第一个允许窗口的 hash，防止 burst 触发服务器速率限制。
+            // 稳态 20fps（50ms/帧）下每 ~2 帧发一次 hash（10/sec），加上帧输入共 ~30msg/sec，
+            // 远低于服务器 100msg/sec 速率上限的 80% 警告阈值。
             if (_totalElapsedMs - _lastHashSentMs < HashThrottleMs) return;
             _lastHashSentMs = _totalElapsedMs;
             // P1-5: 复用类字段 _hashBuf，消除每帧 new byte[8] 分配（20fps × N 玩家高频路径）
@@ -589,7 +593,7 @@ namespace BoomNetwork.Client.FrameSync
             _pendingSnapshotData = null;
             _snapshotRetryCount = 0;
             _snapshotRetryTimer = 0;
-            _lastHashSentMs = float.MinValue;
+            _lastHashSentMs = float.MinValue; // 重置节流，重连后首帧立即可发 hash
             CurrentState = State.Disconnected;
             Log("Disconnected");
             OnDisconnected?.Invoke();
@@ -782,7 +786,7 @@ namespace BoomNetwork.Client.FrameSync
             _frameSyncStarted = true;
             LastFrameNumber = 0;
             _lastSnapshotFrame = 0;
-            _lastHashSentMs = float.MinValue;
+            _lastHashSentMs = float.MinValue; // 重置节流，首帧立即可发 hash
             CurrentState = State.Syncing;
             OnFrameSyncStart?.Invoke(init);
         }
@@ -869,7 +873,7 @@ namespace BoomNetwork.Client.FrameSync
                 onTimeout: err =>
                 {
                     // ConnectionDropped / SessionReset = CancelAllPending 强制取消，不是真正超时。
-                    // 断线重连流程（HandleReconnected）会清空 _pendingSnapshotData 并由服务器重新触发上传，无需重试。
+                    // 断线重连流程（HandleReconnected）会清空 _pendingSnapshotData，无需重试。
                     if (err.Code != ErrorCode.RequestTimeout) return;
                     Log($"Snapshot upload timeout (frame={_pendingSnapshotFrame}), scheduling retry {_snapshotRetryCount + 1}/{MaxSnapshotRetries}");
                     ScheduleSnapshotRetry();
