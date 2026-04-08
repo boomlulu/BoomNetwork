@@ -576,6 +576,9 @@ namespace BoomNetwork.Client.FrameSync
                 },
                 onTimeout: err =>
                 {
+                    // ConnectionDropped / SessionReset = 断线时 CancelAllPending 强制取消。
+                    // 此时 ConnectionManager 已在处理断线流程，不能再调 Disconnect()（会破坏 Reconnecting 状态机）。
+                    if (err.Code != ErrorCode.RequestTimeout) return;
                     OnError?.Invoke(new NetworkError(ErrorCode.SessionBindTimeout, err.Message));
                     _connMgr?.Disconnect();
                 });
@@ -865,8 +868,11 @@ namespace BoomNetwork.Client.FrameSync
                         ScheduleSnapshotRetry();
                     }
                 },
-                onTimeout: _ =>
+                onTimeout: err =>
                 {
+                    // ConnectionDropped / SessionReset = CancelAllPending 强制取消，不是真正超时。
+                    // 断线重连流程（HandleReconnected）会清空 _pendingSnapshotData，无需重试。
+                    if (err.Code != ErrorCode.RequestTimeout) return;
                     Log($"Snapshot upload timeout (frame={_pendingSnapshotFrame}), scheduling retry {_snapshotRetryCount + 1}/{MaxSnapshotRetries}");
                     ScheduleSnapshotRetry();
                 });
