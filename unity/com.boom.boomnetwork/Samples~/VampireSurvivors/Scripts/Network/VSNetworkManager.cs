@@ -136,7 +136,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             // RequestGameResume unblocks frame delivery after upgrade choice is sent.
             if (ability != 0)
             {
-                Debug.Log($"[VS] Upgrade choice sent: ability={ability}, IsGamePaused={_network.Client.IsGamePaused}");
+                VSLog.Log(VSLog.Channel.Upgrade, $"Upgrade choice sent: ability={ability}, IsGamePaused={_network.Client.IsGamePaused}");
                 _network.Client.RequestGameResume();
             }
         }
@@ -185,12 +185,12 @@ namespace BoomNetwork.Samples.VampireSurvivors
             if (!_snapshotLoaded)
             {
                 _sim.Init(dt, seed);
-                Debug.Log($"[VS] FrameSync started (Init). Pid={_network.PlayerId}, seed=0x{seed:X8}, startTime={init.StartTime}, frameInterval={init.FrameInterval}ms, dt.Raw={dt.Raw}, fps={fps}, targetFrames={targetFrames}");
+                VSLog.Log(VSLog.Channel.Key, $"FrameSync started (Init). Pid={_network.PlayerId}, seed=0x{seed:X8}, startTime={init.StartTime}, frameInterval={init.FrameInterval}ms, dt.Raw={dt.Raw}, fps={fps}, targetFrames={targetFrames}");
             }
             else
             {
                 _sim.State.Dt = dt;
-                Debug.Log($"[VS] FrameSync started (SnapshotResume). Pid={_network.PlayerId}, snapshotFrame={_sim.State.FrameNumber}, RngState=0x{_sim.State.RngState:X8}, Wave={_sim.State.WaveNumber}, frameInterval={init.FrameInterval}ms, dt.Raw={dt.Raw}, fps={fps}, targetFrames={targetFrames}");
+                VSLog.Log(VSLog.Channel.Key, $"FrameSync started (SnapshotResume). Pid={_network.PlayerId}, snapshotFrame={_sim.State.FrameNumber}, RngState=0x{_sim.State.RngState:X8}, Wave={_sim.State.WaveNumber}, frameInterval={init.FrameInterval}ms, dt.Raw={dt.Raw}, fps={fps}, targetFrames={targetFrames}");
             }
 
             // GetSlot (read-only) — 절대 PidToSlot을 여기서 호출하지 않는다.
@@ -215,7 +215,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             {
                 ref var p = ref _sim.State.Players[i];
                 if (p.IsActive)
-                    Debug.Log($"[VS] Start Player[{i}]: IsAlive={p.IsAlive}, Hp={p.Hp}, Level={p.Level}, Xp={p.Xp}, Pos=({p.PosX},{p.PosZ}), W0={p.Weapon0.Type}L{p.Weapon0.Level}");
+                    VSLog.Log(VSLog.Channel.Player, $"Start Player[{i}]: IsAlive={p.IsAlive}, Hp={p.Hp}, Level={p.Level}, Xp={p.Xp}, Pos=({p.PosX},{p.PosZ}), W0={p.Weapon0.Type}L{p.Weapon0.Level}");
             }
         }
 
@@ -227,7 +227,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
         void OnJoinedRoom(int roomId, int[] existingPlayerIds)
         {
-            Debug.Log($"[VS] Joined room {roomId}, {existingPlayerIds.Length} existing players");
+            VSLog.Log(VSLog.Channel.Key, $"Joined room {roomId}, {existingPlayerIds.Length} existing players");
         }
 
         /// <summary>
@@ -241,7 +241,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             if (_syncing && !_sim.State.Players[slot].IsActive)
                 _sim.State.InitPlayer(slot);
 
-            Debug.Log($"[VS] Player {pid} joined (slot {slot}){(_syncing ? " — initialized via frame event" : "")}");
+            VSLog.Log(VSLog.Channel.Player, $"Player {pid} joined (slot {slot}){(_syncing ? " — initialized via frame event" : "")}");
         }
 
         void OnPlayerLeft(int pid)
@@ -267,7 +267,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 _localSlot = _sim.GetSlot(_network.PlayerId);
                 if (_localSlot >= 0)
                 {
-                    Debug.Log($"[VS] LocalSlot resolved: Pid={_network.PlayerId} → slot {_localSlot} at frame {frame.FrameNumber}");
+                    VSLog.Log(VSLog.Channel.Player, $"LocalSlot resolved: Pid={_network.PlayerId} → slot {_localSlot} at frame {frame.FrameNumber}");
                     _renderer?.Init(_sim.State, _localSlot, _frameIntervalSec); // re-init with correct slot (skips heavy setup, only updates slot)
                 }
             }
@@ -294,7 +294,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
             // --- Transition logging ---
             if (!_prevHasAlivePlayers && hasPlayers)
-                Debug.Log($"[VS][DIAG] HasAlivePlayers: false→true at frame={frame.FrameNumber}, dt.Raw={s.Dt.Raw}");
+                VSLog.Log(VSLog.Channel.Wave, $"HasAlivePlayers: false→true at frame={frame.FrameNumber}, dt.Raw={s.Dt.Raw}");
             _prevHasAlivePlayers = hasPlayers;
 
             if (_prevWaveRemaining == 0 && s.WaveSpawnRemaining > 0)
@@ -302,7 +302,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 int fps2 = s.Dt.Raw > 0 ? (FInt.One / s.Dt).Raw >> 10 : 30; if (fps2 < 1) fps2 = 1;
                 int targetFrames2 = fps2 * 20;
                 int batchSize = ((int)s.WaveSpawnRemaining + targetFrames2 - 1) / targetFrames2;
-                Debug.Log($"[VS][DIAG] Wave start at frame={frame.FrameNumber}, WaveNum={s.WaveNumber}, WaveRemaining={s.WaveSpawnRemaining}, fps={fps2}, targetFrames={targetFrames2}, batchSize={batchSize}, RngState=0x{s.RngState:X8}");
+                VSLog.Log(VSLog.Channel.Wave, $"Wave start at frame={frame.FrameNumber}, WaveNum={s.WaveNumber}, WaveRemaining={s.WaveSpawnRemaining}, fps={fps2}, targetFrames={targetFrames2}, batchSize={batchSize}, RngState=0x{s.RngState:X8}");
             }
             _prevWaveRemaining = s.WaveSpawnRemaining;
 
@@ -325,12 +325,13 @@ namespace BoomNetwork.Samples.VampireSurvivors
             string detail = $"DESYNC at frame {mismatch.FrameNumber}:";
             foreach (var (pid, h) in mismatch.PlayerHashes)
                 detail += $"\n  P{pid}: 0x{h:X8}";
-            Debug.LogError($"[VS] {detail}");
+            VSLog.Error(VSLog.Channel.Desync, detail);
 
             // Per-subsystem hash breakdown to identify diverging system
             var hd = _sim.State.ComputeHashDetailed();
             var s = _sim.State;
-            Debug.LogError($"[VS] DESYNC detail (this client) frame={s.FrameNumber}:" +
+            VSLog.Error(VSLog.Channel.Desync,
+                $"DESYNC detail (this client) frame={s.FrameNumber}:" +
                 $"\n  Wave  =0x{hd.Wave:X8}  [RngState=0x{s.RngState:X8}, WaveNum={s.WaveNumber}, WaveRemaining={s.WaveSpawnRemaining}]" +
                 $"\n  Players=0x{hd.Players:X8}" +
                 $"\n  Enemies=0x{hd.Enemies:X8}" +
@@ -344,7 +345,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             {
                 ref var p = ref s.Players[i];
                 if (p.IsActive)
-                    Debug.LogError($"[VS] DESYNC Player[{i}]: IsAlive={p.IsAlive}, Hp={p.Hp}, Level={p.Level}, Xp={p.Xp}, Pos=({p.PosX},{p.PosZ}), W0={p.Weapon0.Type}L{p.Weapon0.Level}");
+                    VSLog.Error(VSLog.Channel.Desync, $"DESYNC Player[{i}]: IsAlive={p.IsAlive}, Hp={p.Hp}, Level={p.Level}, Xp={p.Xp}, Pos=({p.PosX},{p.PosZ}), W0={p.Weapon0.Type}L{p.Weapon0.Level}");
             }
 
             // Dump hash history (chronological, oldest first)
@@ -352,14 +353,14 @@ namespace BoomNetwork.Samples.VampireSurvivors
             {
                 int oldest = _hashCount < HistorySize ? 0 : _hashHead; // oldest entry start
                 var sb = new System.Text.StringBuilder();
-                sb.AppendLine($"[VS] DESYNC Hash History ({_hashCount} frames, newest last):");
+                sb.AppendLine($"DESYNC Hash History ({_hashCount} frames, newest last):");
                 sb.AppendLine("  Frame | FinalHash | WaveRemaining | RngState | HasPlayers");
                 for (int k = 0; k < _hashCount; k++)
                 {
                     var e = _hashHistory[(oldest + k) % HistorySize];
                     sb.AppendLine($"  {e.Frame,5} | 0x{e.FinalHash:X8} | {e.WaveRemaining,13} | 0x{e.RngState:X8} | {e.HasPlayers}");
                 }
-                Debug.LogError(sb.ToString());
+                VSLog.Error(VSLog.Channel.Desync, sb.ToString());
             }
 
             _ui.ShowDesync(mismatch.FrameNumber);
@@ -376,7 +377,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             var s = _sim.State;
             int activeEnemies = 0; for (int i = 0; i < GameState.MaxEnemies; i++) if (s.Enemies[i].IsAlive) activeEnemies++;
             int activeProj = 0; for (int i = 0; i < GameState.MaxProjectiles; i++) if (s.Projectiles[i].IsAlive) activeProj++;
-            Debug.Log($"[VS] Snapshot loaded. Frame={s.FrameNumber}, Wave={s.WaveNumber}, RngState=0x{s.RngState:X8}, WaveRemaining={s.WaveSpawnRemaining}, Enemies={activeEnemies}, Proj={activeProj}");
+            VSLog.Log(VSLog.Channel.Key, $"Snapshot loaded. Frame={s.FrameNumber}, Wave={s.WaveNumber}, RngState=0x{s.RngState:X8}, WaveRemaining={s.WaveSpawnRemaining}, Enemies={activeEnemies}, Proj={activeProj}");
         }
     }
 }
