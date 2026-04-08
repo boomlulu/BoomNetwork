@@ -4,7 +4,7 @@
 
 ```
 tools/framesync/
-├── server.py    # HTTP 上报服务（端口 9877）
+├── server.py    # HTTP 上报服务（端口 9878）
 ├── start.sh     # 启动脚本（自动检测重复启动）
 └── README.md    # 本文档
 ```
@@ -22,7 +22,7 @@ python3 tools/framesync/server.py
 服务启动后输出：
 
 ```
-[framesync] 已启动 PID=12345 → http://localhost:9877
+[framesync] 已启动 PID=12345 → http://localhost:9878
 ```
 
 已在运行时输出：
@@ -34,7 +34,7 @@ python3 tools/framesync/server.py
 ## 停止服务
 
 ```bash
-kill $(lsof -ti :9877)
+kill $(lsof -ti :9878)
 ```
 
 ## 端点说明
@@ -55,7 +55,7 @@ Unity Client
   │  OnDesyncDetected
   └→ DesyncReporter.Report(json)
        ├─ 落盘 pending_desync.jsonl（崩溃保护）
-       └─ POST http://localhost:9877/desync
+       └─ POST http://localhost:9878/desync
               │
               ▼
          server.py
@@ -80,11 +80,11 @@ Unity Client
 客户端上报地址在 `DesyncReporter.cs`：
 
 ```csharp
-public const string ServerBase = "http://localhost:9877";
+public const string ServerBase = "http://localhost:9878";
 ```
 
 跨设备测试（手机 + PC）时改为服务器 IP，例如：
 
 ```csharp
-public const string ServerBase = "http://192.168.1.100:9877";
+public const string ServerBase = "http://192.168.1.100:9878";
 ```

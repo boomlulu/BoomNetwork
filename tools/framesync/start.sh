@@ -2,7 +2,7 @@
 # framesync server 启动脚本
 # 自动检测端口占用，已在运行则跳过
 
-PORT=9877
+PORT=9878
 LOG=/tmp/framesync_server.log
 SCRIPT="$(dirname "$0")/server.py"
 

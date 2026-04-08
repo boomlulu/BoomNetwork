@@ -6,7 +6,7 @@ BoomNetwork FrameSync Inspector
 自动按帧分组、跨客户端 diff，实时展示在 Web 面板。
 
 用法:
-  python3 tools/framesync_server.py [PORT=9877]
+  python3 tools/framesync/server.py [PORT=9878]
 
 端点:
   POST /desync          客户端上报不同步事件（DesyncReporter.cs）
@@ -23,7 +23,7 @@ BoomNetwork FrameSync Inspector
 import http.server, json, sys, datetime, threading, queue, os, webbrowser
 from urllib.parse import urlparse
 
-PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 9877
+PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 9878
 
 # ── 全局状态 ──────────────────────────────────────────────────────────────
 desync_events: list[dict]       = []   # 按到达顺序，最多 200 条

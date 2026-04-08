@@ -15,7 +15,7 @@
 bash tools/framesync/start.sh
 ```
 
-输出 `http://localhost:9877` 即就绪。服务常驻，多次执行会自动跳过。
+输出 `http://localhost:9878` 即就绪。服务常驻，多次执行会自动跳过。
 
 ---
 
@@ -25,8 +25,8 @@ bash tools/framesync/start.sh
 
 | 场景 | 地址 |
 |------|------|
-| 双端同机（Editor + Editor） | `http://localhost:9877` |
-| 双端跨设备（手机 + PC） | `http://<本机局域网IP>:9877` |
+| 双端同机（Editor + Editor） | `http://localhost:9878` |
+| 双端跨设备（手机 + PC） | `http://<本机局域网IP>:9878` |
 
 > 本机局域网 IP 查询：`ipconfig getifaddr en0`
 
@@ -43,7 +43,7 @@ bash tools/framesync/start.sh
 验证上报成功：
 
 ```bash
-curl http://localhost:9877/desync/latest
+curl http://localhost:9878/desync/latest
 ```
 
 返回非空数组说明数据已接收。
@@ -93,7 +93,7 @@ WaveSpawnRemaining 分叉，差值 ≈ batchSize 整数倍，
 复现下一次 Desync 前，清空旧数据避免干扰：
 
 ```bash
-curl -X POST http://localhost:9877/clear
+curl -X POST http://localhost:9878/clear
 ```
 
 ---
@@ -102,10 +102,10 @@ curl -X POST http://localhost:9877/clear
 
 **Q：启动脚本提示"服务已在运行"但 curl 超时？**
 
-说明 9877 被其他进程占用（非 framesync）。强制替换：
+说明 9878 被其他进程占用（非 framesync）。强制替换：
 
 ```bash
-kill $(lsof -ti :9877)
+kill $(lsof -ti :9878)
 bash tools/framesync/start.sh
 ```
 
@@ -131,17 +131,17 @@ bash tools/framesync/start.sh
 bash tools/framesync/start.sh
 
 # 查看原始事件（最近 10 条）
-curl http://localhost:9877/desync/latest
+curl http://localhost:9878/desync/latest
 
 # 查看分组+diff（分析用）
-curl http://localhost:9877/desync/groups
+curl http://localhost:9878/desync/groups
 
 # 查看控制台日志
-curl http://localhost:9877/logs
+curl http://localhost:9878/logs
 
 # 清空所有数据
-curl -X POST http://localhost:9877/clear
+curl -X POST http://localhost:9878/clear
 
 # 停止服务
-kill $(lsof -ti :9877)
+kill $(lsof -ti :9878)
 ```
