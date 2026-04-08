@@ -17,7 +17,10 @@ namespace BoomNetwork.Samples.VampireSurvivors
 {
     public static class DesyncReporter
     {
-        private const string ServerUrl   = "http://124.220.6.174:9876/desync";
+        // framesync_server.py 默认本机 9877；跨设备测试时改为服务器 IP:9877
+        public const string  ServerBase  = "http://localhost:9877";
+        private const string ServerUrl   = ServerBase + "/desync";
+        private const string LogUrl      = ServerBase + "/log";
         private const string PendingFile = "pending_desync.jsonl";
 
         private static string _persistentPath;
