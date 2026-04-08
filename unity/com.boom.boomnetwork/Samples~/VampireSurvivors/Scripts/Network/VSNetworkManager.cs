@@ -49,6 +49,11 @@ namespace BoomNetwork.Samples.VampireSurvivors
         bool _isSolo;
         string _soloKey;
 
+        // FrameSync init params — stored for desync report
+        int _dtRaw;
+        int _fps;
+        int _targetFrames;
+
         // Mobile virtual joystick — null on PC/Editor
         VSVirtualJoystick _joystick;
 
@@ -89,6 +94,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             _ui.OnMultiClicked    += StartMultiplayer;
 
             VSLog.Enabled = VSLog.Channel.DiagWave; // 诊断帧同步：Key + Desync + Wave + Player
+            DesyncReporter.Init(UnityEngine.Application.persistentDataPath);
             _ui.ShowLobby(true);
         }
 
@@ -176,6 +182,10 @@ namespace BoomNetwork.Samples.VampireSurvivors
             int fps = dt.Raw > 0 ? (FInt.One / dt).Raw >> 10 : 30;
             if (fps < 1) fps = 1;
             int targetFrames = fps * 20; // WaveSystem.TargetFillSeconds = 20
+
+            _dtRaw = dt.Raw;
+            _fps = fps;
+            _targetFrames = targetFrames;
 
             _sim.IsMultiplayer = !_isSolo;
 
@@ -364,7 +374,75 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 VSLog.Error(VSLog.Channel.Desync, sb.ToString());
             }
 
+            // ── 上报 desync 事件到 report_server ────────────────────────────
+            DesyncReporter.Report(BuildDesyncJson(mismatch, hd, s));
+
             _ui.ShowDesync(mismatch.FrameNumber);
+        }
+
+        string BuildDesyncJson(FrameHashMismatch mismatch, HashDetail hd, GameState s)
+        {
+            var sb = new System.Text.StringBuilder(4096);
+            string ts = System.DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+
+            sb.Append("{");
+            sb.Append("\"type\":\"desync\",");
+            sb.Append($"\"timestamp\":\"{ts}\",");
+            sb.Append($"\"frame\":{mismatch.FrameNumber},");
+            sb.Append($"\"pid\":{_network.PlayerId},");
+            sb.Append($"\"dt_raw\":{_dtRaw},\"fps\":{_fps},\"target_frames\":{_targetFrames},");
+
+            // player_hashes — all clients' hashes as reported by server
+            sb.Append("\"player_hashes\":[");
+            bool first = true;
+            foreach (var (pid, h) in mismatch.PlayerHashes)
+            {
+                if (!first) sb.Append(",");
+                sb.Append($"{{\"pid\":{pid},\"hash\":\"0x{h:X8}\"}}");
+                first = false;
+            }
+            sb.Append("],");
+
+            // subsystem hash breakdown (this client)
+            sb.Append($"\"subsystem\":{{");
+            sb.Append($"\"wave\":\"0x{hd.Wave:X8}\",");
+            sb.Append($"\"players\":\"0x{hd.Players:X8}\",");
+            sb.Append($"\"enemies\":\"0x{hd.Enemies:X8}\",");
+            sb.Append($"\"proj\":\"0x{hd.Projectiles:X8}\",");
+            sb.Append($"\"gems\":\"0x{hd.Gems:X8}\",");
+            sb.Append($"\"misc\":\"0x{hd.Misc:X8}\",");
+            sb.Append($"\"final\":\"0x{hd.Final:X8}\"");
+            sb.Append("},");
+
+            // game state snapshot
+            sb.Append($"\"state\":{{\"rng\":\"0x{s.RngState:X8}\",\"wave_num\":{s.WaveNumber},\"wave_remaining\":{s.WaveSpawnRemaining}}},");
+
+            // active players (slot / alive / hp / level / xp)
+            sb.Append("\"players\":[");
+            bool firstP = true;
+            for (int i = 0; i < GameState.MaxPlayers; i++)
+            {
+                ref var p = ref s.Players[i];
+                if (!p.IsActive) continue;
+                if (!firstP) sb.Append(",");
+                sb.Append($"{{\"slot\":{i},\"alive\":{(p.IsAlive ? "true" : "false")},\"hp\":{p.Hp},\"level\":{p.Level},\"xp\":{p.Xp}}}");
+                firstP = false;
+            }
+            sb.Append("],");
+
+            // hash history ring buffer (chronological)
+            sb.Append("\"hash_history\":[");
+            int oldest = _hashCount < HistorySize ? 0 : _hashHead;
+            for (int k = 0; k < _hashCount; k++)
+            {
+                var e = _hashHistory[(oldest + k) % HistorySize];
+                if (k > 0) sb.Append(",");
+                sb.Append($"{{\"f\":{e.Frame},\"h\":\"0x{e.FinalHash:X8}\",\"wr\":{e.WaveRemaining},\"rng\":\"0x{e.RngState:X8}\",\"hp\":{(e.HasPlayers ? "true" : "false")}}}");
+            }
+            sb.Append("]");
+
+            sb.Append("}");
+            return sb.ToString();
         }
 
         byte[] TakeSnapshot() => _syncing ? VSSnapshot.Serialize(_sim) : null;
