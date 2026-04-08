@@ -88,6 +88,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             _ui.OnSoloClicked     += StartSolo;
             _ui.OnMultiClicked    += StartMultiplayer;
 
+            VSLog.Enabled = VSLog.Channel.DiagWave; // 诊断帧同步：Key + Desync + Wave + Player
             _ui.ShowLobby(true);
         }
 
