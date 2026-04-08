@@ -5,35 +5,36 @@
 ```
 tools/framesync/
 ├── server.py    # HTTP 上报服务（端口 9877）
+├── start.sh     # 启动脚本（自动检测重复启动）
 └── README.md    # 本文档
 ```
 
 ## 启动服务
 
 ```bash
-# 前台（调试用）
-python3 tools/framesync/server.py
+# 推荐：自动检测是否已在运行，避免端口冲突
+bash tools/framesync/start.sh
 
-# 后台常驻（推荐）
-nohup python3 tools/framesync/server.py > /tmp/framesync_server.log 2>&1 &
-echo "PID=$!"
+# 前台调试
+python3 tools/framesync/server.py
 ```
 
 服务启动后输出：
 
 ```
-[framesync] Listening on http://0.0.0.0:9877
+[framesync] 已启动 PID=12345 → http://localhost:9877
+```
+
+已在运行时输出：
+
+```
+[framesync] 服务已在运行 (PID 12345)，跳过启动
 ```
 
 ## 停止服务
 
 ```bash
-# 按 PID 停止
-kill <PID>
-
-# 或按端口查找再停止
-lsof -i :9877
-kill <PID>
+kill $(lsof -ti :9877)
 ```
 
 ## 端点说明
