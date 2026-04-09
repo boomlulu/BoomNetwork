@@ -84,8 +84,8 @@ namespace BoomNetwork.Samples.TowerDefense
             c.OnFrameSyncStop  += OnFrameSyncStop;
             c.OnFrame          += OnFrame;
             c.OnJoinedRoom     += OnJoinedRoom;
-            c.OnPlayerJoined   += OnPlayerJoined;
-            c.OnPlayerLeft     += OnPlayerLeft;
+            c.OnPlayerJoinedMsg += OnPlayerJoined;
+            c.OnPlayerLeftMsg   += OnPlayerLeft;
             c.OnLeftRoom       += OnLeftRoom;
             c.OnTakeSnapshot    = TakeSnapshot;
             c.OnLoadSnapshot    = LoadSnapshot;

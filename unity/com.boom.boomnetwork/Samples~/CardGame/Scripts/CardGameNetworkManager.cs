@@ -126,7 +126,7 @@ namespace BoomNetwork.Samples.CardGame
                 foreach (var pid in existing) _sim.PidToSlot(pid);
                 _sim.PidToSlot(_net.PlayerId);
             };
-            c.OnPlayerJoined += pid =>
+            c.OnPlayerJoinedMsg += pid =>
             {
                 if (!_roomPlayers.Contains(pid)) _roomPlayers.Add(pid);
                 // Register slot for any player who joins after us.
@@ -134,7 +134,7 @@ namespace BoomNetwork.Samples.CardGame
                 // Re-broadcast my ready state so the new joiner is in sync.
                 if (_myReady) BroadcastReady(true);
             };
-            c.OnPlayerLeft += pid =>
+            c.OnPlayerLeftMsg += pid =>
             {
                 _roomPlayers.Remove(pid);
                 _readyMap.Remove(pid);

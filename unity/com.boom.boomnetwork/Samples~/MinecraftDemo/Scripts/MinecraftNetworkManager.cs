@@ -64,8 +64,8 @@ namespace BoomNetwork.Samples.MinecraftDemo
             c.OnFrame += OnFrame;
             c.OnEntityState += OnEntityState;
             c.OnJoinedRoom += OnJoinedRoom;
-            c.OnPlayerJoined += OnPlayerJoined;
-            c.OnPlayerLeft += OnPlayerLeft;
+            c.OnPlayerJoinedMsg += OnPlayerJoined;
+            c.OnPlayerLeftMsg   += OnPlayerLeft;
             c.OnTakeSnapshot = TakeSnapshot;
             c.OnLoadSnapshot = LoadSnapshot;
 

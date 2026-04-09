@@ -51,8 +51,8 @@ public class AuthorityTransfer : MonoBehaviour
             foreach (var pid in existing)
                 GetOrCreatePlayer(pid);
         };
-        c.OnPlayerJoined += pid => GetOrCreatePlayer(pid);
-        c.OnPlayerLeft += pid => DestroyPlayer(pid);
+        c.OnPlayerJoinedMsg += pid => GetOrCreatePlayer(pid);
+        c.OnPlayerLeftMsg += pid => DestroyPlayer(pid);
         c.OnTakeSnapshot = TakeSnapshot;
         c.OnLoadSnapshot = LoadSnapshot;
 

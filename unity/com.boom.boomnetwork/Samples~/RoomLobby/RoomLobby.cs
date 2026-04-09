@@ -47,8 +47,8 @@ public class RoomLobby : MonoBehaviour
             _roomPlayers.AddRange(existing);
             _roomPlayers.Add(_network.PlayerId);
         };
-        c.OnPlayerJoined += pid => { if (!_roomPlayers.Contains(pid)) _roomPlayers.Add(pid); };
-        c.OnPlayerLeft += pid => _roomPlayers.Remove(pid);
+        c.OnPlayerJoinedMsg += pid => { if (!_roomPlayers.Contains(pid)) _roomPlayers.Add(pid); };
+        c.OnPlayerLeftMsg   += pid => _roomPlayers.Remove(pid);
         c.OnFrameSyncStart += _ => _status = "Syncing";
         c.OnFrameSyncStop += () => { _status = "In Room (stopped)"; ClearPlayers(); _lastFrame = 0; };
         c.OnFrame += OnFrame;

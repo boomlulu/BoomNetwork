@@ -48,8 +48,8 @@ public class EntitySync : MonoBehaviour
             foreach (var pid in existing)
                 GetOrCreateEntity(pid, false);
         };
-        c.OnPlayerJoined += pid => GetOrCreateEntity(pid, false);
-        c.OnPlayerLeft += pid => DestroyEntity(pid);
+        c.OnPlayerJoinedMsg += pid => GetOrCreateEntity(pid, false);
+        c.OnPlayerLeftMsg += pid => DestroyEntity(pid);
         c.OnTakeSnapshot = TakeSnapshot;
         c.OnLoadSnapshot = LoadSnapshot;
 

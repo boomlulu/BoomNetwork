@@ -62,11 +62,11 @@ public class StateSyncMove : MonoBehaviour
             if (_localQuad == null)
                 _localQuad = CreateQuad(_network.PlayerId, true);
         };
-        c.OnPlayerJoined += pid =>
+        c.OnPlayerJoinedMsg += pid =>
         {
             if (!_roomPlayers.Contains(pid)) _roomPlayers.Add(pid);
         };
-        c.OnPlayerLeft += pid =>
+        c.OnPlayerLeftMsg += pid =>
         {
             _roomPlayers.Remove(pid);
             if (_remotePlayers.TryGetValue(pid, out var rp))

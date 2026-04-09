@@ -56,10 +56,14 @@ namespace BoomNetwork.Client.FrameSync
         public event Action<FrameSyncInitData>? OnFrameSyncStart;
         public event Action<FrameData>? OnFrame;
         public event Action? OnFrameSyncStop;
-        public event Action<int>? OnPlayerJoined;
-        public event Action<int>? OnPlayerLeft;
-        public event Action<int>? OnPlayerOffline;
-        public event Action<int>? OnPlayerOnline;
+        public event Action<int>? OnPlayerJoinedMsg;    // ExtCmd 路径：FrameSync 前，实时（大厅 UI）
+        public event Action<int>? OnPlayerJoinedFrame;  // FrameEvent 路径：FrameSync 中，OnFrame 前（游戏仿真初始化）
+        public event Action<int>? OnPlayerLeftMsg;
+        public event Action<int>? OnPlayerLeftFrame;
+        public event Action<int>? OnPlayerOfflineMsg;
+        public event Action<int>? OnPlayerOfflineFrame;
+        public event Action<int>? OnPlayerOnlineMsg;
+        public event Action<int>? OnPlayerOnlineFrame;
         public event Action<int>? OnHostChanged;  // int = new host PlayerId
         public event Action? OnReconnected;
         public event Action? OnDisconnected;
@@ -676,22 +680,22 @@ namespace BoomNetwork.Client.FrameSync
                 {
                     case FrameSyncExtCmd.PlayerJoined:
                         if (msg.DataLength >= 4)
-                            OnPlayerJoined?.Invoke(BinaryPrimitives.ReadInt32LittleEndian(msg.DataSpan));
+                            OnPlayerJoinedMsg?.Invoke(BinaryPrimitives.ReadInt32LittleEndian(msg.DataSpan));
                         break;
 
                     case FrameSyncExtCmd.PlayerLeft:
                         if (msg.DataLength >= 4)
-                            OnPlayerLeft?.Invoke(BinaryPrimitives.ReadInt32LittleEndian(msg.DataSpan));
+                            OnPlayerLeftMsg?.Invoke(BinaryPrimitives.ReadInt32LittleEndian(msg.DataSpan));
                         break;
 
                     case FrameSyncExtCmd.PlayerOffline:
                         if (msg.DataLength >= 4)
-                            OnPlayerOffline?.Invoke(BinaryPrimitives.ReadInt32LittleEndian(msg.DataSpan));
+                            OnPlayerOfflineMsg?.Invoke(BinaryPrimitives.ReadInt32LittleEndian(msg.DataSpan));
                         break;
 
                     case FrameSyncExtCmd.PlayerOnline:
                         if (msg.DataLength >= 4)
-                            OnPlayerOnline?.Invoke(BinaryPrimitives.ReadInt32LittleEndian(msg.DataSpan));
+                            OnPlayerOnlineMsg?.Invoke(BinaryPrimitives.ReadInt32LittleEndian(msg.DataSpan));
                         break;
 
                     case FrameSyncExtCmd.RoomSnapshot:
@@ -808,16 +812,16 @@ namespace BoomNetwork.Client.FrameSync
                     switch (evt.EventType)
                     {
                         case FrameEventType.PlayerJoined:
-                            OnPlayerJoined?.Invoke(evt.PlayerId);
+                            OnPlayerJoinedFrame?.Invoke(evt.PlayerId);
                             break;
                         case FrameEventType.PlayerLeft:
-                            OnPlayerLeft?.Invoke(evt.PlayerId);
+                            OnPlayerLeftFrame?.Invoke(evt.PlayerId);
                             break;
                         case FrameEventType.PlayerOffline:
-                            OnPlayerOffline?.Invoke(evt.PlayerId);
+                            OnPlayerOfflineFrame?.Invoke(evt.PlayerId);
                             break;
                         case FrameEventType.PlayerOnline:
-                            OnPlayerOnline?.Invoke(evt.PlayerId);
+                            OnPlayerOnlineFrame?.Invoke(evt.PlayerId);
                             break;
                         case FrameEventType.HostChanged:
                             OnHostChanged?.Invoke(evt.PlayerId);

@@ -45,12 +45,12 @@ public class ChatRoom : MonoBehaviour
             _roomPlayers.Add(_network.PlayerId);
             AddSystemMsg($"Joined room {roomId} (players: {string.Join(", ", _roomPlayers)})");
         };
-        c.OnPlayerJoined += pid =>
+        c.OnPlayerJoinedMsg += pid =>
         {
             if (!_roomPlayers.Contains(pid)) _roomPlayers.Add(pid);
             AddSystemMsg($"Player {pid} joined");
         };
-        c.OnPlayerLeft += pid =>
+        c.OnPlayerLeftMsg += pid =>
         {
             _roomPlayers.Remove(pid);
             AddSystemMsg($"Player {pid} left");

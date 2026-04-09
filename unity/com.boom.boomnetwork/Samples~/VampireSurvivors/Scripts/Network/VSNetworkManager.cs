@@ -2,7 +2,7 @@
 //
 // DESIGN PRINCIPLE 1 — Deterministic paths (GameState mutation):
 //   All GameState mutations go through exactly two paths driven by FrameData:
-//   1. Frame events (OnPlayerJoined/Left) — embedded in FrameData,
+//   1. Frame events (OnPlayerJoinedFrame/LeftFrame) — embedded in FrameData,
 //      dispatched BEFORE OnFrame, same frame on all clients.
 //   2. OnFrame → Tick → ApplyInputs — processes player inputs,
 //      auto-inits players on first input appearance.
@@ -82,8 +82,8 @@ namespace BoomNetwork.Samples.VampireSurvivors
             c.OnFrameSyncStop  += OnFrameSyncStop;
             c.OnFrame          += OnFrame;
             c.OnJoinedRoom     += OnJoinedRoom;
-            c.OnPlayerJoined   += OnPlayerJoined;
-            c.OnPlayerLeft     += OnPlayerLeft;
+            c.OnPlayerJoinedFrame += OnPlayerJoined;
+            c.OnPlayerLeftFrame   += OnPlayerLeft;
             c.OnTakeSnapshot   = TakeSnapshot;
             c.OnLoadSnapshot   = LoadSnapshot;
             c.OnDesyncDetected += OnDesync;
@@ -242,15 +242,11 @@ namespace BoomNetwork.Samples.VampireSurvivors
         }
 
         /// <summary>
-        /// Frame event — embedded in FrameData, all clients process at the same frame.
-        /// IMPORTANT: also fires as an ExtCmd when a player joins the room (before FrameSync).
-        /// Guard with !_syncing to skip pre-FrameSync notifications — calling PidToSlot here
-        /// would prematurely allocate slots in non-deterministic order, causing DESYNC.
-        /// (Same issue as the GetSlot fix in OnFrameSyncStart.)
+        /// FrameEvent path — embedded in FrameData, dispatched before OnFrame.
+        /// All clients process at the same frame number: deterministic, safe to mutate GameState.
         /// </summary>
         void OnPlayerJoined(int pid)
         {
-            if (!_syncing) return;
             int slot = _sim.PidToSlot(pid);
             if (slot < 0 || slot >= GameState.MaxPlayers) return;
 
@@ -262,7 +258,6 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
         void OnPlayerLeft(int pid)
         {
-            if (!_syncing) return;
             int slot = _sim.PidToSlot(pid);
             if (slot < 0 || slot >= GameState.MaxPlayers) return;
 
