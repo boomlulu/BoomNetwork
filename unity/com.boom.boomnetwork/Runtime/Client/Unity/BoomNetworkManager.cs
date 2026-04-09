@@ -258,5 +258,22 @@ namespace BoomNetwork.Unity
         private void LogDisconnected() => Debug.Log("[BoomNetwork] Disconnected");
         private void LogError(NetworkError err) => Debug.LogWarning($"[BoomNetwork] [{err.Code}] {err.Message}");
         private void LogMsg(string msg) => Debug.Log(msg);
+
+        // --- 右上角 Build 号显示 ---
+        private GUIStyle _buildLabelStyle;
+
+        private void OnGUI()
+        {
+            if (_buildLabelStyle == null)
+                _buildLabelStyle = new GUIStyle
+                {
+                    fontSize = 22,
+                    alignment = TextAnchor.UpperRight,
+                    normal = { textColor = new Color(1f, 1f, 1f, 0.55f) },
+                    fontStyle = FontStyle.Bold,
+                };
+            GUI.Label(new Rect(Screen.width - 178f, 8f, 170f, 30f),
+                $"BN {BoomNetworkBuild.Label}", _buildLabelStyle);
+        }
     }
 }

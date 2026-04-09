@@ -1,1 +1,127 @@
-[]
+[
+  {
+    "timestamp": "2026-04-07T03:46:59.858569Z",
+    "pairs": [
+      {
+        "label": "Encode Small (pre-alloc buf)",
+        "go_ns_op": 3.6229999999999998
+      },
+      {
+        "label": "Encode Large (pre-alloc buf)",
+        "go_ns_op": 14.936666666666667
+      },
+      {
+        "label": "Encode Small (Pool)",
+        "go_ns_op": 32.63333333333333,
+        "go_b_op": 24,
+        "go_allocs_op": 1
+      },
+      {
+        "label": "Encode Large (Pool)",
+        "go_ns_op": 33.71,
+        "go_b_op": 24,
+        "go_allocs_op": 1
+      },
+      {
+        "label": "Decode Small",
+        "go_ns_op": 16.236666666666668,
+        "go_b_op": 48,
+        "go_allocs_op": 1
+      },
+      {
+        "label": "Decode Large",
+        "go_ns_op": 16.14,
+        "go_b_op": 48,
+        "go_allocs_op": 1
+      },
+      {
+        "label": "Decode Small (pooled)",
+        "go_ns_op": 9.245
+      },
+      {
+        "label": "Decode Large (pooled)",
+        "go_ns_op": 8.968666666666666
+      },
+      {
+        "label": "FrameReader 10K msgs",
+        "go_ns_op": 382025.3333333333,
+        "go_b_op": 480003.6666666667,
+        "go_allocs_op": 10000
+      },
+      {
+        "label": "FrameWriter 10K msgs",
+        "go_ns_op": 85661,
+        "go_b_op": 9317.333333333334,
+        "go_allocs_op": 3
+      },
+      {
+        "label": "Decode Allocating",
+        "go_ns_op": 15.839999999999998,
+        "go_b_op": 48,
+        "go_allocs_op": 1
+      },
+      {
+        "label": "DecodePooled Reuse",
+        "go_ns_op": 9.212333333333333
+      },
+      {
+        "label": "DecodePooled Parallel",
+        "go_ns_op": 2.0843333333333334
+      },
+      {
+        "label": "ReconcilePlayers ManyStale",
+        "go_ns_op": 13157.666666666666,
+        "go_b_op": 14216,
+        "go_allocs_op": 307
+      },
+      {
+        "label": "PlayerCount",
+        "go_ns_op": 0.28733333333333333
+      },
+      {
+        "label": "PlayerCount Parallel",
+        "go_ns_op": 0.15236666666666665
+      },
+      {
+        "label": "ForEachOnlinePlayer",
+        "go_ns_op": 55.199999999999996
+      },
+      {
+        "label": "GetFramesSince 100Frames",
+        "go_ns_op": 1110.6666666666667,
+        "go_b_op": 5248,
+        "go_allocs_op": 2
+      },
+      {
+        "label": "ReportFrameHash",
+        "go_ns_op": 28.586666666666662
+      },
+      {
+        "label": "GetRoomInfo",
+        "go_ns_op": 4.785333333333334
+      },
+      {
+        "label": "GetRoomInfo Parallel",
+        "go_ns_op": 78.54333333333334
+      },
+      {
+        "label": "ConnSend FastClient NoTimeout",
+        "go_ns_op": 669.6666666666666
+      },
+      {
+        "label": "ConnSend FastClient WithTimeout",
+        "go_ns_op": 1020.6333333333333,
+        "go_b_op": 128,
+        "go_allocs_op": 2
+      },
+      {
+        "label": "RateLimiter Allow",
+        "go_ns_op": 31.336666666666662
+      },
+      {
+        "label": "RateLimiter Allow Parallel",
+        "go_ns_op": 11.616666666666667
+      }
+    ]
+  }
+]
