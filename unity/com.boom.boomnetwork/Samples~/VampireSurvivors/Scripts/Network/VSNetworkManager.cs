@@ -243,28 +243,31 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
         /// <summary>
         /// Frame event — embedded in FrameData, all clients process at the same frame.
+        /// IMPORTANT: also fires as an ExtCmd when a player joins the room (before FrameSync).
+        /// Guard with !_syncing to skip pre-FrameSync notifications — calling PidToSlot here
+        /// would prematurely allocate slots in non-deterministic order, causing DESYNC.
+        /// (Same issue as the GetSlot fix in OnFrameSyncStart.)
         /// </summary>
         void OnPlayerJoined(int pid)
         {
+            if (!_syncing) return;
             int slot = _sim.PidToSlot(pid);
             if (slot < 0 || slot >= GameState.MaxPlayers) return;
 
-            if (_syncing && !_sim.State.Players[slot].IsActive)
+            if (!_sim.State.Players[slot].IsActive)
                 _sim.State.InitPlayer(slot);
 
-            VSLog.Log(VSLog.Channel.Player, $"Player {pid} joined (slot {slot}){(_syncing ? " — initialized via frame event" : "")}");
+            VSLog.Log(VSLog.Channel.Player, $"Player {pid} joined (slot {slot}) — initialized via frame event");
         }
 
         void OnPlayerLeft(int pid)
         {
+            if (!_syncing) return;
             int slot = _sim.PidToSlot(pid);
             if (slot < 0 || slot >= GameState.MaxPlayers) return;
 
-            if (_syncing)
-            {
-                _sim.State.Players[slot].IsActive = false;
-                _sim.State.Players[slot].IsAlive  = false;
-            }
+            _sim.State.Players[slot].IsActive = false;
+            _sim.State.Players[slot].IsAlive  = false;
         }
 
         void OnFrame(FrameData frame)
