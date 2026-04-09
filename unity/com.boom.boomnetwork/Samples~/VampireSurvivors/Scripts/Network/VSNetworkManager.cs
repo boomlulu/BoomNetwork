@@ -64,7 +64,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             public uint Frame, FinalHash, WaveRemaining, RngState;
             public bool HasPlayers;
         }
-        const int HistorySize = 100;
+        const int HistorySize = 10000;
         readonly HashEntry[] _hashHistory = new HashEntry[HistorySize];
         int _hashHead;   // 下一个写入位置
         int _hashCount;  // 有效条数
