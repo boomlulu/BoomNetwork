@@ -376,6 +376,9 @@ namespace BoomNetwork.Samples.VampireSurvivors
             DesyncReporter.Report(BuildDesyncJson(mismatch, hd, s));
 
             _ui.ShowDesync(mismatch.FrameNumber);
+#if UNITY_EDITOR
+            UnityEditor.EditorApplication.isPaused = true;
+#endif
         }
 
         string BuildDesyncJson(FrameHashMismatch mismatch, GameState.HashDetail hd, GameState s)
