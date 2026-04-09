@@ -135,10 +135,14 @@ public enum State { Disconnected, Connecting, Connected, InRoom, Syncing, Reconn
 | `OnFrameSyncStart` | `Action<FrameSyncInitData>` | 帧同步开始 |
 | `OnFrame` | `Action<FrameData>` | 收到服务器帧 |
 | `OnFrameSyncStop` | `Action` | 帧同步结束 |
-| `OnPlayerJoined` | `Action<int>` | 其他玩家加入 |
-| `OnPlayerLeft` | `Action<int>` | 其他玩家离开 |
-| `OnPlayerOffline` | `Action<int>` | 其他玩家临时掉线 |
-| `OnPlayerOnline` | `Action<int>` | 其他玩家恢复在线 |
+| `OnPlayerJoinedMsg` | `Action<int>` | 其他玩家加入（ExtCmd，FrameSync 前，大厅 UI） |
+| `OnPlayerJoinedFrame` | `Action<int>` | 其他玩家加入（FrameEvent，FrameSync 中，游戏初始化） |
+| `OnPlayerLeftMsg` | `Action<int>` | 其他玩家离开（ExtCmd，大厅 UI） |
+| `OnPlayerLeftFrame` | `Action<int>` | 其他玩家离开（FrameEvent，游戏清理） |
+| `OnPlayerOfflineMsg` | `Action<int>` | 其他玩家临时掉线（ExtCmd） |
+| `OnPlayerOfflineFrame` | `Action<int>` | 其他玩家临时掉线（FrameEvent） |
+| `OnPlayerOnlineMsg` | `Action<int>` | 其他玩家恢复在线（ExtCmd） |
+| `OnPlayerOnlineFrame` | `Action<int>` | 其他玩家恢复在线（FrameEvent） |
 | `OnReconnected` | `Action` | 断线自动重连成功 |
 | `OnDisconnected` | `Action` | 连接断开（所有策略耗尽） |
 | `OnLeftRoom` | `Action<int>` | 离开房间（oldPlayerId） |

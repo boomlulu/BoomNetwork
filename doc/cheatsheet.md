@@ -69,10 +69,14 @@ Disconnected ──Connect()──► Connecting ──SessionBind──► Conn
 | `OnFrameSyncStart` | initData | Sync started |
 | **`OnFrame`** | **frameData** | **New frame — main game loop** |
 | `OnFrameSyncStop` | — | Sync stopped |
-| `OnPlayerJoined` | playerId | New player |
-| `OnPlayerLeft` | playerId | Player left |
-| `OnPlayerOffline` | playerId | Player disconnected |
-| `OnPlayerOnline` | playerId | Player reconnected |
+| `OnPlayerJoinedMsg` | playerId | New player (lobby, ExtCmd) |
+| `OnPlayerJoinedFrame` | playerId | New player (game sim, FrameEvent) |
+| `OnPlayerLeftMsg` | playerId | Player left (lobby) |
+| `OnPlayerLeftFrame` | playerId | Player left (game sim) |
+| `OnPlayerOfflineMsg` | playerId | Player disconnected (lobby) |
+| `OnPlayerOfflineFrame` | playerId | Player disconnected (game sim) |
+| `OnPlayerOnlineMsg` | playerId | Player reconnected (lobby) |
+| `OnPlayerOnlineFrame` | playerId | Player reconnected (game sim) |
 | `OnHostChanged` | playerId | New host elected |
 | `OnEntityState` | pid, eid, data, off, len | Remote entity update |
 | `OnStateMessage` | pid, data | Broadcast received |

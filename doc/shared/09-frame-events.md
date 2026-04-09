@@ -13,8 +13,8 @@
 ```
 玩家 B 加入房间
   │
-  ├── 客户端 A 的 ExtCmd 先到达 → A 在帧 100 处理 OnPlayerJoined
-  └── 客户端 C 的 ExtCmd 后到达 → C 在帧 105 处理 OnPlayerJoined
+  ├── 客户端 A 的 ExtCmd 先到达 → A 在帧 100 处理 OnPlayerJoinedMsg
+  └── 客户端 C 的 ExtCmd 后到达 → C 在帧 105 处理 OnPlayerJoinedMsg
 
 结果：A 和 C 在不同帧 InitPlayer(B) → slot 分配偏移 → 帧 hash 不一致
 ```
@@ -24,8 +24,8 @@
 ```
 服务器在帧 100 的 FrameData 中嵌入 PlayerJoined(B)
   │
-  ├── 客户端 A 在帧 100 处理 OnPlayerJoined(B) → 相同帧
-  └── 客户端 C 在帧 100 处理 OnPlayerJoined(B) → 相同帧
+  ├── 客户端 A 在帧 100 处理 OnPlayerJoinedFrame(B) → 相同帧
+  └── 客户端 C 在帧 100 处理 OnPlayerJoinedFrame(B) → 相同帧
 
 结果：所有客户端同帧 InitPlayer(B) → slot 一致 → hash 不一致风险消除
 ```
@@ -74,7 +74,7 @@
         │
         └── 房间未运行（running=false）
               → ExtCmd 立即广播（PlayerJoined/Left ExtCmd 20/21）
-              → 客户端在 OnPlayerJoined/OnPlayerLeft 回调中处理（非确定性，适合大厅阶段）
+              → 客户端在 OnPlayerJoinedMsg/OnPlayerLeftMsg 回调中处理（非确定性，适合大厅阶段）
 ```
 
 ---
@@ -86,7 +86,7 @@
 ```csharp
 // 1. 先处理帧内事件（可能修改游戏状态）
 foreach (var evt in frame.Events)
-    DispatchFrameEvent(evt);  // → OnPlayerJoined / OnPlayerLeft / OnHostChanged
+    DispatchFrameEvent(evt);  // → OnPlayerJoinedFrame / OnPlayerLeftFrame / OnHostChanged
 
 // 2. 再执行帧逻辑（依赖事件修改后的状态）
 OnFrame?.Invoke(frame);

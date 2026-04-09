@@ -83,7 +83,7 @@ WaveSpawnRemaining 分叉，差值 ≈ batchSize 整数倍，
 
 ### 建议排查
 1. 对比双端 [VS][Wave] HasAlivePlayers: false→true 的帧号
-2. 检查 OnPlayerJoined 触发时序是否双端一致
+2. 检查 OnPlayerJoinedFrame 触发时序是否双端一致
 ```
 
 ---

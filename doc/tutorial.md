@@ -106,7 +106,7 @@ public class MyGame : MonoBehaviour
         _net = GetComponent<BoomNetworkManager>();
 
         // 有人加入 → 生成角色
-        _net.Client.OnPlayerJoined += pid => SpawnPlayer(pid);
+        _net.Client.OnPlayerJoinedFrame += pid => SpawnPlayer(pid);  // 帧同步中触发，确定性
         // 自己加入也要生成
         _net.Client.OnReady += () => SpawnPlayer(_net.PlayerId);
 

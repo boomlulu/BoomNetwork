@@ -188,7 +188,7 @@ client.Tick(16ms)
      │  HandlePushFrames():               │  HandlePushFrames():
      │  1. DispatchFrameEvent(            │  1. DispatchFrameEvent(
      │       PlayerJoined(B))             │       PlayerJoined(B))
-     │     → OnPlayerJoined(B)            │     → OnPlayerJoined(B)
+     │     → OnPlayerJoinedMsg(B)         │     → OnPlayerJoinedMsg(B)
      │     → InitPlayer(B, slot=1)        │     → InitPlayer(B, slot=1) ← 同帧同 slot ✓
      │  2. OnFrame(帧100)                 │  2. OnFrame(帧100)
      │     → Tick → ApplyInputs(B)        │     → Tick → ApplyInputs(B)
@@ -219,7 +219,7 @@ client.Tick(16ms)
      │                  ├── PushFrames ───→│
      │                  │                  │
      │                  │               HandlePushFrames():
-     │                  │               1. OnPlayerOffline(A)
+     │                  │               1. OnPlayerOfflineFrame(A)
      │                  │               2. OnHostChanged(B)  → isHost = true
      │                  │               3. OnFrame
 ```
