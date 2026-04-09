@@ -800,6 +800,10 @@ namespace BoomNetwork.Client.FrameSync
             if (!_frameSyncStarted || msg.DataLength == 0) return;
             var frame = FrameDataCodec.Decode(msg.DataSpan);
 
+            // Dedup: live feed and replay can both deliver the same frame during late-join/reconnect.
+            // Always discard frames at or before the last processed frame number.
+            if (frame.FrameNumber <= LastFrameNumber) return;
+
             LastFrameNumber = frame.FrameNumber;
             _connMgr?.UpdateFrameNumber(frame.FrameNumber);
 
