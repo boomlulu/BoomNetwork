@@ -3,6 +3,7 @@ using System.Buffers;
 using System.Collections.Generic;
 using BoomNetwork.Core;
 using BoomNetwork.Core.Codec;
+using BoomNetwork.Core.FrameSync;
 using BoomNetwork.Core.Framing;
 using BoomNetwork.Core.Transport;
 
@@ -23,6 +24,16 @@ namespace BoomNetwork.Client.Session
     {
         public int Seq;
         public byte[] EncodedData;
+        public int EncodedLength;
+    }
+
+    /// <summary>
+    /// C→S 可靠通道消息（_c2sQueue 中等待 ACK 的消息）
+    /// </summary>
+    internal struct C2SReliableMsg
+    {
+        public uint Seq;
+        public byte[] Encoded; // 已编码的完整 ExtCmdReliableMsg 包（含帧头）
         public int EncodedLength;
     }
 
@@ -72,6 +83,20 @@ namespace BoomNetwork.Client.Session
         /// 已发送缓冲区最大容量（超过后丢弃最早的）
         /// </summary>
         public int SentBufferCapacity { get; set; } = 256;
+
+        // --- S→C 可靠通道 ---
+        private uint _lastDeliveredS2CSeq; // 已交付的最新 S→C reliable seq
+
+        // --- C→S 可靠通道 ---
+        private uint _c2sSeq;                           // 单调递增，从 1 开始
+        private readonly Queue<C2SReliableMsg> _c2sQueue = new(); // 等待 ACK 的消息队列
+        private uint _c2sLastAcked;                     // 服务端已 ACK 到的最新 seq
+
+        /// <summary>C→S reliable 队列最大容量（超出触发 Snapshot 重连）</summary>
+        public int C2SQueueCapacity { get; set; } = 256;
+
+        /// <summary>客户端已交付的最新 S→C reliable seq（重连时上报给服务端）</summary>
+        public uint LastDeliveredS2CSeq => _lastDeliveredS2CSeq;
 
         // --- 事件 ---
         public event Action<Message>? OnMessage;
@@ -270,6 +295,62 @@ namespace BoomNetwork.Client.Session
         }
 
         /// <summary>
+        /// 发送 Extended 消息，走 C→S 可靠通道（快速重连后会重发未确认消息）
+        /// </summary>
+        public void SendExtReliable(ushort extCmd, byte[]? data = null, int dataLength = -1)
+        {
+            int len = dataLength >= 0 ? dataLength : (data?.Length ?? 0);
+            var inner = new Message
+            {
+                MsgType = CmdType.Extended,
+                ExtCmd = extCmd,
+                Data = data ?? Array.Empty<byte>(),
+                DataLength = len,
+            };
+            SendReliableInternal(inner);
+        }
+
+        /// <summary>
+        /// 发送 Game 消息，走 C→S 可靠通道
+        /// </summary>
+        public void SendGameReliable(uint gameCmd, byte[]? data = null, int dataLength = -1)
+        {
+            int len = dataLength >= 0 ? dataLength : (data?.Length ?? 0);
+            var inner = new Message
+            {
+                MsgType = CmdType.Game,
+                GameCmd = gameCmd,
+                Data = data ?? Array.Empty<byte>(),
+                DataLength = len,
+            };
+            SendReliableInternal(inner);
+        }
+
+        private void SendReliableInternal(Message inner)
+        {
+            if (_c2sQueue.Count >= C2SQueueCapacity)
+            {
+                // 队列溢出：通知上层（断线时间过长，降级 Snapshot 重连）
+                OnError?.Invoke(new NetworkError(ErrorCode.ConnectionDropped, "C2S reliable queue overflow, need snapshot reconnect"));
+                return;
+            }
+            _c2sSeq++;
+            var wrapData = SnapshotCodec.EncodeReliableMsgData(_c2sSeq, inner);
+            var wrapMsg = new Message
+            {
+                MsgType = CmdType.Extended,
+                ExtCmd = FrameSyncExtCmd.ReliableMsg,
+                Data = wrapData,
+                DataLength = wrapData.Length,
+            };
+            int size = MessageCodec.EncodedSize(wrapMsg);
+            var encoded = new byte[size];
+            int written = MessageCodec.Encode(wrapMsg, encoded);
+            _c2sQueue.Enqueue(new C2SReliableMsg { Seq = _c2sSeq, Encoded = encoded, EncodedLength = written });
+            _transport.Send(encoded, 0, written);
+        }
+
+        /// <summary>
         /// 清空已发送缓冲区（重连成功后调用）
         /// </summary>
         public void ClearSentBuffer()
@@ -285,6 +366,11 @@ namespace BoomNetwork.Client.Session
             _framing.Reset();
             _sentBuffer.Clear();
             _lastRecvServerSeq = 0;
+            // Snapshot 重连：清空可靠通道状态，从 0 重新建立
+            _lastDeliveredS2CSeq = 0;
+            _c2sSeq = 0;
+            _c2sLastAcked = 0;
+            _c2sQueue.Clear();
             CancelAllPending(ErrorCode.SessionReset, "Full reset");
         }
 
@@ -295,7 +381,22 @@ namespace BoomNetwork.Client.Session
         {
             _framing.Reset();
             _sentBuffer.Clear();
+            // 注意：_c2sQueue 保留，等待重连后 ReplayC2SQueue() 补发未确认消息
             CancelAllPending(ErrorCode.SessionReset, "Light reset");
+        }
+
+        /// <summary>
+        /// 重连成功后，重发 C→S reliable 队列中服务端未处理的消息
+        /// </summary>
+        public void ReplayC2SQueue(uint serverLastSeq)
+        {
+            // 清除服务端已确认处理的
+            while (_c2sQueue.Count > 0 && _c2sQueue.Peek().Seq <= serverLastSeq)
+                _c2sQueue.Dequeue();
+            _c2sLastAcked = serverLastSeq;
+            // 按顺序重发剩余未确认消息
+            foreach (var msg in _c2sQueue)
+                _transport.Send(msg.Encoded, 0, msg.EncodedLength);
         }
 
         private void OnTransportData(byte[] data, int offset, int length)
@@ -331,6 +432,36 @@ namespace BoomNetwork.Client.Session
                 pending.OnResponse?.Invoke(msg);
                 return;
             }
+
+            // 可靠通道：S→C reliable 消息解包后转发，不再向上透传包装消息
+            if (msg.MsgType == CmdType.Extended && msg.ExtCmd == FrameSyncExtCmd.ReliableMsg)
+            {
+                if (SnapshotCodec.TryDecodeReliableSeq(msg.DataSpan, out uint seq))
+                {
+                    if (seq == _lastDeliveredS2CSeq + 1)
+                    {
+                        _lastDeliveredS2CSeq = seq;
+                        var inner = SnapshotCodec.DecodeReliableInner(msg.DataSpan);
+                        if (inner.HasValue)
+                            OnMessage?.Invoke(inner.Value);
+                    }
+                    // seq <= _lastDeliveredS2CSeq: 重复包（重连补发），静默丢弃
+                }
+                return;
+            }
+
+            // 可靠通道：服务端 ACK C→S 消息
+            if (msg.MsgType == CmdType.Extended && msg.ExtCmd == FrameSyncExtCmd.ReliableAck)
+            {
+                if (SnapshotCodec.TryDecodeReliableAck(msg.DataSpan, out uint ackSeq))
+                {
+                    if (ackSeq > _c2sLastAcked) _c2sLastAcked = ackSeq;
+                    while (_c2sQueue.Count > 0 && _c2sQueue.Peek().Seq <= ackSeq)
+                        _c2sQueue.Dequeue();
+                }
+                return;
+            }
+
             OnMessage?.Invoke(msg);
         }
 
@@ -356,7 +487,6 @@ namespace BoomNetwork.Client.Session
             // 防止回调内部触发 Disconnect → CancelAllPending 重入导致
             // "Collection was modified" InvalidOperationException：
             // 先清空 _cancelledRequests，再从本地副本触发回调。
-            // 重入的 CancelAllPending 调用会看到空 _pendingRequests 直接返回。
             var error = new NetworkError(code, reason);
             var snapshot = _cancelledRequests.ToArray();
             _cancelledRequests.Clear();

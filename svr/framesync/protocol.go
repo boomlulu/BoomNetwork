@@ -3,6 +3,8 @@ package framesync
 import (
 	"encoding/binary"
 	"fmt"
+
+	"github.com/boomlulu/boomnetwork/codec"
 )
 
 // Protocol decode limits — prevent OOM / panic from malformed input
@@ -97,6 +99,12 @@ const (
 	// 帧 hash 校验
 	ExtCmdFrameHash        uint16 = 60 // C→S [FrameNumber:4][Hash:4]
 	ExtCmdFrameHashMismatch uint16 = 61 // S→C [FrameNumber:4][PlayerCount:1][PlayerId:4 + Hash:4]...
+
+	// 可靠通道（双向，快速重连不掉消息）
+	ExtCmdReliableMsg uint16 = 200 // 包装任意消息，赋予可靠语义
+	// Wire: [reliableSeq:4][innerCmdType:1][innerCmd:0/2/4][innerData:N]
+	ExtCmdReliableAck uint16 = 201 // S→C 确认已处理的 C→S reliable seq
+	// Wire: [ackSeq:4]
 )
 
 // FrameSyncPauseReason 帧同步暂停原因
@@ -150,9 +158,10 @@ func DecodeInitData(buf []byte) *InitData {
 
 // ReconnectResult 重连结果码
 const (
-	ReconnectSuccess         byte = 1 // 成功
-	ReconnectFail            byte = 0 // 通用失败
-	ReconnectFailBufferStale byte = 2 // lastFrame 已超出环形缓冲区，需要降级到快照重连
+	ReconnectSuccess           byte = 1 // 成功
+	ReconnectFail              byte = 0 // 通用失败
+	ReconnectFailBufferStale   byte = 2 // lastFrame 已超出帧环形缓冲区，需要降级到快照重连
+	ReconnectFailS2CBufStale   byte = 3 // S→C reliable buffer 已超出，需要降级到快照重连
 )
 
 // PlayerInput 单个玩家输入
@@ -412,20 +421,106 @@ func DecodeUploadSnapshot(data []byte) (frameNumber uint32, snapshotData []byte)
 }
 
 // EncodeReconnectRsp 编码重连响应
-// Wire: [Result:1][RoomId:4][ServerFrame:4][SnapshotFrame:4][SnapshotData:N]
-// Result: 0=失败, 1=成功, 2=缓冲区过期(需降级到快照重连)
-func EncodeReconnectRsp(result byte, roomId int32, serverFrame uint32, snapshotFrame uint32, snapshotData []byte) []byte {
-	headerSize := 1 + 4 + 4 + 4 // result + roomId + serverFrame + snapshotFrame
+// Wire: [Result:1][RoomId:4][ServerFrame:4][SnapshotFrame:4][ServerLastC2SSeq:4][SnapshotData:N]
+// Result: 0=失败, 1=成功, 2=帧缓冲区过期, 3=S→C reliable buffer 过期(均需降级到快照重连)
+func EncodeReconnectRsp(result byte, roomId int32, serverFrame uint32, snapshotFrame uint32, serverLastC2SSeq uint32, snapshotData []byte) []byte {
+	headerSize := 1 + 4 + 4 + 4 + 4 // result + roomId + serverFrame + snapshotFrame + serverLastC2SSeq
 	buf := make([]byte, headerSize+len(snapshotData))
 
 	buf[0] = result
 	binary.LittleEndian.PutUint32(buf[1:], uint32(roomId))
 	binary.LittleEndian.PutUint32(buf[5:], serverFrame)
 	binary.LittleEndian.PutUint32(buf[9:], snapshotFrame)
+	binary.LittleEndian.PutUint32(buf[13:], serverLastC2SSeq)
 
 	if len(snapshotData) > 0 {
-		copy(buf[13:], snapshotData)
+		copy(buf[17:], snapshotData)
 	}
+	return buf
+}
+
+// EncodeReliableMsgData 编码 ExtCmdReliableMsg 的消息体
+// Wire: [reliableSeq:4][innerCmdType:1][innerCmd:0/2/4][innerData:N]
+func EncodeReliableMsgData(seq uint32, inner *codec.Message) []byte {
+	var cmdHeaderSize int
+	switch inner.CmdType {
+	case codec.CmdTypeCore:
+		cmdHeaderSize = 2 // type(1) + cmd(1)
+	case codec.CmdTypeExtended:
+		cmdHeaderSize = 3 // type(1) + extCmd(2)
+	case codec.CmdTypeGame:
+		cmdHeaderSize = 5 // type(1) + gameCmd(4)
+	default:
+		cmdHeaderSize = 1
+	}
+	dataLen := len(inner.Data)
+	buf := make([]byte, 4+cmdHeaderSize+dataLen)
+	binary.LittleEndian.PutUint32(buf[0:], seq)
+	switch inner.CmdType {
+	case codec.CmdTypeCore:
+		buf[4] = codec.CmdTypeCore
+		buf[5] = inner.Cmd
+	case codec.CmdTypeExtended:
+		buf[4] = codec.CmdTypeExtended
+		binary.LittleEndian.PutUint16(buf[5:], inner.ExtCmd)
+	case codec.CmdTypeGame:
+		buf[4] = codec.CmdTypeGame
+		binary.LittleEndian.PutUint32(buf[5:], inner.GameCmd)
+	}
+	if dataLen > 0 {
+		copy(buf[4+cmdHeaderSize:], inner.Data)
+	}
+	return buf
+}
+
+// DecodeReliableMsgSeq 从 ExtCmdReliableMsg 消息体中读取 reliableSeq（不解析 inner）
+func DecodeReliableMsgSeq(data []byte) (seq uint32, ok bool) {
+	if len(data) < 5 {
+		return 0, false
+	}
+	return binary.LittleEndian.Uint32(data[0:4]), true
+}
+
+// DecodeReliableMsgInner 从 ExtCmdReliableMsg 消息体中解包内层消息（data[4:] 起）
+func DecodeReliableMsgInner(data []byte) *codec.Message {
+	if len(data) < 5 { // seq(4) + type(1) minimum
+		return nil
+	}
+	inner := data[4:]
+	innerType := inner[0]
+	switch innerType {
+	case codec.CmdTypeCore:
+		if len(inner) < 2 {
+			return nil
+		}
+		innerData := make([]byte, len(inner)-2)
+		copy(innerData, inner[2:])
+		return &codec.Message{CmdType: codec.CmdTypeCore, Cmd: inner[1], Data: innerData}
+	case codec.CmdTypeExtended:
+		if len(inner) < 3 {
+			return nil
+		}
+		extCmd := binary.LittleEndian.Uint16(inner[1:3])
+		innerData := make([]byte, len(inner)-3)
+		copy(innerData, inner[3:])
+		return &codec.Message{CmdType: codec.CmdTypeExtended, ExtCmd: extCmd, Data: innerData}
+	case codec.CmdTypeGame:
+		if len(inner) < 5 {
+			return nil
+		}
+		gameCmd := binary.LittleEndian.Uint32(inner[1:5])
+		innerData := make([]byte, len(inner)-5)
+		copy(innerData, inner[5:])
+		return &codec.Message{CmdType: codec.CmdTypeGame, GameCmd: gameCmd, Data: innerData}
+	}
+	return nil
+}
+
+// EncodeReliableAck 编码 ExtCmdReliableAck 消息体
+// Wire: [ackSeq:4]
+func EncodeReliableAck(ackSeq uint32) []byte {
+	buf := make([]byte, 4)
+	binary.LittleEndian.PutUint32(buf, ackSeq)
 	return buf
 }
 

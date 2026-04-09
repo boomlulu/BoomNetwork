@@ -57,31 +57,31 @@ func TestDecodeInitData_LegacyCompat(t *testing.T) {
 
 func TestEncodeReconnectRsp_Success(t *testing.T) {
 	snapshot := []byte{0xAA, 0xBB, 0xCC}
-	buf := EncodeReconnectRsp(ReconnectSuccess, 42, 200, 150, snapshot)
+	buf := EncodeReconnectRsp(ReconnectSuccess, 42, 200, 150, 7, snapshot)
 
 	if buf[0] != ReconnectSuccess {
 		t.Errorf("Result: got %d, want %d", buf[0], ReconnectSuccess)
 	}
-	if len(buf) != 13+3 {
-		t.Errorf("Length: got %d, want 16", len(buf))
+	if len(buf) != 17+3 {
+		t.Errorf("Length: got %d, want 20", len(buf))
 	}
-	if !bytes.Equal(buf[13:], snapshot) {
+	if !bytes.Equal(buf[17:], snapshot) {
 		t.Errorf("Snapshot mismatch")
 	}
 }
 
 func TestEncodeReconnectRsp_BufferStale(t *testing.T) {
-	buf := EncodeReconnectRsp(ReconnectFailBufferStale, 42, 200, 0, nil)
+	buf := EncodeReconnectRsp(ReconnectFailBufferStale, 42, 200, 0, 0, nil)
 	if buf[0] != ReconnectFailBufferStale {
 		t.Errorf("Result: got %d, want %d", buf[0], ReconnectFailBufferStale)
 	}
-	if len(buf) != 13 {
-		t.Errorf("Length: got %d, want 13", len(buf))
+	if len(buf) != 17 {
+		t.Errorf("Length: got %d, want 17", len(buf))
 	}
 }
 
 func TestEncodeReconnectRsp_Fail(t *testing.T) {
-	buf := EncodeReconnectRsp(ReconnectFail, 0, 0, 0, nil)
+	buf := EncodeReconnectRsp(ReconnectFail, 0, 0, 0, 0, nil)
 	if buf[0] != ReconnectFail {
 		t.Errorf("Result: got %d, want %d", buf[0], ReconnectFail)
 	}

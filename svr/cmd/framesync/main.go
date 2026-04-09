@@ -93,6 +93,10 @@ const (
 	replayBatchDelay = 5 * time.Millisecond
 )
 
+// reliableDispatch 用于 handleReliableMsg 内部分发解包后的 inner 消息
+// 在 router.Freeze() 之后由 main() 设置，此后只读，无需同步。
+var reliableDispatch func(*transport.Conn, *codec.Message) *codec.Message
+
 func main() {
 	jsonHandler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: &logLevel})
 	slog.SetDefault(slog.New(WrapWithLogBuffer(jsonHandler)))
@@ -184,11 +188,14 @@ func main() {
 	router.OnExt(framesync.ExtCmdRequestGameResume, txStats(handleRequestGameResume))
 	// 帧 hash 校验
 	router.OnExt(framesync.ExtCmdFrameHash, txStats(handleFrameHash))
+	// 可靠通道（C→S）
+	router.OnExt(framesync.ExtCmdReliableMsg, txStats(handleReliableMsg))
 	// Game Cmd (uint32) — 服务器透传
 	router.OnGame(txStats(handleGameRelay))
 
 	// 路由注册完毕，冻结路由表 — Dispatch 不再加锁
 	router.Freeze()
+	reliableDispatch = router.Dispatch
 
 	// 在 router 外层包一层 RX 计数 + 消息日志 + netsim 响应延迟
 	baseDispatch := router.Dispatch
@@ -565,7 +572,7 @@ func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	if len(msg.Data) < 4 {
 		framesync.Metrics.MessageErrors.Inc()
 		framesync.Metrics.ReconnectFail.Inc()
-		rsp := framesync.EncodeReconnectRsp(framesync.ReconnectFail, 0, 0, 0, nil)
+		rsp := framesync.EncodeReconnectRsp(framesync.ReconnectFail, 0, 0, 0, 0, nil)
 		return codec.NewCoreMessage(framesync.CmdReconnectRsp, rsp)
 	}
 
@@ -574,12 +581,16 @@ func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	if len(msg.Data) >= 8 {
 		lastFrame = binary.LittleEndian.Uint32(msg.Data[4:8])
 	}
+	var lastS2CSeq uint32
+	if len(msg.Data) >= 12 {
+		lastS2CSeq = binary.LittleEndian.Uint32(msg.Data[8:12])
+	}
 
 	roomVal, ok := playerRoomMap.Load(playerId)
 	if !ok {
 		slog.Warn("reconnect failed: player not found in any room", "playerId", playerId)
 		framesync.Metrics.ReconnectFail.Inc()
-		rsp := framesync.EncodeReconnectRsp(framesync.ReconnectFail, 0, 0, 0, nil)
+		rsp := framesync.EncodeReconnectRsp(framesync.ReconnectFail, 0, 0, 0, 0, nil)
 		return codec.NewCoreMessage(framesync.CmdReconnectRsp, rsp)
 	}
 	room, ok2 := roomVal.(*framesync.Room) // L1: safe type assertion
@@ -592,20 +603,25 @@ func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
 		slog.Warn("reconnect failed: room already cleaned up", "playerId", playerId, "roomId", room.ID)
 		playerRoomMap.Delete(playerId)
 		framesync.Metrics.ReconnectFail.Inc()
-		rsp := framesync.EncodeReconnectRsp(framesync.ReconnectFail, 0, 0, 0, nil)
+		rsp := framesync.EncodeReconnectRsp(framesync.ReconnectFail, 0, 0, 0, 0, nil)
 		return codec.NewCoreMessage(framesync.CmdReconnectRsp, rsp)
 	}
 
 	currentFrame := room.CurrentFrameNumber()
 	snapshotFrame, snapshotData := room.GetSnapshot()
 
-	// 快速重连路径: lastFrame > 0，检查是否还在环形缓冲区内
+	// 快速重连路径: lastFrame > 0，检查帧环形缓冲区
 	if lastFrame > 0 {
 		oldestFrame := room.OldestBufferedFrame()
 		if oldestFrame > 0 && lastFrame < oldestFrame {
-			// lastFrame 已超出缓冲区 → 返回 BufferStale，客户端降级到快照重连
-			slog.Warn("reconnect buffer stale", "playerId", playerId, "lastFrame", lastFrame, "oldestFrame", oldestFrame)
-			rsp := framesync.EncodeReconnectRsp(framesync.ReconnectFailBufferStale, room.ID, currentFrame, 0, nil)
+			slog.Warn("reconnect frame buffer stale", "playerId", playerId, "lastFrame", lastFrame, "oldestFrame", oldestFrame)
+			rsp := framesync.EncodeReconnectRsp(framesync.ReconnectFailBufferStale, room.ID, currentFrame, 0, 0, nil)
+			return codec.NewCoreMessage(framesync.CmdReconnectRsp, rsp)
+		}
+		// 检查 S→C reliable buffer
+		if _, s2cStale := room.GetS2CReliableSince(playerId, lastS2CSeq); s2cStale {
+			slog.Warn("reconnect s2c reliable buffer stale", "playerId", playerId, "lastS2CSeq", lastS2CSeq)
+			rsp := framesync.EncodeReconnectRsp(framesync.ReconnectFailS2CBufStale, room.ID, currentFrame, 0, 0, nil)
 			return codec.NewCoreMessage(framesync.CmdReconnectRsp, rsp)
 		}
 	}
@@ -625,6 +641,9 @@ func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	connContextMap.Store(conn.ID, &connContext{playerId: playerId, room: room})
 	room.AddPlayer(playerId, &statsConn{inner: &simConn{inner: conn, cfg: GlobalNetSim}, pid: playerId})
 
+	// 读取 serverLastC2SSeq（重连成功后告知客户端需要从哪条 C→S 开始重发）
+	serverLastC2SSeq := room.GetLastProcessedC2SSeq(playerId)
+
 	// 决定从哪帧开始补帧
 	var replayFrom uint32
 	if lastFrame > 0 {
@@ -642,7 +661,7 @@ func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	}
 
 	framesync.Metrics.ReconnectSuccess.Inc()
-	rsp := framesync.EncodeReconnectRsp(framesync.ReconnectSuccess, room.ID, currentFrame, snapshotFrame, snapshotData)
+	rsp := framesync.EncodeReconnectRsp(framesync.ReconnectSuccess, room.ID, currentFrame, snapshotFrame, serverLastC2SSeq, snapshotData)
 
 	// 通知同房其他玩家：恢复在线（非新加入）
 	if room.IsRunning() {
@@ -654,16 +673,15 @@ func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	// 先发 ReconnectRsp，再发补充消息（顺序保证：客户端先处理 Reconnect 再处理后续状态）
 	sendMsg(conn, codec.NewCoreMessage(framesync.CmdReconnectRsp, rsp))
 
-	// 若房间处于游戏级暂停，补发 FrameSyncPaused(GamePause) 给重连玩家。
-	// 客户端在 HandleDisconnected 时重置了 IsGamePaused=false；若此处不补发，
-	// 客户端永远不知道当前已暂停，也不会发 RequestGameResume，造成死锁。
+	// 若房间处于游戏级暂停，补发 FrameSyncPaused(GamePause) 给重连玩家
 	if room.IsGamePaused() {
 		sendMsg(conn, codec.NewExtMessage(framesync.ExtCmdFrameSyncPaused, []byte{byte(framesync.PauseReasonGamePause)}))
 	}
 
-	// 异步补帧（P2-2: 分批发送，每批 replayBatchSize 帧后 sleep replayBatchDelay，防止撑爆 TCP 缓冲区）
-	if replayFrom > 0 && replayFrom < currentFrame {
-		go func() {
+	// 异步补帧 + S→C reliable 补发
+	go func() {
+		// 1. 补帧（保持原有批量发送逻辑）
+		if replayFrom > 0 && replayFrom < currentFrame {
 			frames := room.GetFramesSince(replayFrom)
 			for i, cf := range frames {
 				sendMsg(conn, codec.NewCoreMessage(framesync.CmdPushFrames, cf.EncodedData))
@@ -672,10 +690,21 @@ func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
 				}
 			}
 			slog.Info("player replayed frames on reconnect", "playerId", playerId, "count", len(frames), "fromFrame", replayFrom+1, "toFrame", currentFrame)
-		}()
-	}
+		}
 
-	slog.Info("player reconnected", "playerId", playerId, "roomId", room.ID, "serverFrame", currentFrame, "snapshotFrame", snapshotFrame)
+		// 2. 补发 S→C reliable 消息（快速重连时）
+		if lastFrame > 0 {
+			s2cMsgs, _ := room.GetS2CReliableSince(playerId, lastS2CSeq)
+			for _, m := range s2cMsgs {
+				sendMsg(conn, m)
+			}
+			if len(s2cMsgs) > 0 {
+				slog.Info("player replayed s2c reliable on reconnect", "playerId", playerId, "count", len(s2cMsgs), "fromSeq", lastS2CSeq+1)
+			}
+		}
+	}()
+
+	slog.Info("player reconnected", "playerId", playerId, "roomId", room.ID, "serverFrame", currentFrame, "snapshotFrame", snapshotFrame, "serverLastC2SSeq", serverLastC2SSeq)
 	return nil
 }
 
@@ -1147,11 +1176,7 @@ func handleSendEntityState(conn *transport.Conn, msg *codec.Message) *codec.Mess
 	copy(push[4:], msg.Data)
 
 	pushMsg := codec.NewExtMessage(framesync.ExtCmdPushEntityState, push)
-	room.ForEachOnlinePlayer(func(id int32, c framesync.PlayerConn) {
-		if id != playerId {
-			c.Send(pushMsg)
-		}
-	})
+	room.BroadcastReliable(playerId, pushMsg)
 	return nil
 }
 
@@ -1170,7 +1195,7 @@ func handleSendStateMsg(conn *transport.Conn, msg *codec.Message) *codec.Message
 	}
 
 	push := framesync.EncodePushStateMsg(playerId, msg.Data)
-	broadcastToRoom(room, playerId, codec.NewExtMessage(framesync.ExtCmdPushStateMsg, push))
+	room.BroadcastReliable(playerId, codec.NewExtMessage(framesync.ExtCmdPushStateMsg, push))
 	return nil
 }
 
@@ -1284,6 +1309,45 @@ func handleRequestGameResume(conn *transport.Conn, msg *codec.Message) *codec.Me
 		slog.Info("game resumed by player", "roomId", room.ID, "playerId", playerId)
 		broadcastToRoom(room, -1, codec.NewExtMessage(framesync.ExtCmdFrameSyncResumed, nil))
 	}
+	return nil
+}
+
+// handleReliableMsg 处理 C→S 可靠消息（ExtCmdReliableMsg=200）
+// 流程: 幂等去重（seq <= lastProcessed 直接 ACK）→ 更新 lastProcessed → 解包 inner → 内部分发 → ACK
+func handleReliableMsg(conn *transport.Conn, msg *codec.Message) *codec.Message {
+	seq, ok := framesync.DecodeReliableMsgSeq(msg.Data)
+	if !ok {
+		return nil
+	}
+
+	playerId, ok := loadConnPlayerId(conn.ID) // L1: safe type assertion
+	if !ok {
+		return nil
+	}
+
+	room, ok := loadPlayerRoom(playerId) // L1: safe type assertion
+	if !ok {
+		return nil
+	}
+
+	lastProcessed := room.GetLastProcessedC2SSeq(playerId)
+	if seq <= lastProcessed {
+		// 重复消息：已处理过，仅补发 ACK，不再执行
+		sendMsg(conn, codec.NewExtMessage(framesync.ExtCmdReliableAck, framesync.EncodeReliableAck(lastProcessed)))
+		return nil
+	}
+
+	room.SetLastProcessedC2SSeq(playerId, seq)
+
+	inner := framesync.DecodeReliableMsgInner(msg.Data)
+	if inner != nil && reliableDispatch != nil {
+		rsp := reliableDispatch(conn, inner)
+		if rsp != nil {
+			sendMsg(conn, rsp)
+		}
+	}
+
+	sendMsg(conn, codec.NewExtMessage(framesync.ExtCmdReliableAck, framesync.EncodeReliableAck(seq)))
 	return nil
 }
 

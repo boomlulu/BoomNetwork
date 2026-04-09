@@ -2,6 +2,8 @@ using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
+using BoomNetwork.Core;
+using BoomNetwork.Core.Codec;
 
 namespace BoomNetwork.Core.FrameSync
 {
@@ -100,6 +102,12 @@ namespace BoomNetwork.Core.FrameSync
         // 不同步检测
         public const ushort FrameHash         = 60; // C→S [FrameNumber:4][Hash:4]
         public const ushort FrameHashMismatch = 61; // S→C [FrameNumber:4][PlayerCount:1][PlayerId:4+Hash:4]...
+
+        // 可靠通道（双向，快速重连不掉消息）
+        public const ushort ReliableMsg = 200; // 包装任意消息，赋予可靠语义
+        // Wire: [reliableSeq:4][innerCmdType:1][innerCmd:0/2/4][innerData:N]
+        public const ushort ReliableAck = 201; // S→C 确认已处理的 C→S reliable seq
+        // Wire: [ackSeq:4]
     }
 
     /// <summary>帧内事件类型（嵌入 FrameData，确保所有客户端在同一帧处理）</summary>
@@ -214,6 +222,7 @@ namespace BoomNetwork.Core.FrameSync
         public const byte Fail = 0;             // 通用失败
         public const byte Success = 1;          // 成功
         public const byte BufferStale = 2;      // 帧缓冲区过期，客户端应降级到快照重连
+        public const byte S2CBufStale = 3;      // S→C reliable buffer 过期，客户端应降级到快照重连
     }
 
     /// <summary>帧内事件</summary>
@@ -589,29 +598,118 @@ namespace BoomNetwork.Core.FrameSync
         }
 
         // === ReconnectRsp ===
-        // Wire: [Result:1][RoomId:4][ServerFrame:4][SnapshotFrame:4][SnapshotData:N]
-        // Result: 0=失败, 1=成功, 2=缓冲区过期(需降级到快照重连)
+        // Wire: [Result:1][RoomId:4][ServerFrame:4][SnapshotFrame:4][ServerLastC2SSeq:4][SnapshotData:N]
+        // Result: 0=失败, 1=成功, 2=帧缓冲区过期, 3=S→C reliable buffer 过期(均需降级到快照重连)
 
-        public static (byte result, int roomId, uint serverFrame, uint snapshotFrame, byte[]? snapshotData)
+        public static (byte result, int roomId, uint serverFrame, uint snapshotFrame, uint serverLastC2SSeq, byte[]? snapshotData)
             DecodeReconnectRsp(ReadOnlySpan<byte> buf)
         {
-            if (buf.Length < 1) return (ReconnectResult.Fail, 0, 0, 0, null);
+            if (buf.Length < 1) return (ReconnectResult.Fail, 0, 0, 0, 0, null);
 
             byte result = buf[0];
-            if (buf.Length < 13)
-                return (result, 0, 0, 0, null);
+            if (buf.Length < 17)
+                return (result, 0, 0, 0, 0, null);
 
-            int roomId        = BinaryPrimitives.ReadInt32LittleEndian(buf.Slice(1));
-            uint serverFrame  = BinaryPrimitives.ReadUInt32LittleEndian(buf.Slice(5));
-            uint snapshotFrame = BinaryPrimitives.ReadUInt32LittleEndian(buf.Slice(9));
+            int roomId             = BinaryPrimitives.ReadInt32LittleEndian(buf.Slice(1));
+            uint serverFrame       = BinaryPrimitives.ReadUInt32LittleEndian(buf.Slice(5));
+            uint snapshotFrame     = BinaryPrimitives.ReadUInt32LittleEndian(buf.Slice(9));
+            uint serverLastC2SSeq  = BinaryPrimitives.ReadUInt32LittleEndian(buf.Slice(13));
 
             byte[]? snapshotData = null;
-            if (buf.Length > 13 && snapshotFrame > 0)
+            if (buf.Length > 17 && snapshotFrame > 0)
             {
-                snapshotData = buf.Slice(13).ToArray();
+                snapshotData = buf.Slice(17).ToArray();
             }
 
-            return (result, roomId, serverFrame, snapshotFrame, snapshotData);
+            return (result, roomId, serverFrame, snapshotFrame, serverLastC2SSeq, snapshotData);
+        }
+
+        // === Reliable Channel ===
+
+        /// <summary>
+        /// 编码 ExtCmdReliableMsg 消息体
+        /// Wire: [reliableSeq:4][innerCmdType:1][innerCmd:0/2/4][innerData:N]
+        /// </summary>
+        public static byte[] EncodeReliableMsgData(uint seq, Message inner)
+        {
+            int cmdHeaderSize = inner.MsgType switch
+            {
+                CmdType.Core     => 2, // type(1) + cmd(1)
+                CmdType.Extended => 3, // type(1) + extCmd(2)
+                CmdType.Game     => 5, // type(1) + gameCmd(4)
+                _                => 1,
+            };
+            int dataLen = inner.DataLength;
+            var buf = new byte[4 + cmdHeaderSize + dataLen];
+            BinaryPrimitives.WriteUInt32LittleEndian(buf.AsSpan(0), seq);
+            switch (inner.MsgType)
+            {
+                case CmdType.Core:
+                    buf[4] = (byte)CmdType.Core;
+                    buf[5] = inner.Cmd;
+                    break;
+                case CmdType.Extended:
+                    buf[4] = (byte)CmdType.Extended;
+                    BinaryPrimitives.WriteUInt16LittleEndian(buf.AsSpan(5), inner.ExtCmd);
+                    break;
+                case CmdType.Game:
+                    buf[4] = (byte)CmdType.Game;
+                    BinaryPrimitives.WriteUInt32LittleEndian(buf.AsSpan(5), inner.GameCmd);
+                    break;
+            }
+            if (dataLen > 0)
+                Buffer.BlockCopy(inner.Data, 0, buf, 4 + cmdHeaderSize, dataLen);
+            return buf;
+        }
+
+        /// <summary>
+        /// 从 ExtCmdReliableMsg 消息体中读取 reliableSeq（不解析 inner）
+        /// </summary>
+        public static bool TryDecodeReliableSeq(ReadOnlySpan<byte> data, out uint seq)
+        {
+            if (data.Length < 5) { seq = 0; return false; }
+            seq = BinaryPrimitives.ReadUInt32LittleEndian(data);
+            return true;
+        }
+
+        /// <summary>
+        /// 从 ExtCmdReliableMsg 消息体中解包内层消息
+        /// </summary>
+        public static Message? DecodeReliableInner(ReadOnlySpan<byte> data)
+        {
+            if (data.Length < 5) return null; // seq(4) + type(1) minimum
+            var inner = data.Slice(4);
+            var innerType = (CmdType)inner[0];
+            switch (innerType)
+            {
+                case CmdType.Core:
+                    if (inner.Length < 2) return null;
+                    var coreData = inner.Length > 2 ? inner.Slice(2).ToArray() : Array.Empty<byte>();
+                    return new Message { MsgType = CmdType.Core, Cmd = inner[1], Data = coreData, DataLength = coreData.Length };
+                case CmdType.Extended:
+                    if (inner.Length < 3) return null;
+                    var extCmd = BinaryPrimitives.ReadUInt16LittleEndian(inner.Slice(1));
+                    var extData = inner.Length > 3 ? inner.Slice(3).ToArray() : Array.Empty<byte>();
+                    return new Message { MsgType = CmdType.Extended, ExtCmd = extCmd, Data = extData, DataLength = extData.Length };
+                case CmdType.Game:
+                    if (inner.Length < 5) return null;
+                    var gameCmd = BinaryPrimitives.ReadUInt32LittleEndian(inner.Slice(1));
+                    var gameData = inner.Length > 5 ? inner.Slice(5).ToArray() : Array.Empty<byte>();
+                    return new Message { MsgType = CmdType.Game, GameCmd = gameCmd, Data = gameData, DataLength = gameData.Length };
+                default:
+                    return null;
+            }
+        }
+
+        /// <summary>
+        /// 读取 ExtCmdReliableAck 消息体中的 ackSeq
+        /// Wire: [ackSeq:4]
+        /// </summary>
+        public static bool TryDecodeReliableAck(ReadOnlySpan<byte> data, out uint ackSeq)
+        {
+            if (data.Length < 4) { ackSeq = 0; return false; }
+            ackSeq = BinaryPrimitives.ReadUInt32LittleEndian(data);
+            return true;
         }
     }
 

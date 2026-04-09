@@ -60,23 +60,25 @@ namespace BoomNetwork.Tests
         [Test]
         public void ReconnectRsp_Success_WithSnapshot()
         {
-            // 模拟服务端编码: [Result:1][RoomId:4][ServerFrame:4][SnapshotFrame:4][SnapshotData:N]
-            var buf = new byte[13 + 3];
+            // 模拟服务端编码: [Result:1][RoomId:4][ServerFrame:4][SnapshotFrame:4][ServerLastC2SSeq:4][SnapshotData:N]
+            var buf = new byte[17 + 3];
             buf[0] = ReconnectResult.Success;
             BitConverter.TryWriteBytes(buf.AsSpan(1), 42);        // roomId
             BitConverter.TryWriteBytes(buf.AsSpan(5), (uint)200);  // serverFrame
             BitConverter.TryWriteBytes(buf.AsSpan(9), (uint)150);  // snapshotFrame
-            buf[13] = 0xAA;
-            buf[14] = 0xBB;
-            buf[15] = 0xCC;
+            BitConverter.TryWriteBytes(buf.AsSpan(13), (uint)7);   // serverLastC2SSeq
+            buf[17] = 0xAA;
+            buf[18] = 0xBB;
+            buf[19] = 0xCC;
 
-            var (result, roomId, serverFrame, snapshotFrame, snapshotData) =
+            var (result, roomId, serverFrame, snapshotFrame, serverLastC2SSeq, snapshotData) =
                 SnapshotCodec.DecodeReconnectRsp(buf);
 
             Assert.That(result, Is.EqualTo(ReconnectResult.Success));
             Assert.That(roomId, Is.EqualTo(42));
             Assert.That(serverFrame, Is.EqualTo(200u));
             Assert.That(snapshotFrame, Is.EqualTo(150u));
+            Assert.That(serverLastC2SSeq, Is.EqualTo(7u));
             Assert.That(snapshotData, Is.Not.Null);
             Assert.That(snapshotData!.Length, Is.EqualTo(3));
             Assert.That(snapshotData[0], Is.EqualTo(0xAA));
@@ -85,13 +87,14 @@ namespace BoomNetwork.Tests
         [Test]
         public void ReconnectRsp_BufferStale()
         {
-            var buf = new byte[13];
+            var buf = new byte[17];
             buf[0] = ReconnectResult.BufferStale;
             BitConverter.TryWriteBytes(buf.AsSpan(1), 42);
             BitConverter.TryWriteBytes(buf.AsSpan(5), (uint)200);
             BitConverter.TryWriteBytes(buf.AsSpan(9), (uint)0);
+            BitConverter.TryWriteBytes(buf.AsSpan(13), (uint)0); // serverLastC2SSeq
 
-            var (result, roomId, serverFrame, snapshotFrame, snapshotData) =
+            var (result, roomId, serverFrame, snapshotFrame, _, snapshotData) =
                 SnapshotCodec.DecodeReconnectRsp(buf);
 
             Assert.That(result, Is.EqualTo(ReconnectResult.BufferStale));
@@ -106,7 +109,7 @@ namespace BoomNetwork.Tests
             var buf = new byte[1];
             buf[0] = ReconnectResult.Fail;
 
-            var (result, roomId, serverFrame, snapshotFrame, snapshotData) =
+            var (result, roomId, serverFrame, snapshotFrame, _, snapshotData) =
                 SnapshotCodec.DecodeReconnectRsp(buf);
 
             Assert.That(result, Is.EqualTo(ReconnectResult.Fail));
@@ -118,17 +121,19 @@ namespace BoomNetwork.Tests
         public void ReconnectRsp_Success_NoSnapshot()
         {
             // 快速重连路径: snapshotFrame=0, 无快照数据
-            var buf = new byte[13];
+            var buf = new byte[17];
             buf[0] = ReconnectResult.Success;
             BitConverter.TryWriteBytes(buf.AsSpan(1), 42);
             BitConverter.TryWriteBytes(buf.AsSpan(5), (uint)200);
-            BitConverter.TryWriteBytes(buf.AsSpan(9), (uint)0); // snapshotFrame=0
+            BitConverter.TryWriteBytes(buf.AsSpan(9), (uint)0);  // snapshotFrame=0
+            BitConverter.TryWriteBytes(buf.AsSpan(13), (uint)3); // serverLastC2SSeq
 
-            var (result, roomId, serverFrame, snapshotFrame, snapshotData) =
+            var (result, roomId, serverFrame, snapshotFrame, serverLastC2SSeq, snapshotData) =
                 SnapshotCodec.DecodeReconnectRsp(buf);
 
             Assert.That(result, Is.EqualTo(ReconnectResult.Success));
             Assert.That(snapshotFrame, Is.EqualTo(0u));
+            Assert.That(serverLastC2SSeq, Is.EqualTo(3u));
             Assert.That(snapshotData, Is.Null);
         }
 

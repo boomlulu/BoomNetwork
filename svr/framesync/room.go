@@ -16,6 +16,15 @@ type PlayerConn interface {
 	Close() error
 }
 
+// s2cBufSize S→C 可靠通道每个玩家的环形缓冲区大小（条数）
+const s2cBufSize = 256
+
+// cachedS2CMsg S→C 可靠通道缓存的消息
+type cachedS2CMsg struct {
+	seq uint32
+	msg *codec.Message // 已包装为 ExtCmdReliableMsg，可直接发送
+}
+
 // playerSlicePool 复用 []*Player 临时切片，供 ForEachOnlinePlayer 等非热路径使用
 // sync.Pool 本身线程安全，可替代 make([]*Player,...) 避免 per-call GC 分配
 var playerSlicePool = sync.Pool{
@@ -40,6 +49,14 @@ type Player struct {
 	State          PlayerState
 	DisconnectTime time.Time
 	JoinedAt       time.Time // 首次加入时间（GM 检视用）
+
+	// S→C 可靠通道
+	s2cSeq     uint32                    // 已分配的最新 seq（单调递增）
+	s2cBuf     [s2cBufSize]cachedS2CMsg  // 环形缓冲区（slot = seq % s2cBufSize）
+	s2cBufHead uint32                    // 缓冲区中最老的 seq（seq < s2cBufHead 视为 stale）
+
+	// C→S 可靠通道
+	lastProcessedC2SSeq uint32 // 已处理（去重）的最新 C→S seq
 }
 
 // CachedFrame 缓冲的帧数据
@@ -473,6 +490,106 @@ func (r *Room) ForEachOnlinePlayer(fn func(id int32, conn PlayerConn)) {
 	if cap(players) <= 64 {
 		*sp = players[:0]
 		playerSlicePool.Put(sp)
+	}
+}
+
+// === S→C 可靠通道 ===
+
+// SendReliableToPlayer 向指定玩家发送可靠消息（在线时立即发送，离线时只入队等待重连补发）
+// inner 消息将被包装为 ExtCmdReliableMsg，赋予单调递增 seq 并存入环形缓冲区。
+func (r *Room) SendReliableToPlayer(playerId int32, inner *codec.Message) {
+	r.mu.Lock()
+	p, ok := r.players[playerId]
+	if !ok {
+		r.mu.Unlock()
+		return
+	}
+	p.s2cSeq++
+	seq := p.s2cSeq
+	data := EncodeReliableMsgData(seq, inner)
+	reliableMsg := codec.NewExtMessage(ExtCmdReliableMsg, data)
+	slot := seq % s2cBufSize
+	p.s2cBuf[slot] = cachedS2CMsg{seq: seq, msg: reliableMsg}
+	if seq >= s2cBufSize {
+		p.s2cBufHead = seq - s2cBufSize + 1
+	}
+	conn := p.Conn
+	state := p.State
+	r.mu.Unlock()
+
+	if conn != nil && state == PlayerOnline {
+		_ = conn.Send(reliableMsg)
+	}
+}
+
+// BroadcastReliable 向房间内所有在线玩家（可选排除一个）广播可靠消息
+func (r *Room) BroadcastReliable(excludePlayerId int32, inner *codec.Message) {
+	r.mu.Lock()
+	sp := playerSlicePool.Get().(*[]*Player)
+	players := (*sp)[:0]
+	for _, p := range r.players {
+		if p.ID != excludePlayerId {
+			players = append(players, p)
+		}
+	}
+	r.mu.Unlock()
+
+	for _, p := range players {
+		r.SendReliableToPlayer(p.ID, inner)
+	}
+
+	for i := range players {
+		players[i] = nil
+	}
+	if cap(players) <= 64 {
+		*sp = players[:0]
+		playerSlicePool.Put(sp)
+	}
+}
+
+// GetS2CReliableSince 获取 seq > afterSeq 的所有缓冲消息（用于重连补发）
+// 返回 stale=true 表示 afterSeq 已超出缓冲区，必须降级到 Snapshot 重连。
+func (r *Room) GetS2CReliableSince(playerId int32, afterSeq uint32) (msgs []*codec.Message, stale bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	p, ok := r.players[playerId]
+	if !ok {
+		return nil, false
+	}
+	if p.s2cSeq == 0 || afterSeq >= p.s2cSeq {
+		return nil, false // 没有需要补发的消息
+	}
+	if afterSeq < p.s2cBufHead && p.s2cSeq > 0 {
+		return nil, true // stale：请求的起点已被覆盖
+	}
+	count := p.s2cSeq - afterSeq
+	result := make([]*codec.Message, 0, count)
+	for seq := afterSeq + 1; seq <= p.s2cSeq; seq++ {
+		slot := seq % s2cBufSize
+		if p.s2cBuf[slot].seq == seq {
+			result = append(result, p.s2cBuf[slot].msg)
+		}
+	}
+	return result, false
+}
+
+// GetLastProcessedC2SSeq 获取已处理的最新 C→S reliable seq（用于重连时告知客户端）
+func (r *Room) GetLastProcessedC2SSeq(playerId int32) uint32 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	p, ok := r.players[playerId]
+	if !ok {
+		return 0
+	}
+	return p.lastProcessedC2SSeq
+}
+
+// SetLastProcessedC2SSeq 更新已处理的 C→S reliable seq（去重用）
+func (r *Room) SetLastProcessedC2SSeq(playerId int32, seq uint32) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if p, ok := r.players[playerId]; ok {
+		p.lastProcessedC2SSeq = seq
 	}
 }
 

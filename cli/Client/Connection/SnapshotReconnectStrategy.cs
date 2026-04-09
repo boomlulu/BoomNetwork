@@ -42,7 +42,7 @@ namespace BoomNetwork.Client.Connection
                     {
                         if (_cancelled) return;
 
-                        var (result, roomId, serverFrame, snapshotFrame, snapshotData) =
+                        var (result, roomId, serverFrame, snapshotFrame, _, snapshotData) =
                             SnapshotCodec.DecodeReconnectRsp(msg.DataSpan);
 
                         if (result != ReconnectResult.Success)

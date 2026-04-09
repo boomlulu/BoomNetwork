@@ -32,22 +32,23 @@ namespace BoomNetwork.Client.Connection
                 session.OnConnected -= onConnected;
                 if (_cancelled) return;
 
-                // 发送 [playerId:4][lastFrame:4]
-                var data = new byte[8];
+                // 发送 [playerId:4][lastFrame:4][lastS2CSeq:4]
+                var data = new byte[12];
                 BinaryPrimitives.WriteInt32LittleEndian(data.AsSpan(0), context.PlayerId);
                 BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(4), context.LastFrameNumber);
+                BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(8), session.LastDeliveredS2CSeq);
 
                 session.SendAsync(FrameSyncCmd.Reconnect, data, TimeoutMs,
                     onResponse: msg =>
                     {
                         if (_cancelled) return;
 
-                        var (result, roomId, serverFrame, snapshotFrame, snapshotData) =
+                        var (result, roomId, serverFrame, snapshotFrame, serverLastC2SSeq, snapshotData) =
                             SnapshotCodec.DecodeReconnectRsp(msg.DataSpan);
 
-                        if (result == ReconnectResult.BufferStale)
+                        if (result == ReconnectResult.BufferStale || result == ReconnectResult.S2CBufStale)
                         {
-                            // 帧缓冲区过期 → 快速重连失败，由 Composite 降级到快照重连
+                            // 帧缓冲区或 S→C reliable buffer 过期 → 降级到快照重连
                             onFail(new NetworkError(ErrorCode.ReconnectFailed, "QuickReconnect: buffer stale, need snapshot"));
                             return;
                         }
@@ -60,12 +61,10 @@ namespace BoomNetwork.Client.Connection
                         context.ServerFrameNumber = serverFrame;
                         context.IsSnapshotRestore = false;
 
-                        // 重连成功：清空已发送缓冲区
-                        // 注意：不能调用 ResendUnacked()！
-                        // sent buffer 中的 SessionBind/CreateRoom/JoinRoom 等消息
-                        // 重发会导致 server 创建重复 player/room（致命 bug）
-                        // 真正需要重发的 FrameInput/EntityState 使用 Send（无 Seq），不在 buffer 中
+                        // 清空旧的 sent buffer（SessionBind/JoinRoom 等不能重发）
                         session.ClearSentBuffer();
+                        // 重发 C→S reliable 队列中服务端未处理的消息
+                        session.ReplayC2SQueue(serverLastC2SSeq);
 
                         onSuccess();
                     },
