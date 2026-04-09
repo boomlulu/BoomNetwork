@@ -380,7 +380,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             _ui.ShowDesync(mismatch.FrameNumber);
         }
 
-        string BuildDesyncJson(FrameHashMismatch mismatch, HashDetail hd, GameState s)
+        string BuildDesyncJson(FrameHashMismatch mismatch, GameState.HashDetail hd, GameState s)
         {
             var sb = new System.Text.StringBuilder(4096);
             string ts = System.DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
