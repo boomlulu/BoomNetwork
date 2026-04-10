@@ -85,13 +85,6 @@ type connContext struct {
 // connContextMap 单次查找替代原来的 connPlayerMap + playerRoomMap 双查找
 var connContextMap sync.Map // connID → *connContext
 
-// replayBatchSize / replayBatchDelay 控制补帧发送速率。
-// P2-2: 分批发送防止一次性写入 2400 帧撑爆 TCP 发送缓冲区；每批 100 帧后短暂 yield，
-// 让 ticker goroutine 有机会发送实时帧，避免补帧流量挤占正常帧路径。
-const (
-	replayBatchSize  = 100
-	replayBatchDelay = 5 * time.Millisecond
-)
 
 // reliableDispatch 用于 handleReliableMsg 内部分发解包后的 inner 消息
 // 在 router.Freeze() 之后由 main() 设置，此后只读，无需同步。
@@ -635,11 +628,11 @@ func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
 		}
 	}
 
-	// 更新连接映射
+	// 更新连接映射（AddPlayer 在 replayFrom 确定后调用，delivery loop 从正确帧号起追）
 	connPlayerMap.Store(conn.ID, playerId)
 	playerConnMap.Store(playerId, conn)
 	connContextMap.Store(conn.ID, &connContext{playerId: playerId, room: room})
-	room.AddPlayer(playerId, &statsConn{inner: &simConn{inner: conn, cfg: GlobalNetSim}, pid: playerId})
+	room.SetDelegate(globalDelegate) // 幂等
 
 	// 读取 serverLastC2SSeq（重连成功后告知客户端需要从哪条 C→S 开始重发）
 	serverLastC2SSeq := room.GetLastProcessedC2SSeq(playerId)
@@ -670,41 +663,30 @@ func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
 		broadcastToRoom(room, playerId, codec.NewExtMessage(framesync.ExtCmdPlayerOnline, framesync.EncodePlayerId(playerId)))
 	}
 
-	// 先发 ReconnectRsp，再发补充消息（顺序保证：客户端先处理 Reconnect 再处理后续状态）
+	// 先从 handler goroutine 发送 ReconnectRsp（在 delivery loop 启动前，保证顺序）
 	sendMsg(conn, codec.NewCoreMessage(framesync.CmdReconnectRsp, rsp))
 
-	// 若房间处于游戏级暂停，补发 FrameSyncPaused(GamePause) 给重连玩家
+	// 若房间处于游戏级暂停，在 delivery loop 前补发（preamble 之外，conn 互斥保证顺序）
 	if room.IsGamePaused() {
 		sendMsg(conn, codec.NewExtMessage(framesync.ExtCmdFrameSyncPaused, []byte{byte(framesync.PauseReasonGamePause)}))
 	}
 
-	// 异步补帧 + S→C reliable 补发
-	go func() {
-		// 1. 补帧（保持原有批量发送逻辑）
-		if replayFrom > 0 && replayFrom < currentFrame {
-			frames := room.GetFramesSince(replayFrom)
-			for i, cf := range frames {
-				sendMsg(conn, codec.NewCoreMessage(framesync.CmdPushFrames, cf.EncodedData))
-				if (i+1)%replayBatchSize == 0 && i+1 < len(frames) {
-					time.Sleep(replayBatchDelay)
-				}
-			}
-			slog.Info("player replayed frames on reconnect", "playerId", playerId, "count", len(frames), "fromFrame", replayFrom+1, "toFrame", currentFrame)
+	// 构建 delivery loop 前导消息（S→C reliable 在帧数据前到达）
+	var preamble []*codec.Message
+	if lastFrame > 0 {
+		s2cMsgs, _ := room.GetS2CReliableSince(playerId, lastS2CSeq)
+		preamble = append(preamble, s2cMsgs...)
+		if len(s2cMsgs) > 0 {
+			slog.Info("player reconnect: queuing s2c reliable preamble", "playerId", playerId, "count", len(s2cMsgs), "fromSeq", lastS2CSeq+1)
 		}
+	}
 
-		// 2. 补发 S→C reliable 消息（快速重连时）
-		if lastFrame > 0 {
-			s2cMsgs, _ := room.GetS2CReliableSince(playerId, lastS2CSeq)
-			for _, m := range s2cMsgs {
-				sendMsg(conn, m)
-			}
-			if len(s2cMsgs) > 0 {
-				slog.Info("player replayed s2c reliable on reconnect", "playerId", playerId, "count", len(s2cMsgs), "fromSeq", lastS2CSeq+1)
-			}
-		}
-	}()
+	// AddPlayer 启动 delivery loop：preamble → Phase 1（追帧）→ Phase 2（实时）
+	// 追帧和实时帧均由 delivery loop 单 goroutine 串行写 conn，消除竞态。
+	wrappedConn := &statsConn{inner: &simConn{inner: conn, cfg: GlobalNetSim}, pid: playerId}
+	room.AddPlayer(playerId, wrappedConn, replayFrom, preamble...)
 
-	slog.Info("player reconnected", "playerId", playerId, "roomId", room.ID, "serverFrame", currentFrame, "snapshotFrame", snapshotFrame, "serverLastC2SSeq", serverLastC2SSeq)
+	slog.Info("player reconnected", "playerId", playerId, "roomId", room.ID, "serverFrame", currentFrame, "snapshotFrame", snapshotFrame, "serverLastC2SSeq", serverLastC2SSeq, "replayFrom", replayFrom)
 	return nil
 }
 
@@ -775,7 +757,9 @@ func handleJoinRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 		slog.Warn("join room failed: conn not bound (SessionBind missing)", "connId", conn.ID)
 		return codec.NewExtMessage(framesync.ExtCmdJoinRoomRsp, framesync.EncodeJoinRoomError(framesync.JoinRoomNotBound))
 	}
-	bindPlayerToRoom(playerId, conn, room)
+	// 只绑定映射，不启动 delivery loop（需先确定 startFrame + preamble）
+	bindMapsToRoom(playerId, conn, room)
+	wrappedConn := &statsConn{inner: &simConn{inner: conn, cfg: GlobalNetSim}, pid: playerId}
 
 	slog.Info("player joined room", "playerId", playerId, "roomId", room.ID, "online", room.PlayerCount(), "maxPlayers", room.MaxPlayers(), "existingPlayers", existingPlayers)
 
@@ -787,89 +771,61 @@ func handleJoinRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	}
 
 	// P2-3: 先通过 sendMsg 直接发送 JoinRoomRsp（附上原始 Seq），再启动后续 goroutine。
-	// TCP/KCP 保证同一连接的 Send 调用严格 FIFO，后续消息一定在 JoinRoomRsp 之后到达客户端，
-	// 无需 time.Sleep 保序。
 	joinRsp := codec.NewExtMessage(framesync.ExtCmdJoinRoomRsp, framesync.EncodeJoinRoomRsp(playerId, room.ID, existingPlayers))
 	joinRsp.HasSeq = msg.HasSeq
 	joinRsp.Seq = msg.Seq
 	sendMsg(conn, joinRsp)
 
-	// 如果房间已在运行，给迟到者：快照 → StartFrameSync → 补帧 → KV 同步（合并为单 goroutine）
-	if room.IsRunning() || !room.DataStoreEmpty() {
-		isRunning := room.IsRunning()
-		var snapshotFrame uint32
-		var snapshotData []byte
-		var currentFrame uint32
-		if isRunning {
-			snapshotFrame, snapshotData = room.GetSnapshot()
-			currentFrame = room.CurrentFrameNumber()
-		}
+	if room.IsRunning() {
+		// 迟到加入：goroutine 构建 preamble（快照 + StartFrameSync + KV），然后 AddPlayer 启动 delivery loop
+		snapshotFrame, snapshotData := room.GetSnapshot()
+		currentFrame := room.CurrentFrameNumber()
 		hasKV := !room.DataStoreEmpty()
 
-		// H1: 补帧 goroutine 加 30s 超时，防止慢速客户端占用 goroutine 无限期
 		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
+			var preamble []*codec.Message
+			var replayFrom uint32
 
-			// 1. 迟到者补帧（仅运行中才需要）
-			if isRunning {
-				var replayFrom uint32
-				if len(snapshotData) > 0 {
-					snapshotMsg := framesync.EncodeSnapshot(snapshotFrame, snapshotData)
-					sendMsg(conn, codec.NewExtMessage(framesync.ExtCmdRoomSnapshot, snapshotMsg))
-					replayFrom = snapshotFrame
-					slog.Info("late-join (joinRoom): sending snapshot", "playerId", playerId, "snapshotFrame", snapshotFrame, "snapshotBytes", len(snapshotData), "currentFrame", currentFrame)
-				} else {
-					oldestFrame := room.OldestBufferedFrame()
-					if oldestFrame > 0 {
-						replayFrom = oldestFrame - 1
-					}
-					slog.Info("late-join (joinRoom): no snapshot, replay from frames", "playerId", playerId, "oldestFrame", oldestFrame, "replayFrom", replayFrom, "currentFrame", currentFrame, "snapshotFrame", snapshotFrame)
+			if len(snapshotData) > 0 {
+				snapshotMsg := framesync.EncodeSnapshot(snapshotFrame, snapshotData)
+				preamble = append(preamble, codec.NewExtMessage(framesync.ExtCmdRoomSnapshot, snapshotMsg))
+				replayFrom = snapshotFrame
+				slog.Info("late-join (joinRoom): snapshot in preamble", "playerId", playerId, "snapshotFrame", snapshotFrame, "snapshotBytes", len(snapshotData))
+			} else {
+				oldestFrame := room.OldestBufferedFrame()
+				if oldestFrame > 0 {
+					replayFrom = oldestFrame - 1
 				}
-
-				initData := framesync.InitData{
-					FrameRate:           room.FrameRate(),
-					FrameInterval:       1000 / room.FrameRate(),
-					StartTime:           room.StartTime(),
-					SnapshotInterval:    int32(cfg.SnapshotIntervalFrames),
-					QuickReconnectMaxMs: int32(cfg.QuickReconnectMaxMs),
-				}
-				sendMsg(conn, codec.NewCoreMessage(framesync.CmdStartFrameSync, framesync.EncodeInitData(&initData)))
-
-				// P2-2: 分批补帧，防止一次性发送 2400 帧撑爆 TCP 缓冲区
-				// replayFrom=0 时（无快照、oldestFrame=1）也需回放，GetFramesSince(0) 返回所有帧>0
-				if replayFrom < currentFrame {
-					frames := room.GetFramesSince(replayFrom)
-					for i, cf := range frames {
-						select {
-						case <-ctx.Done():
-							slog.Warn("late-join replay timed out", "playerId", playerId, "sentFrames", i, "totalFrames", len(frames))
-							return
-						default:
-						}
-						sendMsg(conn, codec.NewCoreMessage(framesync.CmdPushFrames, cf.EncodedData))
-						if (i+1)%replayBatchSize == 0 && i+1 < len(frames) {
-							time.Sleep(replayBatchDelay)
-						}
-					}
-					slog.Info("late-join player replayed frames", "playerId", playerId, "count", len(frames), "fromFrame", replayFrom+1, "toFrame", currentFrame)
-				}
-
-				slog.Info("late-join player ready", "playerId", playerId, "roomId", room.ID, "frame", currentFrame)
+				slog.Info("late-join (joinRoom): no snapshot, replay from frames", "playerId", playerId, "oldestFrame", oldestFrame, "replayFrom", replayFrom, "currentFrame", currentFrame)
 			}
 
-			// 2. KV 全量同步（无论运行中与否，只要有数据）
+			initData := framesync.InitData{
+				FrameRate:           room.FrameRate(),
+				FrameInterval:       1000 / room.FrameRate(),
+				StartTime:           room.StartTime(),
+				SnapshotInterval:    int32(cfg.SnapshotIntervalFrames),
+				QuickReconnectMaxMs: int32(cfg.QuickReconnectMaxMs),
+			}
+			preamble = append(preamble, codec.NewCoreMessage(framesync.CmdStartFrameSync, framesync.EncodeInitData(&initData)))
+
 			if hasKV {
-				select {
-				case <-ctx.Done():
-					slog.Warn("late-join KV sync timed out", "playerId", playerId)
-					return
-				default:
-				}
+				entries, version := room.GetDataSnapshot()
+				preamble = append(preamble, codec.NewExtMessage(framesync.ExtCmdPushDataSync, framesync.EncodePushDataSync(version, entries)))
+			}
+
+			// AddPlayer 启动 delivery loop：preamble → Phase 1（追帧）→ Phase 2（实时）
+			room.AddPlayer(playerId, wrappedConn, replayFrom, preamble...)
+			slog.Info("late-join player delivery loop started", "playerId", playerId, "roomId", room.ID, "frame", currentFrame, "replayFrom", replayFrom)
+		}()
+	} else {
+		// 房间未运行：立即以 startFrame=0 启动 delivery loop（Phase 1 为空，Phase 2 等待实时帧）
+		room.AddPlayer(playerId, wrappedConn, 0)
+		if !room.DataStoreEmpty() {
+			go func() {
 				entries, version := room.GetDataSnapshot()
 				sendMsg(conn, codec.NewExtMessage(framesync.ExtCmdPushDataSync, framesync.EncodePushDataSync(version, entries)))
-			}
-		}()
+			}()
+		}
 	}
 
 	// JoinRoomRsp 已在上方直接发送，此处返回 nil 避免 dispatch 层重复发送
@@ -947,7 +903,9 @@ func handleMatchRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 		return codec.NewExtMessage(framesync.ExtCmdMatchRoomRsp, framesync.EncodeJoinRoomError(framesync.JoinRoomNotFound))
 	}
 	existingPlayers := room.GetPlayerIds()
-	bindPlayerToRoom(playerId, conn, room)
+	// 只绑定映射，delivery loop 在确定 startFrame + preamble 后启动
+	bindMapsToRoom(playerId, conn, room)
+	wrappedConn := &statsConn{inner: &simConn{inner: conn, cfg: GlobalNetSim}, pid: playerId}
 
 	slog.Info("player matched to room", "playerId", playerId, "roomId", room.ID, "online", room.PlayerCount(), "maxPlayers", room.MaxPlayers(), "matchKey", matchKey)
 
@@ -957,26 +915,27 @@ func handleMatchRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 		broadcastToRoom(room, playerId, codec.NewExtMessage(framesync.ExtCmdPlayerJoined, framesync.EncodePlayerId(playerId)))
 	}
 
-	// 迟到加入（房间已在运行）
 	if room.IsRunning() {
+		// 迟到加入：goroutine 构建 preamble，然后 AddPlayer 启动 delivery loop
 		snapshotFrame, snapshotData := room.GetSnapshot()
 		currentFrame := room.CurrentFrameNumber()
+		hasKV := !room.DataStoreEmpty()
 
 		go func() {
-			time.Sleep(10 * time.Millisecond)
-
+			var preamble []*codec.Message
 			var replayFrom uint32
-			if snapshotData != nil && len(snapshotData) > 0 {
+
+			if len(snapshotData) > 0 {
 				snapshotMsg := framesync.EncodeSnapshot(snapshotFrame, snapshotData)
-				sendMsg(conn, codec.NewExtMessage(framesync.ExtCmdRoomSnapshot, snapshotMsg))
+				preamble = append(preamble, codec.NewExtMessage(framesync.ExtCmdRoomSnapshot, snapshotMsg))
 				replayFrom = snapshotFrame
-				slog.Info("late-join (matchRoom): sending snapshot", "playerId", playerId, "snapshotFrame", snapshotFrame, "snapshotBytes", len(snapshotData), "currentFrame", currentFrame)
+				slog.Info("late-join (matchRoom): snapshot in preamble", "playerId", playerId, "snapshotFrame", snapshotFrame, "snapshotBytes", len(snapshotData))
 			} else {
 				oldestFrame := room.OldestBufferedFrame()
 				if oldestFrame > 0 {
 					replayFrom = oldestFrame - 1
 				}
-				slog.Info("late-join (matchRoom): no snapshot, replay from frames", "playerId", playerId, "oldestFrame", oldestFrame, "replayFrom", replayFrom, "currentFrame", currentFrame, "snapshotFrame", snapshotFrame)
+				slog.Info("late-join (matchRoom): no snapshot, replay from frames", "playerId", playerId, "oldestFrame", oldestFrame, "replayFrom", replayFrom, "currentFrame", currentFrame)
 			}
 
 			initData := framesync.InitData{
@@ -986,28 +945,25 @@ func handleMatchRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 				SnapshotInterval:    int32(cfg.SnapshotIntervalFrames),
 				QuickReconnectMaxMs: int32(cfg.QuickReconnectMaxMs),
 			}
-			sendMsg(conn, codec.NewCoreMessage(framesync.CmdStartFrameSync, framesync.EncodeInitData(&initData)))
+			preamble = append(preamble, codec.NewCoreMessage(framesync.CmdStartFrameSync, framesync.EncodeInitData(&initData)))
 
-			// replayFrom=0 时（无快照、oldestFrame=1）也需回放，GetFramesSince(0) 返回所有帧>0
-			if replayFrom < currentFrame {
-				frames := room.GetFramesSince(replayFrom)
-				for _, cf := range frames {
-					sendMsg(conn, codec.NewCoreMessage(framesync.CmdPushFrames, cf.EncodedData))
-				}
-				slog.Info("late-join (matchRoom): replayed frames", "playerId", playerId, "count", len(frames), "fromFrame", replayFrom+1, "toFrame", currentFrame)
-			} else {
-				slog.Info("late-join (matchRoom): no replay needed", "playerId", playerId, "replayFrom", replayFrom, "currentFrame", currentFrame)
+			if hasKV {
+				entries, version := room.GetDataSnapshot()
+				preamble = append(preamble, codec.NewExtMessage(framesync.ExtCmdPushDataSync, framesync.EncodePushDataSync(version, entries)))
 			}
-		}()
-	}
 
-	// 新加入的玩家自动收到 KV 全量同步
-	if !room.DataStoreEmpty() {
-		go func() {
-			time.Sleep(15 * time.Millisecond)
-			entries, version := room.GetDataSnapshot()
-			sendMsg(conn, codec.NewExtMessage(framesync.ExtCmdPushDataSync, framesync.EncodePushDataSync(version, entries)))
+			room.AddPlayer(playerId, wrappedConn, replayFrom, preamble...)
+			slog.Info("late-join (matchRoom) delivery loop started", "playerId", playerId, "roomId", room.ID, "frame", currentFrame, "replayFrom", replayFrom)
 		}()
+	} else {
+		// 房间未运行：立即以 startFrame=0 启动 delivery loop
+		room.AddPlayer(playerId, wrappedConn, 0)
+		if !room.DataStoreEmpty() {
+			go func() {
+				entries, version := room.GetDataSnapshot()
+				sendMsg(conn, codec.NewExtMessage(framesync.ExtCmdPushDataSync, framesync.EncodePushDataSync(version, entries)))
+			}()
+		}
 	}
 
 	return codec.NewExtMessage(framesync.ExtCmdMatchRoomRsp, framesync.EncodeJoinRoomRsp(playerId, room.ID, existingPlayers))
@@ -1015,13 +971,20 @@ func handleMatchRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 
 // ===================== 工具函数 =====================
 
-func bindPlayerToRoom(playerId int32, conn *transport.Conn, room *framesync.Room) {
+// bindMapsToRoom 只绑定连接→玩家→房间三张映射表 + SetDelegate，不启动 delivery loop。
+// AddPlayer（含 delivery loop 启动）由调用方在确定 startFrame + preamble 后单独调用。
+func bindMapsToRoom(playerId int32, conn *transport.Conn, room *framesync.Room) {
 	connPlayerMap.Store(conn.ID, playerId)
 	playerRoomMap.Store(playerId, room)
 	playerConnMap.Store(playerId, conn)
 	connContextMap.Store(conn.ID, &connContext{playerId: playerId, room: room})
-	room.AddPlayer(playerId, &statsConn{inner: &simConn{inner: conn, cfg: GlobalNetSim}, pid: playerId})
 	room.SetDelegate(globalDelegate) // 幂等：多次 SetDelegate 安全
+}
+
+// bindPlayerToRoom 绑定映射并以 startFrame=0 启动 delivery loop（房间未运行时的快速路径）。
+func bindPlayerToRoom(playerId int32, conn *transport.Conn, room *framesync.Room) {
+	bindMapsToRoom(playerId, conn, room)
+	room.AddPlayer(playerId, &statsConn{inner: &simConn{inner: conn, cfg: GlobalNetSim}, pid: playerId}, 0)
 }
 
 func handleRequestStart(conn *transport.Conn, msg *codec.Message) *codec.Message {

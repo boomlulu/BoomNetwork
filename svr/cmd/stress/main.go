@@ -281,7 +281,7 @@ func (es *embeddedServer) handleConn(conn net.Conn, playerId int32) {
 	writer.Flush()
 
 	pc := &writerConn{writer: writer}
-	room.AddPlayer(playerId, pc)
+	room.AddPlayer(playerId, pc, 0)
 
 	if shouldStart {
 		room.Start()

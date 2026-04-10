@@ -40,12 +40,12 @@ func TestOnlineCount_AddPlayer(t *testing.T) {
 		t.Fatalf("initial count should be 0, got %d", got)
 	}
 
-	room.AddPlayer(1, nopConn{})
+	room.AddPlayer(1, nopConn{}, 0)
 	if got := room.PlayerCount(); got != 1 {
 		t.Errorf("after AddPlayer(1): want 1, got %d", got)
 	}
 
-	room.AddPlayer(2, nopConn{})
+	room.AddPlayer(2, nopConn{}, 0)
 	if got := room.PlayerCount(); got != 2 {
 		t.Errorf("after AddPlayer(2): want 2, got %d", got)
 	}
@@ -54,8 +54,8 @@ func TestOnlineCount_AddPlayer(t *testing.T) {
 // TestOnlineCount_DisconnectPlayer 验证 DisconnectPlayer 递减计数
 func TestOnlineCount_DisconnectPlayer(t *testing.T) {
 	room := newP0Room()
-	room.AddPlayer(1, nopConn{})
-	room.AddPlayer(2, nopConn{})
+	room.AddPlayer(1, nopConn{}, 0)
+	room.AddPlayer(2, nopConn{}, 0)
 
 	room.DisconnectPlayer(1)
 	if got := room.PlayerCount(); got != 1 {
@@ -71,7 +71,7 @@ func TestOnlineCount_DisconnectPlayer(t *testing.T) {
 // TestOnlineCount_DisconnectPlayer_IdempotentOnMissing 对不存在 ID 不 panic、不误减
 func TestOnlineCount_DisconnectPlayer_IdempotentOnMissing(t *testing.T) {
 	room := newP0Room()
-	room.AddPlayer(1, nopConn{})
+	room.AddPlayer(1, nopConn{}, 0)
 
 	room.DisconnectPlayer(99) // 不存在的玩家
 	if got := room.PlayerCount(); got != 1 {
@@ -82,8 +82,8 @@ func TestOnlineCount_DisconnectPlayer_IdempotentOnMissing(t *testing.T) {
 // TestOnlineCount_RemovePlayer_WhenOnline 移除在线玩家，计数 -1
 func TestOnlineCount_RemovePlayer_WhenOnline(t *testing.T) {
 	room := newP0Room()
-	room.AddPlayer(1, nopConn{})
-	room.AddPlayer(2, nopConn{})
+	room.AddPlayer(1, nopConn{}, 0)
+	room.AddPlayer(2, nopConn{}, 0)
 
 	room.RemovePlayer(1)
 	if got := room.PlayerCount(); got != 1 {
@@ -94,8 +94,8 @@ func TestOnlineCount_RemovePlayer_WhenOnline(t *testing.T) {
 // TestOnlineCount_RemovePlayer_WhenDisconnected 移除已断线玩家，onlineCount 不双减
 func TestOnlineCount_RemovePlayer_WhenDisconnected(t *testing.T) {
 	room := newP0Room()
-	room.AddPlayer(1, nopConn{})
-	room.AddPlayer(2, nopConn{})
+	room.AddPlayer(1, nopConn{}, 0)
+	room.AddPlayer(2, nopConn{}, 0)
 
 	room.DisconnectPlayer(1) // count = 1
 	room.RemovePlayer(1)     // 移除已断线，count 仍为 1
@@ -107,8 +107,8 @@ func TestOnlineCount_RemovePlayer_WhenDisconnected(t *testing.T) {
 // TestOnlineCount_Reconnect 断线后重连，计数恢复 +1
 func TestOnlineCount_Reconnect(t *testing.T) {
 	room := newP0Room()
-	room.AddPlayer(1, nopConn{})
-	room.AddPlayer(2, nopConn{})
+	room.AddPlayer(1, nopConn{}, 0)
+	room.AddPlayer(2, nopConn{}, 0)
 
 	room.DisconnectPlayer(1) // count = 1
 	if got := room.PlayerCount(); got != 1 {
@@ -116,7 +116,7 @@ func TestOnlineCount_Reconnect(t *testing.T) {
 	}
 
 	// 重连（AddPlayer 对已断线玩家做的是重连分支）
-	room.AddPlayer(1, nopConn{})
+	room.AddPlayer(1, nopConn{}, 0)
 	if got := room.PlayerCount(); got != 2 {
 		t.Errorf("after reconnect: want 2, got %d", got)
 	}
@@ -126,7 +126,7 @@ func TestOnlineCount_Reconnect(t *testing.T) {
 func TestOnlineCount_AllPlayersDisconnected(t *testing.T) {
 	room := newP0Room()
 	for i := int32(1); i <= 4; i++ {
-		room.AddPlayer(i, nopConn{})
+		room.AddPlayer(i, nopConn{}, 0)
 	}
 	for i := int32(1); i <= 4; i++ {
 		room.DisconnectPlayer(i)
@@ -147,7 +147,7 @@ func TestOnlineCount_Concurrent(t *testing.T) {
 		wg.Add(1)
 		go func(id int32) {
 			defer wg.Done()
-			room.AddPlayer(id, nopConn{})
+			room.AddPlayer(id, nopConn{}, 0)
 		}(i)
 	}
 	wg.Wait()
@@ -295,7 +295,7 @@ func TestPendingBuf_InputDataCorrectAfterSwap(t *testing.T) {
 func BenchmarkPlayerCount(b *testing.B) {
 	room := newP0Room()
 	for i := int32(1); i <= 4; i++ {
-		room.AddPlayer(i, nopConn{})
+		room.AddPlayer(i, nopConn{}, 0)
 	}
 
 	b.ReportAllocs()
@@ -309,7 +309,7 @@ func BenchmarkPlayerCount(b *testing.B) {
 func BenchmarkPlayerCount_Parallel(b *testing.B) {
 	room := newP0Room()
 	for i := int32(1); i <= 4; i++ {
-		room.AddPlayer(i, nopConn{})
+		room.AddPlayer(i, nopConn{}, 0)
 	}
 
 	b.ReportAllocs()

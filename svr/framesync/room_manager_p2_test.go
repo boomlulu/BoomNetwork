@@ -132,8 +132,8 @@ func TestMatchRoom_CreatesNewWhenFull(t *testing.T) {
 	r1 := rm.MatchRoom(2, "ranked")
 
 	// 手动加满玩家
-	r1.AddPlayer(1, nopConn{})
-	r1.AddPlayer(2, nopConn{})
+	r1.AddPlayer(1, nopConn{}, 0)
+	r1.AddPlayer(2, nopConn{}, 0)
 
 	r2 := rm.MatchRoom(2, "ranked")
 	if r2 == nil {
@@ -205,7 +205,7 @@ func BenchmarkMatchRoom_SameKey(b *testing.B) {
 	for i := 0; i < perKey; i++ {
 		r := rm.CreateRoomWithMaxPlayers(4, "hot-key")
 		for j := int32(1); j <= 4; j++ {
-			r.AddPlayer(int32(i*4)+j, nopConn{})
+			r.AddPlayer(int32(i*4)+j, nopConn{}, 0)
 		}
 	}
 

@@ -1,6 +1,7 @@
 package framesync
 
 import (
+	"context"
 	"log/slog"
 	"math"
 	"sync"
@@ -8,6 +9,13 @@ import (
 	"time"
 
 	"github.com/boomlulu/boomnetwork/codec"
+)
+
+// 帧投递相关常量
+const (
+	frameChBuffer    = 64             // 每个玩家投递 channel 的缓冲帧数（~3s @ 20fps）
+	replayBatchSize  = 100            // 补帧批次大小：每发完 N 帧休眠一次
+	replayBatchDelay = 5 * time.Millisecond // 补帧批次间隔
 )
 
 // PlayerConn 玩家连接接口
@@ -57,6 +65,11 @@ type Player struct {
 
 	// C→S 可靠通道
 	lastProcessedC2SSeq uint32 // 已处理（去重）的最新 C→S seq
+
+	// 单写者投递通道（per-player delivery loop 专用）
+	cursor   uint32               // 已投递给该玩家的最新帧号（追帧基准）
+	frameCh  chan *CachedFrame    // 有界 channel，stepFrame 向此投递实时帧
+	cancelFn context.CancelFunc  // 取消 delivery goroutine
 }
 
 // CachedFrame 缓冲的帧数据
@@ -148,9 +161,8 @@ type Room struct {
 	frameRingLen int // 当前有效帧数
 
 	// 复用的编码缓冲区和广播玩家列表
-	frameBuf       []byte
-	broadcastSlice []*Player // stepFrame() 专用，ticker goroutine 独占
-	broadcastBuf   []*Player // broadcast() 专用，非热路径（Start/Stop/Pause），调用方已通过 running 状态机串行化
+	frameBuf     []byte
+	broadcastBuf []*Player // broadcast() 专用，非热路径（Start/Stop/Pause），调用方已通过 running 状态机串行化
 
 	// 快照存储
 	snapshotFrame uint32
@@ -224,9 +236,8 @@ func NewRoomWithConfig(config RoomConfig) *Room {
 		frameRate:        config.FrameRate,
 		frameInterval:    time.Duration(1000/config.FrameRate) * time.Millisecond,
 		frameRing:        make([]CachedFrame, config.FrameBufferSize),
-		frameBuf:         make([]byte, 4096),
-		broadcastSlice:   make([]*Player, 0, 16),
-		broadcastBuf:     make([]*Player, 0, 16),
+		frameBuf:     make([]byte, 4096),
+		broadcastBuf: make([]*Player, 0, 16),
 		pendingInputs:    make([]PlayerInput, 0, 8),    // 双端预分配：swap 后两侧永远有 cap
 		pendingInputsBuf: make([]PlayerInput, 0, 8),
 		pendingEvents:    make([]FrameEvent, 0, 4),     // 同上
@@ -247,8 +258,15 @@ func (r *Room) SetDelegate(d RoomDelegate) {
 
 // removePlayerLocked 唯一的玩家移除出口（必须在持锁状态下调用）
 func (r *Room) removePlayerLocked(id int32) {
-	if p, ok := r.players[id]; ok && p.State == PlayerOnline {
-		atomic.AddInt32(&r.onlineCount, -1)
+	if p, ok := r.players[id]; ok {
+		if p.State == PlayerOnline {
+			atomic.AddInt32(&r.onlineCount, -1)
+		}
+		if p.cancelFn != nil {
+			p.cancelFn()
+			p.cancelFn = nil
+		}
+		p.frameCh = nil
 	}
 	delete(r.players, id)
 	if r.hostPlayerId == id {
@@ -259,22 +277,31 @@ func (r *Room) removePlayerLocked(id int32) {
 	}
 }
 
-// AddPlayer 添加或重连玩家
-func (r *Room) AddPlayer(id int32, conn PlayerConn) {
+// AddPlayer 添加或重连玩家。
+// startFrame：玩家已有帧号（delivery loop 从此处之后开始追帧）。
+// preamble：在帧数据之前先投递的控制消息（快照/StartFrameSync/S2C reliable 等）。
+func (r *Room) AddPlayer(id int32, conn PlayerConn, startFrame uint32, preamble ...*codec.Message) {
 	r.mu.Lock()
 	isReconnect := false
 	var player *Player
 	if existing, ok := r.players[id]; ok {
+		// 取消旧的 delivery loop（重连时）
+		if existing.cancelFn != nil {
+			existing.cancelFn()
+			existing.cancelFn = nil
+		}
+		existing.frameCh = nil
 		if existing.State != PlayerOnline {
 			atomic.AddInt32(&r.onlineCount, 1)
 		}
 		existing.Conn = conn
 		existing.State = PlayerOnline
+		existing.cursor = startFrame
 		isReconnect = true
 		player = existing
 	} else {
 		atomic.AddInt32(&r.onlineCount, 1)
-		player = &Player{ID: id, Conn: conn, State: PlayerOnline, JoinedAt: time.Now()}
+		player = &Player{ID: id, Conn: conn, State: PlayerOnline, JoinedAt: time.Now(), cursor: startFrame}
 		r.players[id] = player
 	}
 	r.hadPlayer.Store(true)
@@ -282,8 +309,18 @@ func (r *Room) AddPlayer(id int32, conn PlayerConn) {
 	if r.hostPlayerId == 0 {
 		r.hostPlayerId = id
 	}
+
+	// 创建有界 channel 和 delivery goroutine
+	player.frameCh = make(chan *CachedFrame, frameChBuffer)
+	ctx, cancel := context.WithCancel(context.Background())
+	player.cancelFn = cancel
+
+	// 锁内捕获 channel 引用：避免 Unlock 后 DisconnectPlayer 并发置 nil 造成竞态
+	newFrameCh := player.frameCh
 	d := r.delegate
 	r.mu.Unlock()
+
+	go r.deliveryLoop(ctx, player, conn, newFrameCh, preamble)
 
 	if d != nil {
 		if isReconnect {
@@ -294,18 +331,31 @@ func (r *Room) AddPlayer(id int32, conn PlayerConn) {
 	}
 }
 
-// DisconnectPlayer 标记断线保留
+// DisconnectPlayer 标记断线保留（幂等：多次调用安全，delegate 只在状态真正变化时触发）
 func (r *Room) DisconnectPlayer(id int32) {
 	r.mu.Lock()
 	var player *Player
 	if p, ok := r.players[id]; ok {
 		if p.State == PlayerOnline {
 			atomic.AddInt32(&r.onlineCount, -1)
+			p.State = PlayerDisconnected
+			p.DisconnectTime = time.Now()
+			p.Conn = nil
+			if p.cancelFn != nil {
+				p.cancelFn()
+				p.cancelFn = nil
+			}
+			p.frameCh = nil // 阻止 stepFrame 继续投递
+			player = p      // 仅首次（Online→Disconnected）才触发 delegate
+		} else {
+			// 已是 Disconnected，仍清理字段（幂等），但不触发 delegate
+			p.Conn = nil
+			if p.cancelFn != nil {
+				p.cancelFn()
+				p.cancelFn = nil
+			}
+			p.frameCh = nil
 		}
-		p.State = PlayerDisconnected
-		p.DisconnectTime = time.Now()
-		p.Conn = nil
-		player = p
 	}
 	if r.hostPlayerId == id && r.running {
 		r.electHost()
@@ -913,17 +963,9 @@ func (r *Room) stepFrame() {
 	events := r.pendingEvents
 	r.pendingEvents = r.pendingEventsBuf[:0]
 	r.pendingEventsBuf = events
-
-	// 收集在线玩家（复用 broadcastSlice）
-	r.broadcastSlice = r.broadcastSlice[:0]
-	for _, p := range r.players {
-		if p.State == PlayerOnline && p.Conn != nil {
-			r.broadcastSlice = append(r.broadcastSlice, p)
-		}
-	}
 	r.mu.Unlock()
 
-	// M1: 编码在锁外执行（inputs/events 已局部持有，broadcastSlice 为 ticker goroutine 独占）
+	// M1: 编码在锁外执行（inputs/events 已局部持有）
 	frame := &FrameData{FrameNumber: frameNum, Inputs: inputs, Events: events}
 	size := FrameDataSize(frame)
 	if cap(r.frameBuf) < size {
@@ -933,7 +975,7 @@ func (r *Room) stepFrame() {
 	}
 	EncodeFrameData(frame, r.frameBuf)
 
-	// 写入环形缓冲区需重新加锁（GetFramesSince 在锁内读取 frameRing）
+	// 写入环形缓冲区，同时向每个玩家的 delivery channel 投递（单写者原则：只有各自的 deliveryLoop 写 conn）
 	r.mu.Lock()
 	slot := &r.frameRing[r.frameRingPos]
 	slot.FrameNumber = frameNum
@@ -947,35 +989,96 @@ func (r *Room) stepFrame() {
 	if r.frameRingLen < len(r.frameRing) {
 		r.frameRingLen++
 	}
-	r.mu.Unlock()
-
-	// 广播在锁外执行，不阻塞其他操作
-	Metrics.FramesPushed.Inc()
-	broadcastStart := time.Now()
-	msg := codec.NewCoreMessage(CmdPushFrames, r.frameBuf[:size])
-
-	// S1: 收集发送失败的连接，锁外异步断开（zombie conn 处理）
-	var failedIDs []int32
-	var failedConns []PlayerConn
-	for _, p := range r.broadcastSlice {
-		if c := p.Conn; c != nil {
-			if err := c.Send(msg); err != nil {
-				slog.Warn("broadcast send error, disconnecting zombie conn", "playerId", p.ID, "err", err)
-				failedIDs = append(failedIDs, p.ID)
-				failedConns = append(failedConns, c)
+	// 非阻塞投递：channel 满时记录慢客户端警告（delivery loop 自行处理 conn 写入）
+	for _, p := range r.players {
+		if p.State == PlayerOnline && p.frameCh != nil {
+			select {
+			case p.frameCh <- slot:
+			default:
+				slog.Warn("delivery channel full, slow client", "playerId", p.ID, "roomId", r.ID)
 				Metrics.BroadcastSendErrors.Inc()
 			}
 		}
 	}
-	Metrics.FrameBroadcastLatency.Observe(time.Since(broadcastStart).Seconds())
+	r.mu.Unlock()
 
-	for i, id := range failedIDs {
-		conn := failedConns[i]
-		id := id
-		go func() {
-			conn.Close()       // 触发客户端 FIN/RST → 快速重连
-			r.DisconnectPlayer(id)
-		}()
+	Metrics.FramesPushed.Inc()
+	Metrics.FrameBroadcastLatency.Observe(0) // channel 投递无阻塞延迟
+}
+
+// deliveryLoop 每个玩家独立的帧投递协程（单写者原则：唯一写 conn 的路径）。
+// 阶段 1：追帧（catch-up） — 从 frameRing 中发送 cursor 之后的历史帧。
+// 阶段 2：实时（live）   — 从 frameCh 中读取 stepFrame 投递的实时帧。
+// 两个阶段串行在同一 goroutine，消除 replay/实时竞态。
+func (r *Room) deliveryLoop(ctx context.Context, p *Player, conn PlayerConn, frameCh chan *CachedFrame, preamble []*codec.Message) {
+	defer r.onDeliveryExit(p, conn)
+
+	// 前导消息（快照 / StartFrameSync / S2C reliable 等），在帧数据前先发
+	for _, msg := range preamble {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		if err := conn.Send(msg); err != nil {
+			return
+		}
+	}
+
+	// 阶段 1：追帧 — 读 frameRing，发送 cursor 之后的所有历史帧
+	currentFrame := r.CurrentFrameNumber()
+	if p.cursor < currentFrame {
+		frames := r.GetFramesSince(p.cursor)
+		for i, cf := range frames {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+			if err := conn.Send(codec.NewCoreMessage(CmdPushFrames, cf.EncodedData)); err != nil {
+				return
+			}
+			p.cursor = cf.FrameNumber
+			if (i+1)%replayBatchSize == 0 && i+1 < len(frames) {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(replayBatchDelay):
+				}
+			}
+		}
+	}
+
+	// 阶段 2：实时 — 从 channel 读取 stepFrame 投递的帧；跳过阶段 1 已发送的帧（防重）
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case cf, ok := <-frameCh:
+			if !ok {
+				return
+			}
+			if cf.FrameNumber <= p.cursor {
+				continue // 阶段 1 已发，跳过
+			}
+			if err := conn.Send(codec.NewCoreMessage(CmdPushFrames, cf.EncodedData)); err != nil {
+				return
+			}
+			p.cursor = cf.FrameNumber
+		}
+	}
+}
+
+// onDeliveryExit 在 deliveryLoop 退出时调用。
+// 若玩家仍在线（ctx 非正常取消，即 conn 发送失败），关闭 conn 并标记断线。
+// DisconnectPlayer 幂等：transport 的 onClientDisconnect 回调也可能调用它，无副作用。
+func (r *Room) onDeliveryExit(p *Player, conn PlayerConn) {
+	r.mu.Lock()
+	isOnline := p.State == PlayerOnline
+	r.mu.Unlock()
+	if isOnline && conn != nil {
+		conn.Close() //nolint:errcheck — 触发 transport.OnDisconnect → onClientDisconnect
+		r.DisconnectPlayer(p.ID)
 	}
 }
 

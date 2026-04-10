@@ -119,8 +119,8 @@ func TestGetRoomInfo_CorrectValues(t *testing.T) {
 	room.ID = 42
 	room.MatchKey = "test-key"
 
-	room.AddPlayer(1, nopConn{})
-	room.AddPlayer(2, nopConn{})
+	room.AddPlayer(1, nopConn{}, 0)
+	room.AddPlayer(2, nopConn{}, 0)
 
 	info := room.GetRoomInfo()
 
@@ -159,7 +159,7 @@ func TestGetRoomInfo_ZeroAllocs(t *testing.T) {
 		FrameBufferSize: 100,
 		MaxPlayers:      4,
 	})
-	room.AddPlayer(1, nopConn{})
+	room.AddPlayer(1, nopConn{}, 0)
 
 	allocs := testing.AllocsPerRun(20, func() {
 		_ = room.GetRoomInfo()
@@ -200,7 +200,7 @@ func BenchmarkGetRoomInfo(b *testing.B) {
 		MaxPlayers:      4,
 	})
 	for i := int32(1); i <= 4; i++ {
-		room.AddPlayer(i, nopConn{})
+		room.AddPlayer(i, nopConn{}, 0)
 	}
 
 	b.ReportAllocs()
@@ -218,7 +218,7 @@ func BenchmarkGetRoomInfo_Parallel(b *testing.B) {
 		MaxPlayers:      4,
 	})
 	for i := int32(1); i <= 4; i++ {
-		room.AddPlayer(i, nopConn{})
+		room.AddPlayer(i, nopConn{}, 0)
 	}
 
 	b.ReportAllocs()

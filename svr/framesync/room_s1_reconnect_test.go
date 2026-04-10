@@ -55,7 +55,7 @@ func TestBroadcastSendError_BugVerification_ZombieConnStaysOnline(t *testing.T) 
 	})
 
 	fc := &failConn{}
-	room.AddPlayer(1, fc)
+	room.AddPlayer(1, fc, 0)
 
 	// 设置 running = true，使 stepFrame 正常运行
 	room.mu.Lock()
@@ -69,12 +69,13 @@ func TestBroadcastSendError_BugVerification_ZombieConnStaysOnline(t *testing.T) 
 	deadline := time.Now().Add(200 * time.Millisecond)
 	for time.Now().Before(deadline) {
 		room.mu.Lock()
-		p, ok := room.players[1]
-		room.mu.Unlock()
-		if !ok {
-			break
+		p, found := room.players[1]
+		state := PlayerDisconnected // default: removed is fine
+		if found {
+			state = p.State
 		}
-		if p.State == PlayerDisconnected {
+		room.mu.Unlock()
+		if !found || state == PlayerDisconnected {
 			break
 		}
 		time.Sleep(5 * time.Millisecond)
@@ -82,6 +83,10 @@ func TestBroadcastSendError_BugVerification_ZombieConnStaysOnline(t *testing.T) 
 
 	room.mu.Lock()
 	p, ok := room.players[1]
+	var finalState PlayerState
+	if ok {
+		finalState = p.State
+	}
 	room.mu.Unlock()
 
 	if !ok {
@@ -90,7 +95,7 @@ func TestBroadcastSendError_BugVerification_ZombieConnStaysOnline(t *testing.T) 
 	}
 
 	// 修复后: Player 必须是 Disconnected（不再 Online）
-	if p.State == PlayerOnline {
+	if finalState == PlayerOnline {
 		t.Errorf("[BugVerification] after Send failure, player still Online — S1 fix not working")
 	}
 }
@@ -105,7 +110,7 @@ func TestBroadcastSendError_FixVerification_ZombieConnDisconnected(t *testing.T)
 	})
 
 	fc := &failConn{}
-	room.AddPlayer(1, fc)
+	room.AddPlayer(1, fc, 0)
 
 	// stepFrame 需要 running=true 才会推帧
 	room.mu.Lock()

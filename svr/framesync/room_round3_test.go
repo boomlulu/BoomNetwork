@@ -226,9 +226,9 @@ func TestAppendPlayerIds_PreAllocated(t *testing.T) {
 		FrameBufferSize: 100,
 	})
 
-	room.AddPlayer(1, nopConn{})
-	room.AddPlayer(2, nopConn{})
-	room.AddPlayer(3, nopConn{})
+	room.AddPlayer(1, nopConn{}, 0)
+	room.AddPlayer(2, nopConn{}, 0)
+	room.AddPlayer(3, nopConn{}, 0)
 	room.DisconnectPlayer(2) // 断线但仍保留在 players map
 
 	// 使用预分配切片
