@@ -205,3 +205,57 @@ func BenchmarkRateLimiter_Allow_Parallel(b *testing.B) {
 		}
 	})
 }
+
+func TestIPRateLimiterCleanup(t *testing.T) {
+	l := NewIPRateLimiter(100)
+	maxAge := 50 * time.Millisecond
+
+	// Create 100 different IP entries
+	for i := 0; i < 100; i++ {
+		ip := fmt.Sprintf("10.0.%d.%d:1234", i/256, i%256)
+		l.Allow(fakeAddr{ip})
+	}
+
+	// Wait for entries to expire
+	time.Sleep(maxAge + 20*time.Millisecond)
+
+	// Cleanup should remove all 100 entries
+	deleted := l.Cleanup(maxAge)
+	if deleted != 100 {
+		t.Errorf("expected 100 deleted, got %d", deleted)
+	}
+
+	// After cleanup, Allow creates a fresh entry (count resets to 1, not cumulative)
+	allowed := l.Allow(fakeAddr{"10.0.0.0:1234"})
+	if !allowed {
+		t.Error("after cleanup, first Allow should succeed (fresh entry)")
+	}
+}
+
+func TestIPRateLimiterCleanupKeepsActive(t *testing.T) {
+	l := NewIPRateLimiter(1000)
+	maxAge := 80 * time.Millisecond
+
+	// Create 100 entries
+	for i := 0; i < 100; i++ {
+		ip := fmt.Sprintf("192.168.%d.%d:9000", i/256, i%256)
+		l.Allow(fakeAddr{ip})
+	}
+
+	// Wait half the maxAge
+	time.Sleep(maxAge / 2)
+
+	// Refresh 10 entries (update their lastSeen)
+	for i := 0; i < 10; i++ {
+		ip := fmt.Sprintf("192.168.%d.%d:9000", i/256, i%256)
+		l.Allow(fakeAddr{ip})
+	}
+
+	// Wait until original entries expire (but refreshed ones are still young)
+	time.Sleep(maxAge/2 + 20*time.Millisecond)
+
+	deleted := l.Cleanup(maxAge)
+	if deleted != 90 {
+		t.Errorf("expected 90 deleted (100-10 active), got %d", deleted)
+	}
+}

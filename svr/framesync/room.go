@@ -297,7 +297,8 @@ func (r *Room) AddPlayer(id int32, conn PlayerConn, replaying bool, startFrame u
 			existing.cancelFn = nil
 		}
 		existing.frameCh = nil
-		if existing.State != PlayerOnline {
+		if existing.State == PlayerDisconnected {
+			// Disconnected → 重连，才需要恢复计数；Online 和 Replaying 已计入，不重复加
 			atomic.AddInt32(&r.onlineCount, 1)
 		}
 		existing.Conn = conn
@@ -351,7 +352,8 @@ func (r *Room) DisconnectPlayer(id int32) {
 	r.mu.Lock()
 	var player *Player
 	if p, ok := r.players[id]; ok {
-		if p.State == PlayerOnline {
+		if p.State == PlayerOnline || p.State == PlayerReplaying {
+			// Online 或 Replaying → 断线，递减计数并触发 delegate
 			atomic.AddInt32(&r.onlineCount, -1)
 			p.State = PlayerDisconnected
 			p.DisconnectTime = time.Now()
@@ -360,8 +362,8 @@ func (r *Room) DisconnectPlayer(id int32) {
 				p.cancelFn()
 				p.cancelFn = nil
 			}
-			p.frameCh = nil // 阻止 stepFrame 继续投递
-			player = p      // 仅首次（Online→Disconnected）才触发 delegate
+			p.frameCh = nil // 阻止 stepFrame / deliveryLoop 继续投递
+			player = p      // 触发 OnPlayerDisconnected delegate
 		} else {
 			// 已是 Disconnected，仍清理字段（幂等），但不触发 delegate
 			p.Conn = nil

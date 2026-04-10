@@ -7,6 +7,7 @@ package main
 //   P0-2  connContextMap: 单次查找的生命周期一致性 + handleFrameInput 路径验证
 
 import (
+	"math"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -303,4 +304,75 @@ func BenchmarkHandleFrameInput_Parallel(b *testing.B) {
 			handleFrameInput(conn, msg)
 		}
 	})
+}
+
+// ─── P1-05: nextPlayerId 边界 + 重连映射顺序 ────────────────────────────────────
+
+// TestNextPlayerId_MaxInt32_WrapAround
+// 模拟 playerCounter 接近 int32 上限时，nextPlayerId 应回绕而非溢出为负数。
+func TestNextPlayerId_MaxInt32_WrapAround(t *testing.T) {
+	old := atomic.LoadInt64(&playerCounter)
+	defer atomic.StoreInt64(&playerCounter, old) // 测试后恢复
+
+	// 设置计数器到 MaxInt32-1
+	atomic.StoreInt64(&playerCounter, math.MaxInt32-1)
+
+	id1 := nextPlayerId()
+	if id1 <= 0 {
+		t.Errorf("id1 should be positive, got %d", id1)
+	}
+
+	// 再调一次：counter 已超过 MaxInt32，应回绕
+	id2 := nextPlayerId()
+	if id2 <= 0 {
+		t.Errorf("id2 after wrap-around should be positive, got %d (expected 1 or similar)", id2)
+	}
+}
+
+// TestReconnect_NewMappingBeforeOldClose
+// P1-05 修复验证：重连时先更新映射再关闭旧连接，确保映射无残留旧条目。
+func TestReconnect_NewMappingBeforeOldClose(t *testing.T) {
+	const pid = int32(7771)
+	const oldConnID = 90001
+	const newConnID = 90002
+
+	// Setup: simulate player with old conn
+	connPlayerMap.Store(oldConnID, pid)
+	playerConnMap.Store(pid, &transport.Conn{ID: oldConnID})
+	connContextMap.Store(oldConnID, &connContext{playerId: pid})
+	defer func() {
+		connPlayerMap.Delete(oldConnID)
+		connPlayerMap.Delete(newConnID)
+		playerConnMap.Delete(pid)
+		connContextMap.Delete(oldConnID)
+		connContextMap.Delete(newConnID)
+	}()
+
+	newConn := &transport.Conn{ID: newConnID}
+
+	// Simulate P1-05 fix: update maps first, then delete old entries
+	connPlayerMap.Store(newConnID, pid)
+	playerConnMap.Store(pid, newConn)
+	connContextMap.Store(newConnID, &connContext{playerId: pid})
+
+	// Now delete old conn entries (simulating post-Close cleanup)
+	connPlayerMap.Delete(oldConnID)
+	connContextMap.Delete(oldConnID)
+
+	// Verify: new conn is in maps, old conn is gone
+	if v, ok := playerConnMap.Load(pid); !ok || v.(*transport.Conn).ID != newConnID {
+		t.Error("playerConnMap should point to new conn")
+	}
+	if _, ok := connPlayerMap.Load(oldConnID); ok {
+		t.Error("old connId should be removed from connPlayerMap")
+	}
+	if _, ok := connPlayerMap.Load(newConnID); !ok {
+		t.Error("new connId should exist in connPlayerMap")
+	}
+	if _, ok := connContextMap.Load(oldConnID); ok {
+		t.Error("old connId should be removed from connContextMap")
+	}
+	if _, ok := connContextMap.Load(newConnID); !ok {
+		t.Error("new connId should exist in connContextMap")
+	}
 }

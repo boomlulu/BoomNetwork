@@ -367,3 +367,120 @@ func BenchmarkStepFrame_NoInput(b *testing.B) {
 		room.stepFrame()
 	}
 }
+
+// ─── PlayerReplaying 状态测试 ─────────────────────────────────────────────────
+
+// TestPlayerReplayingState 覆盖 PlayerReplaying 状态机的全部转换路径：
+//  1. AddPlayer(replaying=true) → State == PlayerReplaying
+//  2. PlayerReplaying 不出现在 ForEachOnlinePlayer 的广播列表中
+//  3. SetPlayerLive → State == PlayerOnline，出现在广播列表
+//  4. SetPlayerLive 对不存在的 ID 是 no-op（不 panic）
+//  5. SetPlayerLive 对已 Online 玩家是 no-op（保持 Online）
+func TestPlayerReplayingState(t *testing.T) {
+	room := newP0Room()
+	setRunning(room, true)
+
+	// 1. AddPlayer(replaying=true) → PlayerReplaying
+	room.AddPlayer(1, nopConn{}, true, 0)
+	room.mu.Lock()
+	p1 := room.players[1]
+	if p1 == nil {
+		room.mu.Unlock()
+		t.Fatal("player 1 not found after AddPlayer")
+	}
+	if p1.State != PlayerReplaying {
+		room.mu.Unlock()
+		t.Errorf("after AddPlayer(replaying=true): want PlayerReplaying, got %v", p1.State)
+	}
+	room.mu.Unlock()
+
+	// 2. PlayerReplaying 不出现在 ForEachOnlinePlayer 广播列表
+	var broadcastIds []int32
+	room.ForEachOnlinePlayer(func(id int32, conn PlayerConn) {
+		broadcastIds = append(broadcastIds, id)
+	})
+	for _, id := range broadcastIds {
+		if id == 1 {
+			t.Errorf("PlayerReplaying player (id=1) must NOT appear in ForEachOnlinePlayer, but it did")
+		}
+	}
+
+	// 3. SetPlayerLive → PlayerOnline，现在出现在广播列表
+	room.SetPlayerLive(1)
+	room.mu.Lock()
+	if p1.State != PlayerOnline {
+		room.mu.Unlock()
+		t.Errorf("after SetPlayerLive: want PlayerOnline, got %v", p1.State)
+	}
+	room.mu.Unlock()
+
+	broadcastIds = nil
+	room.ForEachOnlinePlayer(func(id int32, conn PlayerConn) {
+		broadcastIds = append(broadcastIds, id)
+	})
+	found := false
+	for _, id := range broadcastIds {
+		if id == 1 {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("after SetPlayerLive, player 1 should appear in ForEachOnlinePlayer")
+	}
+
+	// 4. SetPlayerLive 对不存在 ID 是 no-op（不 panic）
+	room.SetPlayerLive(99)
+
+	// 5. SetPlayerLive 对已 Online 玩家是 no-op（保持 Online）
+	room.SetPlayerLive(1)
+	room.mu.Lock()
+	if p1.State != PlayerOnline {
+		room.mu.Unlock()
+		t.Errorf("SetPlayerLive on already-Online player changed state: want PlayerOnline, got %v", p1.State)
+	}
+	room.mu.Unlock()
+}
+
+// TestReplayingOnlineCount 覆盖 PlayerReplaying 对 onlineCount 的影响：
+//  1. AddPlayer(replaying=true) → onlineCount +1（Replaying 计入在线）
+//  2. SetPlayerLive 不改变 onlineCount（已计入，不重复计）
+//  3. DisconnectPlayer 对 PlayerReplaying 玩家 → onlineCount -1（与 Online 行为一致）
+//  4. 补帧中断重连流程：Replaying→Disconnect→AddPlayer(replaying=true) 计数恢复正确
+func TestReplayingOnlineCount(t *testing.T) {
+	room := newP0Room()
+
+	// 1. AddPlayer(replaying=true) → onlineCount +1
+	if got := room.PlayerCount(); got != 0 {
+		t.Fatalf("initial count: want 0, got %d", got)
+	}
+	room.AddPlayer(1, nopConn{}, true, 0)
+	if got := room.PlayerCount(); got != 1 {
+		t.Errorf("after AddPlayer(replaying=true): want 1, got %d", got)
+	}
+
+	// 2. SetPlayerLive 不改变 onlineCount（已计入，不重复计）
+	room.SetPlayerLive(1)
+	if got := room.PlayerCount(); got != 1 {
+		t.Errorf("after SetPlayerLive: want 1, got %d", got)
+	}
+
+	// 新玩家 id=2 处于 Replaying 状态，用于后续断线测试
+	room.AddPlayer(2, nopConn{}, true, 0)
+	if got := room.PlayerCount(); got != 2 {
+		t.Fatalf("after AddPlayer(2, replaying=true): want 2, got %d", got)
+	}
+
+	// 3. DisconnectPlayer 对 PlayerReplaying 应递减 onlineCount（修复：与 Online 行为一致）
+	room.DisconnectPlayer(2)
+	if got := room.PlayerCount(); got != 1 {
+		t.Errorf("DisconnectPlayer on PlayerReplaying must decrement count: want 1, got %d", got)
+	}
+
+	// 4. Replaying→Disconnect→重连(replaying=true)：
+	// Disconnect 将 State 置为 PlayerDisconnected，AddPlayer 检测 Disconnected 状态 → +1
+	// 计数恢复到 2，不出现双重计数。
+	room.AddPlayer(2, nopConn{}, true, 0)
+	if got := room.PlayerCount(); got != 2 {
+		t.Errorf("after Replaying→Disconnect→Reconnect(replaying=true): want 2, got %d", got)
+	}
+}
