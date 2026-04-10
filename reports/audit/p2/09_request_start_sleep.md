@@ -1,7 +1,7 @@
 # P2-09: handleRequestStart 用 sleep 保证时序不可靠
 
 **严重程度**: P2 — 中风险
-**状态**: 待执行
+**状态**: ✅ 已完成（2026-04-10）
 **影响**: 高负载下客户端可能在 RequestStart 响应之前收到 StartFrameSync 广播
 
 ---

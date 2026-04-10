@@ -4,6 +4,14 @@
 **Status**: Proposed
 **前置文档**: desync_duplicate_frame_4003_v2.md
 
+> **实现状态**（2026-04-10）: 本文档为设计提案。实际实现与提案有以下差异：
+> 1. `PlayerReplaying` 状态**保留**（提案称不再需要，但实现中仍使用以支持 deliveryLoop Phase1→Phase2 转换）
+> 2. `SetPlayerLive()` **保留**，由 deliveryLoop 内部在 Phase1 完成时自动调用
+> 3. `AddPlayer` 增加 `replaying bool` 参数（提案未包含）
+> 4. `startFrame` 类型为 `uint32`，非提案中的 `int64`
+> 5. `frameCh` 元素类型为 `*CachedFrame`，非提案中的 `*FrameData`
+> 6. channel teardown 使用 `cancelFn()` + `frameCh = nil`，非 `close(frameCh)`
+
 ---
 
 ## 1. 问题本质

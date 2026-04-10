@@ -7,7 +7,7 @@ namespace BoomNetwork
         public const string Version = "0.1.0";
 
         /// <summary>每次 git commit 自动 +1，用于区分测试版本。</summary>
-        public const int Number = 17;
+        public const int Number = 18;
 
         public static string Label => $"v{Version} #{Number}";
     }
