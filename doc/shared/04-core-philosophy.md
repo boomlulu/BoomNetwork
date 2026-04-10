@@ -159,6 +159,7 @@ ICorrectionStrategy (修正策略)        ├ TargetAuthority
    - **实体状态（SendAuthorityEntityStates）**：只在位置/旋转真正变化时才发送，站着不动就不发
    - **心跳**：由框架底层按固定间隔自动发送，业务层不需要额外发包来保活
    - **所有 Sample 和 Demo 必须遵守此原则**，不允许出现"每帧无条件 SendInput"的写法
+6. **每条连接只有一个写者（Single Writer per Connection）** — 每个玩家的网络连接只允许一个 goroutine 负责写入；Replay（追帧）和实时帧是同一投递循环的两个阶段，而非两条独立路径。竞态安全由架构拓扑保证，不依赖调用方的时序约定。每新增一条写入路径，复杂度是 O(n²)——这道红线让它永远是 O(1)。
 
 ---
 
