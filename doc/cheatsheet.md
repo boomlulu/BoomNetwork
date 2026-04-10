@@ -108,6 +108,8 @@ foreach (var inp in frame.Inputs)
 3. **Local-First OnFrame** — skip own input in OnFrame
 4. **Silent When Idle** — no input = no SendInput call
 5. **Deterministic OnFrame** — all shared state changes inside OnFrame only
+6. **Single Writer per Connection** — 每个连接只能有一个 goroutine 负责写入。deliveryLoop 是唯一的发送路径，消灭所有并发写 conn 的竞态。
+7. **No Band-Aid Fixes** — 用 `time.Sleep` / 加锁延迟 / 重试循环规避竞态是补丁，不是修复。所有时序问题必须通过正确的架构保证（如 PlayerReplaying 状态、deliveryLoop 单写者、GetState 原子读）来解决。
 
 ## Server Config (key params)
 
