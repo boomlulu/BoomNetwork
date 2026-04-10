@@ -36,6 +36,7 @@ namespace BoomNetwork.Core
         // --- FrameSync 4xxx ---
         SessionBindTimeout  = 4001,
         SessionBindFailed   = 4002,
+        DuplicateFrame      = 4003, // 收到重复帧号，框架不变性被破坏
 
         // --- Room 5xxx ---
         JoinRoomFailed      = 5001,

@@ -800,9 +800,20 @@ namespace BoomNetwork.Client.FrameSync
             if (!_frameSyncStarted || msg.DataLength == 0) return;
             var frame = FrameDataCodec.Decode(msg.DataSpan);
 
-            // Dedup: live feed and replay can both deliver the same frame during late-join/reconnect.
-            // Always discard frames at or before the last processed frame number.
-            if (frame.FrameNumber <= LastFrameNumber) return;
+            // Invariant: frame numbers must strictly increase.
+            // A duplicate/out-of-order frame means the server sent the same frame twice (live feed
+            // racing with replay during late-join/reconnect). This is a framework-level invariant
+            // violation — stop frame sync immediately and surface the error.
+            if (frame.FrameNumber <= LastFrameNumber)
+            {
+                var err = new NetworkError(ErrorCode.DuplicateFrame,
+                    $"Duplicate frame received: frame={frame.FrameNumber} lastFrame={LastFrameNumber}. " +
+                    "Live feed and replay delivered the same frame simultaneously.");
+                Log($"[FATAL] {err}");
+                OnError?.Invoke(err);
+                HandleStopFrameSync();
+                return;
+            }
 
             LastFrameNumber = frame.FrameNumber;
             _connMgr?.UpdateFrameNumber(frame.FrameNumber);

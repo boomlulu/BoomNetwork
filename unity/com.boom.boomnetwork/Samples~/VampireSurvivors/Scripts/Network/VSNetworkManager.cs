@@ -81,6 +81,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             c.OnFrameSyncStart += OnFrameSyncStart;
             c.OnFrameSyncStop  += OnFrameSyncStop;
             c.OnFrame          += OnFrame;
+            c.OnError          += OnNetworkError;
             c.OnJoinedRoom     += OnJoinedRoom;
             c.OnPlayerJoinedFrame += OnPlayerJoined;
             c.OnPlayerLeftFrame   += OnPlayerLeft;
@@ -234,6 +235,14 @@ namespace BoomNetwork.Samples.VampireSurvivors
         {
             _syncing = false;
             _ui.SetVisible(false);
+        }
+
+        void OnNetworkError(BoomNetwork.Core.NetworkError err)
+        {
+            VSLog.Error(VSLog.Channel.Desync, $"[NetworkError] {err}");
+#if UNITY_EDITOR
+            UnityEditor.EditorApplication.isPaused = true;
+#endif
         }
 
         void OnJoinedRoom(int roomId, int[] existingPlayerIds)
