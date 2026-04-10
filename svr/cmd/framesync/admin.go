@@ -150,8 +150,8 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	uptime := time.Since(serverStartTime).Truncate(time.Second).String()
 
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"status":"ok","rooms":%d,"players":%d,"uptime":%q,"buildHash":%q,"buildTime":%q,"goVersion":%q}`,
-		rooms, players, uptime, BuildHash, BuildTime, runtime.Version())
+	fmt.Fprintf(w, `{"status":"ok","rooms":%d,"players":%d,"uptime":%q}`,
+		rooms, players, uptime)
 }
 
 // ===================== GET /stats =====================
@@ -484,7 +484,6 @@ func handleAdminCreateRoom(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusConflict, "max rooms reached")
 		return
 	}
-	room.MatchKey = matchKey
 
 	slog.Info("admin created room", "room_id", room.ID, "max_players", maxPlayers, "match_key", matchKey)
 
@@ -495,12 +494,12 @@ func handleAdminCreateRoom(w http.ResponseWriter, r *http.Request) {
 // ===================== Helpers =====================
 
 func countOnlinePlayers() int {
-	var count int64
+	count := 0
 	connPlayerMap.Range(func(_, _ any) bool {
-		atomic.AddInt64(&count, 1)
+		count++
 		return true
 	})
-	return int(count)
+	return count
 }
 
 // ===================== GET /players/{pid} (G5) =====================

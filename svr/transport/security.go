@@ -110,6 +110,7 @@ type ipRate struct {
 	mu        sync.Mutex
 	count     int
 	lastReset time.Time
+	lastSeen  time.Time
 }
 
 // allow 返回 false 表示该 IP 在本秒内已超出限制
@@ -122,6 +123,7 @@ func (r *ipRate) allow(maxPerSec int) bool {
 		r.lastReset = now
 	}
 	r.count++
+	r.lastSeen = now
 	return r.count <= maxPerSec
 }
 
@@ -134,6 +136,25 @@ type IPRateLimiter struct {
 // NewIPRateLimiter 创建 IP 速率限制器，maxPerSec=0 表示不限制
 func NewIPRateLimiter(maxPerSec int) *IPRateLimiter {
 	return &IPRateLimiter{maxPerSec: maxPerSec}
+}
+
+// Cleanup 删除超过 maxAge 未活跃的 IP 条目，防止内存无限增长。
+// 返回删除的条目数。
+func (l *IPRateLimiter) Cleanup(maxAge time.Duration) int {
+	now := time.Now()
+	deleted := 0
+	l.m.Range(func(key, value any) bool {
+		rate := value.(*ipRate)
+		rate.mu.Lock()
+		age := now.Sub(rate.lastSeen)
+		rate.mu.Unlock()
+		if age > maxAge {
+			l.m.Delete(key)
+			deleted++
+		}
+		return true
+	})
+	return deleted
 }
 
 // Allow 检查该远端地址（host:port 格式）是否允许建立新连接

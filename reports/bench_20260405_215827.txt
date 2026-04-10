@@ -1,0 +1,31 @@
+==========================================
+  BoomNetwork Performance Report
+  2026-04-05 21:58:27
+==========================================
+
+[ Go Benchmark ]
+goos: darwin
+goarch: arm64
+cpu: Apple M3 Pro
+BenchmarkEncode_Small-11             	53962082	        22.16 ns/op	      24 B/op	       1 allocs/op
+BenchmarkEncode_Large-11             	40057916	        29.95 ns/op	      24 B/op	       1 allocs/op
+BenchmarkEncodeTo_Small-11           	341726515	         3.435 ns/op	       0 B/op	       0 allocs/op
+BenchmarkDecode_Small-11             	77830056	        15.25 ns/op	      48 B/op	       1 allocs/op
+BenchmarkDecode_Large-11             	81621314	        14.98 ns/op	      48 B/op	       1 allocs/op
+BenchmarkFrameReader_Small-11        	    3318	    360232 ns/op	  489414 B/op	   10005 allocs/op
+BenchmarkFrameWriter_Small-11        	   14254	     83977 ns/op	    9353 B/op	       3 allocs/op
+BenchmarkDecode_Allocating-11        	79262415	        15.22 ns/op	      48 B/op	       1 allocs/op
+BenchmarkDecodePooled_Reuse-11       	136400100	         8.806 ns/op	       0 B/op	       0 allocs/op
+BenchmarkDecodePooled_Parallel-11    	665996659	         1.668 ns/op	       0 B/op	       0 allocs/op
+
+[ C# Benchmark ]
+| Method              | Mean      | Error     | StdDev    | Gen0   | Gen1   | Allocated |
+|-------------------- |----------:|----------:|----------:|-------:|-------:|----------:|
+| Encode_Small        |  3.707 ns | 0.0106 ns | 0.0094 ns |      - |      - |         - |
+| Encode_Large        | 18.786 ns | 0.3289 ns | 0.2746 ns |      - |      - |         - |
+| Decode_Small        |  6.573 ns | 0.0128 ns | 0.0100 ns | 0.0086 | 0.0000 |      72 B |
+| Decode_Large        | 51.084 ns | 0.4324 ns | 0.3833 ns | 0.1253 | 0.0073 |    1048 B |
+| Decode_Small_Pooled | 11.741 ns | 0.0662 ns | 0.0553 ns |      - |      - |         - |
+| Method                  | Mean     | Error     | StdDev    | Allocated |
+|------------------------ |---------:|----------:|----------:|----------:|
+| Feed_100_StickyMessages | 3.829 us | 0.0183 us | 0.0162 us |         - |

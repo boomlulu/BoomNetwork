@@ -396,8 +396,6 @@ func reloadConfig() {
 			logLevel.Set(lvl)
 		}
 	}
-	codec.MaxMessageSize = newCfg.MaxMessageSize
-
 	slog.Info("config reloaded", "path", *configFile)
 }
 

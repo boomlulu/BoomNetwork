@@ -117,7 +117,16 @@ func PutMessage(m *Message) {
 	msgPool.Put(m)
 }
 
-// Encode 编码 Message
+// Encode 编码 Message 到字节切片（从 bufPool 取出的复用缓冲区）。
+//
+// 重要：返回的 buffer 必须通过 PutBuf() 归还。
+// 归还后不得再访问 buffer 或其子切片，否则会导致数据竞态。
+//
+// 典型用法：
+//
+//	buf := Encode(msg)
+//	_, err := conn.Write(buf)
+//	PutBuf(buf)
 func Encode(msg *Message) []byte {
 	totalLen := EncodedSize(msg)
 	bufPtr := bufPool.Get().(*[]byte)

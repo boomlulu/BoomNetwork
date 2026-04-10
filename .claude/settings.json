@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Edit(~/.claude/skills/bn-desync-analyze/**)",
+      "Edit(~/.claude/skills/bn-desync/**)",
+      "Edit(~/.claude/skills/bn-svr/**)"
+    ],
+    "additionalDirectories": [
+      "/Users/boom/.claude/skills"
+    ]
+  }
+}
