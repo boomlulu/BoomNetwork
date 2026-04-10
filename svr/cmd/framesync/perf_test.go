@@ -51,7 +51,7 @@ func TestNextPlayerId_Concurrent_NoDuplicates(t *testing.T) {
 	const n = 1000
 
 	// 记录起始值（不重置全局计数器，避免与其他测试竞争）
-	before := atomic.LoadInt32(&playerCounter)
+	before := atomic.LoadInt64(&playerCounter)
 
 	ids := make([]int32, n)
 	var wg sync.WaitGroup

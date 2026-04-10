@@ -39,7 +39,7 @@ func TestBroadcastBuf_PreAllocated(t *testing.T) {
 func TestBroadcastBuf_CapPreservedAfterBroadcast(t *testing.T) {
 	room := newP1Room()
 	for i := int32(1); i <= 4; i++ {
-		room.AddPlayer(i, nopConn{}, 0)
+		room.AddPlayer(i, nopConn{}, false, 0)
 	}
 
 	// 直接调用 broadcast 需要有真正的 PlayerConn.Send，
@@ -73,9 +73,9 @@ func TestBroadcastBuf_CapPreservedAfterBroadcast(t *testing.T) {
 // TestForEachOnlinePlayer_CorrectPlayers 验证遍历结果与实际在线玩家一致
 func TestForEachOnlinePlayer_CorrectPlayers(t *testing.T) {
 	room := newP1Room()
-	room.AddPlayer(1, nopConn{}, 0)
-	room.AddPlayer(2, nopConn{}, 0)
-	room.AddPlayer(3, nopConn{}, 0)
+	room.AddPlayer(1, nopConn{}, false, 0)
+	room.AddPlayer(2, nopConn{}, false, 0)
+	room.AddPlayer(3, nopConn{}, false, 0)
 	room.DisconnectPlayer(2) // 2 离线
 
 	var seen []int32
@@ -109,7 +109,7 @@ func TestForEachOnlinePlayer_EmptyRoom(t *testing.T) {
 func TestForEachOnlinePlayer_ZeroAllocsAfterWarmup(t *testing.T) {
 	room := newP1Room()
 	for i := int32(1); i <= 4; i++ {
-		room.AddPlayer(i, nopConn{}, 0)
+		room.AddPlayer(i, nopConn{}, false, 0)
 	}
 
 	// warmup: 确保 Pool 中有可用对象
@@ -130,7 +130,7 @@ func TestForEachOnlinePlayer_ZeroAllocsAfterWarmup(t *testing.T) {
 func TestForEachOnlinePlayer_Concurrent_NoPanic(t *testing.T) {
 	room := newP1Room()
 	for i := int32(1); i <= 8; i++ {
-		room.AddPlayer(i, nopConn{}, 0)
+		room.AddPlayer(i, nopConn{}, false, 0)
 	}
 
 	var wg sync.WaitGroup
@@ -252,7 +252,7 @@ func TestGetFramesSince_DataCorrectAfterPack(t *testing.T) {
 func BenchmarkForEachOnlinePlayer(b *testing.B) {
 	room := newP1Room()
 	for i := int32(1); i <= 4; i++ {
-		room.AddPlayer(i, nopConn{}, 0)
+		room.AddPlayer(i, nopConn{}, false, 0)
 	}
 
 	// warmup

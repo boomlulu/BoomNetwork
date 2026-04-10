@@ -48,6 +48,7 @@ type PlayerState int
 const (
 	PlayerOnline       PlayerState = 0
 	PlayerDisconnected PlayerState = 1
+	PlayerReplaying    PlayerState = 2   // 正在接收历史帧，不参与广播
 )
 
 // Player 房间内的玩家
@@ -259,7 +260,7 @@ func (r *Room) SetDelegate(d RoomDelegate) {
 // removePlayerLocked 唯一的玩家移除出口（必须在持锁状态下调用）
 func (r *Room) removePlayerLocked(id int32) {
 	if p, ok := r.players[id]; ok {
-		if p.State == PlayerOnline {
+		if p.State == PlayerOnline || p.State == PlayerReplaying {
 			atomic.AddInt32(&r.onlineCount, -1)
 		}
 		if p.cancelFn != nil {
@@ -279,8 +280,13 @@ func (r *Room) removePlayerLocked(id int32) {
 
 // AddPlayer 添加或重连玩家。
 // startFrame：玩家已有帧号（delivery loop 从此处之后开始追帧）。
+// replaying：true 表示玩家处于补帧阶段（PlayerReplaying），不参与实时广播；补帧完成后调用 SetPlayerLive 升级为 PlayerOnline。
 // preamble：在帧数据之前先投递的控制消息（快照/StartFrameSync/S2C reliable 等）。
-func (r *Room) AddPlayer(id int32, conn PlayerConn, startFrame uint32, preamble ...*codec.Message) {
+func (r *Room) AddPlayer(id int32, conn PlayerConn, replaying bool, startFrame uint32, preamble ...*codec.Message) {
+	initialState := PlayerOnline
+	if replaying {
+		initialState = PlayerReplaying
+	}
 	r.mu.Lock()
 	isReconnect := false
 	var player *Player
@@ -295,13 +301,13 @@ func (r *Room) AddPlayer(id int32, conn PlayerConn, startFrame uint32, preamble 
 			atomic.AddInt32(&r.onlineCount, 1)
 		}
 		existing.Conn = conn
-		existing.State = PlayerOnline
+		existing.State = initialState
 		existing.cursor = startFrame
 		isReconnect = true
 		player = existing
 	} else {
 		atomic.AddInt32(&r.onlineCount, 1)
-		player = &Player{ID: id, Conn: conn, State: PlayerOnline, JoinedAt: time.Now(), cursor: startFrame}
+		player = &Player{ID: id, Conn: conn, State: initialState, JoinedAt: time.Now(), cursor: startFrame}
 		r.players[id] = player
 	}
 	r.hadPlayer.Store(true)
@@ -329,6 +335,15 @@ func (r *Room) AddPlayer(id int32, conn PlayerConn, startFrame uint32, preamble 
 			d.OnPlayerJoined(r, player)
 		}
 	}
+}
+
+// SetPlayerLive 将 PlayerReplaying 状态的玩家升级为 PlayerOnline，开始接收实时帧。
+func (r *Room) SetPlayerLive(id int32) {
+	r.mu.Lock()
+	if p, ok := r.players[id]; ok && p.State == PlayerReplaying {
+		p.State = PlayerOnline
+	}
+	r.mu.Unlock()
 }
 
 // DisconnectPlayer 标记断线保留（幂等：多次调用安全，delegate 只在状态真正变化时触发）
@@ -450,6 +465,22 @@ func (r *Room) IsRunning() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.running
+}
+
+// RoomState 房间状态快照（一次加锁原子读取）
+type RoomState struct {
+	Running    bool
+	GamePaused bool
+}
+
+// GetState 原子读取房间运行状态，避免连续两次独立读取的 TOCTOU。
+func (r *Room) GetState() RoomState {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return RoomState{
+		Running:    r.running,
+		GamePaused: r.gamePaused,
+	}
 }
 
 // MaxPlayers 房间最大人数
@@ -1049,6 +1080,9 @@ func (r *Room) deliveryLoop(ctx context.Context, p *Player, conn PlayerConn, fra
 		}
 	}
 
+	// 阶段 1 结束：升级补帧玩家为在线（可以接收实时广播了）
+	r.SetPlayerLive(p.ID)
+
 	// 阶段 2：实时 — 从 channel 读取 stepFrame 投递的帧；跳过阶段 1 已发送的帧（防重）
 	for {
 		select {
@@ -1280,10 +1314,11 @@ func (r *Room) ReportFrameHash(playerId int32, frameNumber uint32, hash uint32) 
 		}
 	}
 
-	// Clean up old frame hashes (keep only last 200 frames).
+	// 清理超过 200 帧前的旧数据（避免内存无限增长）
 	// 周期性清理：每 100 帧触发一次，避免每次 ReportFrameHash 都 O(n) 扫描全表。
-	if frameNumber > 200 && frameNumber%100 == 0 {
-		cutoff := frameNumber - 200
+	const maxHashHistory = 200
+	if frameNumber > maxHashHistory && frameNumber%100 == 0 {
+		cutoff := frameNumber - maxHashHistory
 		for fn := range r.frameHashes {
 			if fn < cutoff {
 				delete(r.frameHashes, fn)

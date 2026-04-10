@@ -392,12 +392,12 @@ func TestFrameData_StressEncodeDecode(t *testing.T) {
 
 func TestRoom_HostElection(t *testing.T) {
 	room := NewRoomWithConfig(DefaultRoomConfig())
-	room.AddPlayer(1, nil, 0)
+	room.AddPlayer(1, nil, false, 0)
 	if room.HostPlayerId() != 1 {
 		t.Errorf("first player should be host, got %d", room.HostPlayerId())
 	}
 
-	room.AddPlayer(2, nil, 0)
+	room.AddPlayer(2, nil, false, 0)
 	if room.HostPlayerId() != 1 {
 		t.Errorf("host should not change on second join, got %d", room.HostPlayerId())
 	}
@@ -420,7 +420,7 @@ func TestRoom_HostElection(t *testing.T) {
 	}
 
 	// First to reconnect becomes host
-	room.AddPlayer(2, nil, 0)
+	room.AddPlayer(2, nil, false, 0)
 	host = room.HostPlayerId()
 	if host != 2 {
 		t.Errorf("first reconnect should become host, got %d", host)

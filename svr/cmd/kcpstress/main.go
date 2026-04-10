@@ -224,7 +224,7 @@ func (es *embeddedServer) handleConn(conn *kcp.UDPSession, playerId int32) {
 	writer.Flush()
 
 	pc := &writerConn{writer: writer}
-	room.AddPlayer(playerId, pc, 0)
+	room.AddPlayer(playerId, pc, false, 0)
 	if shouldStart {
 		room.Start()
 	}

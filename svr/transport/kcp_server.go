@@ -28,6 +28,11 @@ type KcpServer struct {
 	ipLimiter     *IPRateLimiter // S18: per-IP 连接速率限制
 }
 
+// CleanupIPLimiter 清理超过 maxAge 未活跃的 IP 条目，防止公网扫描导致内存泄漏。返回删除条数。
+func (s *KcpServer) CleanupIPLimiter(maxAge time.Duration) int {
+	return s.ipLimiter.Cleanup(maxAge)
+}
+
 // SetMaxConns 设置最大连接数（0 = 不限制）
 func (s *KcpServer) SetMaxConns(n int) {
 	s.mu.Lock()
@@ -53,7 +58,6 @@ func (s *KcpServer) SetOnRateLimitWarn(fn func(*Conn)) {
 // SetSecurity 设置安全配置
 func (s *KcpServer) SetSecurity(cfg SecurityConfig) {
 	s.security = cfg
-	codec.MaxMessageSize = cfg.MaxMessageSize
 }
 
 // NewKcpServer 创建 KCP 服务器

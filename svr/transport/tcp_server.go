@@ -102,7 +102,11 @@ func (s *TcpServer) SetOnRateLimitWarn(fn func(*Conn)) {
 // SetSecurity 设置安全配置
 func (s *TcpServer) SetSecurity(cfg SecurityConfig) {
 	s.security = cfg
-	codec.MaxMessageSize = cfg.MaxMessageSize
+}
+
+// CleanupIPLimiter 清理超过 maxAge 未活跃的 IP 条目，防止公网扫描导致内存泄漏。返回删除条数。
+func (s *TcpServer) CleanupIPLimiter(maxAge time.Duration) int {
+	return s.ipLimiter.Cleanup(maxAge)
 }
 
 // SetOnDisconnect 设置断开连接回调

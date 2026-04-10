@@ -79,7 +79,7 @@ func TestHadPlayer_FalseInitially(t *testing.T) {
 
 func TestHadPlayer_TrueAfterAddPlayer(t *testing.T) {
 	room := newP0Room()
-	room.AddPlayer(1, nopConn{}, 0)
+	room.AddPlayer(1, nopConn{}, false, 0)
 	if !room.HadPlayer() {
 		t.Fatal("HadPlayer should be true after AddPlayer")
 	}
@@ -115,7 +115,7 @@ func TestGetDataStoreEntries_Empty(t *testing.T) {
 
 func TestGetDataStoreEntries_AfterSet(t *testing.T) {
 	room := newP0Room()
-	room.AddPlayer(1, nopConn{}, 0)
+	room.AddPlayer(1, nopConn{}, false, 0)
 	room.SetData(1, 42, []byte("hello"))
 	entries := room.GetDataStoreEntries()
 	if len(entries) != 1 {
@@ -151,7 +151,7 @@ func TestPendingInputsLen_ZeroInitially(t *testing.T) {
 
 func TestPendingInputsLen_AfterOnInput(t *testing.T) {
 	room := newP0Room()
-	room.AddPlayer(1, nopConn{}, 0)
+	room.AddPlayer(1, nopConn{}, false, 0)
 	setRunning(room, true)
 	room.OnInput(1, []byte{0xFF})
 	if room.PendingInputsLen() != 1 {
@@ -211,7 +211,7 @@ func (r *recordConn) count() int {
 func TestSendReliableToPlayer_Online_ImmediatelySent(t *testing.T) {
 	room := newP0Room()
 	rc := &recordConn{}
-	room.AddPlayer(1, rc, 0)
+	room.AddPlayer(1, rc, false, 0)
 
 	inner := codec.NewCoreMessage(0x01, []byte("ping"))
 	room.SendReliableToPlayer(1, inner)
@@ -224,7 +224,7 @@ func TestSendReliableToPlayer_Online_ImmediatelySent(t *testing.T) {
 func TestSendReliableToPlayer_Offline_Buffered_NotSentImmediately(t *testing.T) {
 	room := newP0Room()
 	rc := &recordConn{}
-	room.AddPlayer(1, rc, 0)
+	room.AddPlayer(1, rc, false, 0)
 	room.DisconnectPlayer(1)
 
 	inner := codec.NewCoreMessage(0x01, []byte("data"))
@@ -252,7 +252,7 @@ func TestSendReliableToPlayer_UnknownPlayer_NoOp(t *testing.T) {
 
 func TestGetS2CReliableSince_NoMessages(t *testing.T) {
 	room := newP0Room()
-	room.AddPlayer(1, nopConn{}, 0)
+	room.AddPlayer(1, nopConn{}, false, 0)
 
 	msgs, stale := room.GetS2CReliableSince(1, 0)
 	if stale || len(msgs) != 0 {
@@ -262,7 +262,7 @@ func TestGetS2CReliableSince_NoMessages(t *testing.T) {
 
 func TestGetS2CReliableSince_ReturnsMsgsAfterSeq(t *testing.T) {
 	room := newP0Room()
-	room.AddPlayer(1, nopConn{}, 0)
+	room.AddPlayer(1, nopConn{}, false, 0)
 
 	for i := 0; i < 5; i++ {
 		room.SendReliableToPlayer(1, codec.NewCoreMessage(0x01, []byte{byte(i)}))
@@ -280,7 +280,7 @@ func TestGetS2CReliableSince_ReturnsMsgsAfterSeq(t *testing.T) {
 
 func TestGetS2CReliableSince_Stale_WhenSeqOverflowBuffer(t *testing.T) {
 	room := newP0Room()
-	room.AddPlayer(1, nopConn{}, 0)
+	room.AddPlayer(1, nopConn{}, false, 0)
 
 	// 发送超过 s2cBufSize(256) 条消息，使旧 seq 被覆盖
 	for i := 0; i < s2cBufSize+10; i++ {
@@ -304,7 +304,7 @@ func TestGetS2CReliableSince_UnknownPlayer_EmptyNonStale(t *testing.T) {
 
 func TestGetLastProcessedC2SSeq_InitiallyZero(t *testing.T) {
 	room := newP0Room()
-	room.AddPlayer(1, nopConn{}, 0)
+	room.AddPlayer(1, nopConn{}, false, 0)
 	if seq := room.GetLastProcessedC2SSeq(1); seq != 0 {
 		t.Fatalf("want 0, got %d", seq)
 	}
@@ -312,7 +312,7 @@ func TestGetLastProcessedC2SSeq_InitiallyZero(t *testing.T) {
 
 func TestSetLastProcessedC2SSeq_UpdatesValue(t *testing.T) {
 	room := newP0Room()
-	room.AddPlayer(1, nopConn{}, 0)
+	room.AddPlayer(1, nopConn{}, false, 0)
 	room.SetLastProcessedC2SSeq(1, 42)
 	if seq := room.GetLastProcessedC2SSeq(1); seq != 42 {
 		t.Fatalf("want 42, got %d", seq)
@@ -330,8 +330,8 @@ func TestSetLastProcessedC2SSeq_UnknownPlayer_NoOp(t *testing.T) {
 func TestBroadcastReliable_SendsToAllOnline(t *testing.T) {
 	room := newP0Room()
 	rc1, rc2 := &recordConn{}, &recordConn{}
-	room.AddPlayer(1, rc1, 0)
-	room.AddPlayer(2, rc2, 0)
+	room.AddPlayer(1, rc1, false, 0)
+	room.AddPlayer(2, rc2, false, 0)
 
 	inner := codec.NewCoreMessage(0x01, []byte("broadcast"))
 	room.BroadcastReliable(-1, inner) // excludeId=-1 → 不排除任何人
@@ -344,8 +344,8 @@ func TestBroadcastReliable_SendsToAllOnline(t *testing.T) {
 func TestBroadcastReliable_ExcludesTargetPlayer(t *testing.T) {
 	room := newP0Room()
 	rc1, rc2 := &recordConn{}, &recordConn{}
-	room.AddPlayer(1, rc1, 0)
-	room.AddPlayer(2, rc2, 0)
+	room.AddPlayer(1, rc1, false, 0)
+	room.AddPlayer(2, rc2, false, 0)
 
 	inner := codec.NewCoreMessage(0x01, []byte("exclude"))
 	room.BroadcastReliable(1, inner) // 排除 player 1
@@ -362,8 +362,8 @@ func TestBroadcastReliable_ExcludesTargetPlayer(t *testing.T) {
 
 func TestForEachPlayer_IncludesOnlineAndOffline(t *testing.T) {
 	room := newP0Room()
-	room.AddPlayer(1, nopConn{}, 0)
-	room.AddPlayer(2, nopConn{}, 0)
+	room.AddPlayer(1, nopConn{}, false, 0)
+	room.AddPlayer(2, nopConn{}, false, 0)
 	room.DisconnectPlayer(2) // player 2 变为离线
 
 	seen := map[int32]PlayerState{}
@@ -384,7 +384,7 @@ func TestForEachPlayer_IncludesOnlineAndOffline(t *testing.T) {
 
 func TestForEachPlayer_DisconnectTime_SetForOffline(t *testing.T) {
 	room := newP0Room()
-	room.AddPlayer(1, nopConn{}, 0)
+	room.AddPlayer(1, nopConn{}, false, 0)
 	room.DisconnectPlayer(1)
 
 	room.ForEachPlayer(func(info PlayerInfo) {

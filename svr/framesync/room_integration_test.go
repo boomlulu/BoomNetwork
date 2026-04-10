@@ -97,7 +97,7 @@ func TestIntegration_DeliveryLoop_CatchupAndLive(t *testing.T) {
 	go readAllMessages(clientSide, msgCh)
 
 	// 玩家从 frame 0 加入（应触发追帧）
-	room.AddPlayer(1, pc, 0)
+	room.AddPlayer(1, pc, false, 0)
 
 	// 再等一段时间，让追帧 + 新帧都发送
 	time.Sleep(200 * time.Millisecond)
@@ -168,7 +168,7 @@ func TestIntegration_SendReliable_ArrivesOnWire(t *testing.T) {
 	msgCh := make(chan *codec.Message, 64)
 	go readAllMessages(clientSide, msgCh)
 
-	room.AddPlayer(1, pc, 0)
+	room.AddPlayer(1, pc, false, 0)
 	time.Sleep(20 * time.Millisecond) // 等 deliveryLoop 初始化
 
 	inner := codec.NewCoreMessage(0x42, []byte("reliable-payload"))
@@ -227,7 +227,7 @@ func TestIntegration_DisconnectPlayer_ClosesConn(t *testing.T) {
 	msgCh := make(chan *codec.Message, 64)
 	go readAllMessages(clientSide, msgCh)
 
-	room.AddPlayer(1, pc, 0)
+	room.AddPlayer(1, pc, false, 0)
 	time.Sleep(20 * time.Millisecond)
 
 	// 连接发送错误时 deliveryLoop 会触发 DisconnectPlayer + Close

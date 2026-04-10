@@ -129,6 +129,11 @@ type WsServer struct {
 	ipLimiter       *IPRateLimiter
 }
 
+// CleanupIPLimiter 清理超过 maxAge 未活跃的 IP 条目，防止公网扫描导致内存泄漏。返回删除条数。
+func (s *WsServer) CleanupIPLimiter(maxAge time.Duration) int {
+	return s.ipLimiter.Cleanup(maxAge)
+}
+
 // SetMaxConns 设置最大连接数（0 = 不限制）
 func (s *WsServer) SetMaxConns(n int) {
 	s.mu.Lock()
@@ -155,7 +160,6 @@ func (s *WsServer) SetOnRateLimitWarn(fn func(*Conn)) {
 func (s *WsServer) SetSecurity(cfg SecurityConfig) {
 	s.security = cfg
 	s.upgrader.CheckOrigin = checkOrigin(cfg.AllowedOrigins)
-	codec.MaxMessageSize = cfg.MaxMessageSize
 }
 
 // NewWsServer 创建 WebSocket 服务器
@@ -252,10 +256,11 @@ func (s *WsServer) handleUpgrade(w http.ResponseWriter, r *http.Request) {
 	}
 	s.nextID++
 	c := &Conn{
-		ID:          s.nextID,
-		conn:        adapted,
-		writer:      codec.NewFrameWriter(adapted),
-		rateLimiter: NewRateLimiter(s.security.MaxMessagesPerSec),
+		ID:           s.nextID,
+		conn:         adapted,
+		writer:       codec.NewFrameWriter(adapted),
+		rateLimiter:  NewRateLimiter(s.security.MaxMessagesPerSec),
+		writeTimeout: s.config.WriteTimeout,
 	}
 	s.conns[c.ID] = c
 	s.mu.Unlock()

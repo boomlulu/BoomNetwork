@@ -55,7 +55,7 @@ func TestBroadcastSendError_BugVerification_ZombieConnStaysOnline(t *testing.T) 
 	})
 
 	fc := &failConn{}
-	room.AddPlayer(1, fc, 0)
+	room.AddPlayer(1, fc, false, 0)
 
 	// 设置 running = true，使 stepFrame 正常运行
 	room.mu.Lock()
@@ -110,7 +110,7 @@ func TestBroadcastSendError_FixVerification_ZombieConnDisconnected(t *testing.T)
 	})
 
 	fc := &failConn{}
-	room.AddPlayer(1, fc, 0)
+	room.AddPlayer(1, fc, false, 0)
 
 	// stepFrame 需要 running=true 才会推帧
 	room.mu.Lock()

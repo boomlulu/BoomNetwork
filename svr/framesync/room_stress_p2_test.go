@@ -50,7 +50,7 @@ func TestStress_MultiRoom_ConcurrentFrameAdvance(t *testing.T) {
 			room.SetDelegate(d)
 
 			for p := int32(1); p <= numPlayers; p++ {
-				room.AddPlayer(p, nopConn{}, 0)
+				room.AddPlayer(p, nopConn{}, false, 0)
 			}
 			room.Start()
 
@@ -99,7 +99,7 @@ func TestStress_MultiRoom_ConcurrentFrameAdvance(t *testing.T) {
 					<-ticker.C
 					room.DisconnectPlayer(victim)
 					time.Sleep(5 * time.Millisecond)
-					room.AddPlayer(victim, nopConn{}, room.CurrentFrameNumber())
+					room.AddPlayer(victim, nopConn{}, false, room.CurrentFrameNumber())
 					victim = victim%numPlayers + 1
 				}
 			}()

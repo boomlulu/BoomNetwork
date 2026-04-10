@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"flag"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -74,7 +75,7 @@ func (d *roomLifecycleDelegate) OnRoomPanicked(room *framesync.Room, playerIds [
 
 var globalDelegate = &roomLifecycleDelegate{}
 
-var playerCounter int32
+var playerCounter int64
 
 // connContext 缓存连接对应的玩家 ID 和房间，减少 handleFrameInput 热路径上的重复 sync.Map 查找
 type connContext struct {
@@ -243,8 +244,9 @@ func main() {
 
 	// WebGL 双端口：额外启动一个 WebSocket 服务器，与主协议共享全部路由逻辑。
 	// WebGL 客户端无法使用 TCP/KCP，通过此端口接入；桌面/移动客户端走主协议端口。
+	var wsServer *transport.WsServer
 	if *wsAddr != "" {
-		wsServer := transport.NewWsServer(rxHandler)
+		wsServer = transport.NewWsServer(rxHandler)
 		wsServer.SetOnDisconnect(onClientDisconnect)
 		wsServer.SetOnRateLimited(func(c *transport.Conn) {
 			framesync.Metrics.RateLimited.Inc()
@@ -310,6 +312,29 @@ func main() {
 				return
 			case <-ticker.C:
 				roomMgr.CleanupEmptyRooms(idleTimeout)
+			}
+		}
+	}()
+
+	// IP 限流表定期清理（防止公网扫描导致内存泄漏）
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if s, ok := server.(interface{ CleanupIPLimiter(time.Duration) int }); ok {
+					if n := s.CleanupIPLimiter(10 * time.Minute); n > 0 {
+						slog.Info("IP limiter cleanup", "deleted", n)
+					}
+				}
+				if wsServer != nil {
+					if n := wsServer.CleanupIPLimiter(10 * time.Minute); n > 0 {
+						slog.Info("WS IP limiter cleanup", "deleted", n)
+					}
+				}
 			}
 		}
 	}()
@@ -445,7 +470,13 @@ func sdNotifyReady() {
 }
 
 func nextPlayerId() int32 {
-	return atomic.AddInt32(&playerCounter, 1)
+	id := atomic.AddInt64(&playerCounter, 1)
+	if id > math.MaxInt32 {
+		// 回绕：重置为 1（极低概率，约 248 天 @ 100 conn/s）
+		atomic.StoreInt64(&playerCounter, 1)
+		return 1
+	}
+	return int32(id)
 }
 
 func onClientDisconnect(conn *transport.Conn) {
@@ -530,7 +561,7 @@ func handleSessionBind(conn *transport.Conn, msg *codec.Message) *codec.Message 
 	// autoroom 模式：SessionBind 时自动分房（兼容压测和旧版 FrameSyncExample）
 	if *autoRoom {
 		room := roomMgr.AutoAssignRoom(*ppr)
-		bindPlayerToRoom(playerId, conn, room)
+		bindPlayerToRoom(playerId, conn, room, false)
 		slog.Info("player bound (auto room)", "playerId", playerId, "connId", conn.ID, "roomId", room.ID, "online", room.PlayerCount())
 	} else {
 		slog.Info("player bound", "playerId", playerId, "connId", conn.ID)
@@ -619,12 +650,11 @@ func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
 		}
 	}
 
-	// 关闭旧连接（如果存在），防止旧连接的 disconnect 回调干扰新映射
-	if oldConn, ok := playerConnMap.Load(playerId); ok {
-		oldC := oldConn.(*transport.Conn)
-		if oldC != conn {
-			connPlayerMap.Delete(oldC.ID) // 先清理旧 connID 映射
-			oldC.Close()
+	// 先保存旧连接引用，更新所有映射到新连接后再关闭（避免旧连接的 onDisconnect 干扰新映射）
+	var oldConn *transport.Conn
+	if v, ok := playerConnMap.Load(playerId); ok {
+		if oc := v.(*transport.Conn); oc != conn {
+			oldConn = oc
 		}
 	}
 
@@ -632,6 +662,13 @@ func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	connPlayerMap.Store(conn.ID, playerId)
 	playerConnMap.Store(playerId, conn)
 	connContextMap.Store(conn.ID, &connContext{playerId: playerId, room: room})
+
+	// 新映射建立后再关闭旧连接（其 onDisconnect CAS 检查会跳过新连接的映射）
+	if oldConn != nil {
+		connPlayerMap.Delete(oldConn.ID)
+		connContextMap.Delete(oldConn.ID)
+		oldConn.Close()
+	}
 	room.SetDelegate(globalDelegate) // 幂等
 
 	// 读取 serverLastC2SSeq（重连成功后告知客户端需要从哪条 C→S 开始重发）
@@ -656,19 +693,22 @@ func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	framesync.Metrics.ReconnectSuccess.Inc()
 	rsp := framesync.EncodeReconnectRsp(framesync.ReconnectSuccess, room.ID, currentFrame, snapshotFrame, serverLastC2SSeq, snapshotData)
 
+	// 原子读取房间状态，避免连续两次独立读取的 TOCTOU（P2-13）
+	roomState := room.GetState()
+
 	// 通知同房其他玩家：恢复在线（非新加入）
-	if room.IsRunning() {
+	if roomState.Running {
 		room.EnqueueEvent(framesync.FrameEventPlayerOnline, playerId)
 	} else {
 		broadcastToRoom(room, playerId, codec.NewExtMessage(framesync.ExtCmdPlayerOnline, framesync.EncodePlayerId(playerId)))
 	}
 
 	// 先从 handler goroutine 发送 ReconnectRsp（在 delivery loop 启动前，保证顺序）
-	sendMsg(conn, codec.NewCoreMessage(framesync.CmdReconnectRsp, rsp))
+	_ = sendMsg(conn, codec.NewCoreMessage(framesync.CmdReconnectRsp, rsp))
 
 	// 若房间处于游戏级暂停，在 delivery loop 前补发（preamble 之外，conn 互斥保证顺序）
-	if room.IsGamePaused() {
-		sendMsg(conn, codec.NewExtMessage(framesync.ExtCmdFrameSyncPaused, []byte{byte(framesync.PauseReasonGamePause)}))
+	if roomState.GamePaused {
+		_ = sendMsg(conn, codec.NewExtMessage(framesync.ExtCmdFrameSyncPaused, []byte{byte(framesync.PauseReasonGamePause)}))
 	}
 
 	// 构建 delivery loop 前导消息（S→C reliable 在帧数据前到达）
@@ -683,8 +723,9 @@ func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
 
 	// AddPlayer 启动 delivery loop：preamble → Phase 1（追帧）→ Phase 2（实时）
 	// 追帧和实时帧均由 delivery loop 单 goroutine 串行写 conn，消除竞态。
+	// replaying=true：追帧完成前不参与实时广播，delivery loop 内部调用 SetPlayerLive 升级。
 	wrappedConn := &statsConn{inner: &simConn{inner: conn, cfg: GlobalNetSim}, pid: playerId}
-	room.AddPlayer(playerId, wrappedConn, replayFrom, preamble...)
+	room.AddPlayer(playerId, wrappedConn, replayFrom > 0, replayFrom, preamble...)
 
 	slog.Info("player reconnected", "playerId", playerId, "roomId", room.ID, "serverFrame", currentFrame, "snapshotFrame", snapshotFrame, "serverLastC2SSeq", serverLastC2SSeq, "replayFrom", replayFrom)
 	return nil
@@ -774,7 +815,7 @@ func handleJoinRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	joinRsp := codec.NewExtMessage(framesync.ExtCmdJoinRoomRsp, framesync.EncodeJoinRoomRsp(playerId, room.ID, existingPlayers))
 	joinRsp.HasSeq = msg.HasSeq
 	joinRsp.Seq = msg.Seq
-	sendMsg(conn, joinRsp)
+	_ = sendMsg(conn, joinRsp)
 
 	if room.IsRunning() {
 		// 迟到加入：goroutine 构建 preamble（快照 + StartFrameSync + KV），然后 AddPlayer 启动 delivery loop
@@ -814,17 +855,16 @@ func handleJoinRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 			}
 
 			// AddPlayer 启动 delivery loop：preamble → Phase 1（追帧）→ Phase 2（实时）
-			room.AddPlayer(playerId, wrappedConn, replayFrom, preamble...)
+			// replaying=true：追帧完成前不参与实时广播，delivery loop 内部调用 SetPlayerLive 升级。
+			room.AddPlayer(playerId, wrappedConn, true, replayFrom, preamble...)
 			slog.Info("late-join player delivery loop started", "playerId", playerId, "roomId", room.ID, "frame", currentFrame, "replayFrom", replayFrom)
 		}()
 	} else {
 		// 房间未运行：立即以 startFrame=0 启动 delivery loop（Phase 1 为空，Phase 2 等待实时帧）
-		room.AddPlayer(playerId, wrappedConn, 0)
+		room.AddPlayer(playerId, wrappedConn, false, 0)
 		if !room.DataStoreEmpty() {
-			go func() {
-				entries, version := room.GetDataSnapshot()
-				sendMsg(conn, codec.NewExtMessage(framesync.ExtCmdPushDataSync, framesync.EncodePushDataSync(version, entries)))
-			}()
+			entries, version := room.GetDataSnapshot()
+			_ = sendMsg(conn, codec.NewExtMessage(framesync.ExtCmdPushDataSync, framesync.EncodePushDataSync(version, entries)))
 		}
 	}
 
@@ -919,9 +959,11 @@ func handleMatchRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 		// 迟到加入：goroutine 构建 preamble，然后 AddPlayer 启动 delivery loop
 		snapshotFrame, snapshotData := room.GetSnapshot()
 		currentFrame := room.CurrentFrameNumber()
-		hasKV := !room.DataStoreEmpty()
 
 		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
 			var preamble []*codec.Message
 			var replayFrom uint32
 
@@ -938,6 +980,13 @@ func handleMatchRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 				slog.Info("late-join (matchRoom): no snapshot, replay from frames", "playerId", playerId, "oldestFrame", oldestFrame, "replayFrom", replayFrom, "currentFrame", currentFrame)
 			}
 
+			select {
+			case <-ctx.Done():
+				slog.Warn("matchRoom preamble build timed out", "playerId", playerId)
+				return
+			default:
+			}
+
 			initData := framesync.InitData{
 				FrameRate:           room.FrameRate(),
 				FrameInterval:       1000 / room.FrameRate(),
@@ -947,22 +996,28 @@ func handleMatchRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 			}
 			preamble = append(preamble, codec.NewCoreMessage(framesync.CmdStartFrameSync, framesync.EncodeInitData(&initData)))
 
-			if hasKV {
+			// KV 同步合并到此 goroutine（消除原来独立的 sleep+KV goroutine）
+			if !room.DataStoreEmpty() {
+				select {
+				case <-ctx.Done():
+					slog.Warn("matchRoom KV sync timed out", "playerId", playerId)
+					return
+				default:
+				}
 				entries, version := room.GetDataSnapshot()
 				preamble = append(preamble, codec.NewExtMessage(framesync.ExtCmdPushDataSync, framesync.EncodePushDataSync(version, entries)))
 			}
 
-			room.AddPlayer(playerId, wrappedConn, replayFrom, preamble...)
+			// replaying=true：追帧完成前不参与实时广播，delivery loop 内部调用 SetPlayerLive 升级。
+			room.AddPlayer(playerId, wrappedConn, true, replayFrom, preamble...)
 			slog.Info("late-join (matchRoom) delivery loop started", "playerId", playerId, "roomId", room.ID, "frame", currentFrame, "replayFrom", replayFrom)
 		}()
 	} else {
-		// 房间未运行：立即以 startFrame=0 启动 delivery loop
-		room.AddPlayer(playerId, wrappedConn, 0)
+		// 房间未运行：立即以 startFrame=0 启动 delivery loop，KV 同步直接发送（无需独立 goroutine）
+		room.AddPlayer(playerId, wrappedConn, false, 0)
 		if !room.DataStoreEmpty() {
-			go func() {
-				entries, version := room.GetDataSnapshot()
-				sendMsg(conn, codec.NewExtMessage(framesync.ExtCmdPushDataSync, framesync.EncodePushDataSync(version, entries)))
-			}()
+			entries, version := room.GetDataSnapshot()
+			_ = sendMsg(conn, codec.NewExtMessage(framesync.ExtCmdPushDataSync, framesync.EncodePushDataSync(version, entries)))
 		}
 	}
 
@@ -982,9 +1037,9 @@ func bindMapsToRoom(playerId int32, conn *transport.Conn, room *framesync.Room) 
 }
 
 // bindPlayerToRoom 绑定映射并以 startFrame=0 启动 delivery loop（房间未运行时的快速路径）。
-func bindPlayerToRoom(playerId int32, conn *transport.Conn, room *framesync.Room) {
+func bindPlayerToRoom(playerId int32, conn *transport.Conn, room *framesync.Room, replaying bool) {
 	bindMapsToRoom(playerId, conn, room)
-	room.AddPlayer(playerId, &statsConn{inner: &simConn{inner: conn, cfg: GlobalNetSim}, pid: playerId}, 0)
+	room.AddPlayer(playerId, &statsConn{inner: &simConn{inner: conn, cfg: GlobalNetSim}, pid: playerId}, replaying, 0)
 }
 
 func handleRequestStart(conn *transport.Conn, msg *codec.Message) *codec.Message {
@@ -1012,10 +1067,7 @@ func handleRequestStart(conn *transport.Conn, msg *codec.Message) *codec.Message
 
 	slog.Info("player requested room start", "playerId", playerId, "roomId", room.ID, "online", room.PlayerCount())
 
-	go func() {
-		time.Sleep(10 * time.Millisecond) // 确保本消息处理完
-		room.Start()
-	}()
+	room.Start()
 	return nil
 }
 
@@ -1040,11 +1092,11 @@ func handleRequestStop(conn *transport.Conn, msg *codec.Message) *codec.Message 
 }
 
 // sendMsg 发送消息并记录游戏 TX 流量 + 消息日志
-func sendMsg(conn *transport.Conn, msg *codec.Message) {
+func sendMsg(conn *transport.Conn, msg *codec.Message) error {
 	GameStats.RecordTx(int64(len(msg.Data)))
 	framesync.Metrics.BytesSent.Add(float64(len(msg.Data)))
 	logMsgFromMsg("tx", msg, connPid(conn), "")
-	conn.Send(msg)
+	return conn.Send(msg)
 }
 
 func broadcastToRoom(room *framesync.Room, excludePlayerId int32, msg *codec.Message) {
@@ -1296,7 +1348,7 @@ func handleReliableMsg(conn *transport.Conn, msg *codec.Message) *codec.Message 
 	lastProcessed := room.GetLastProcessedC2SSeq(playerId)
 	if seq <= lastProcessed {
 		// 重复消息：已处理过，仅补发 ACK，不再执行
-		sendMsg(conn, codec.NewExtMessage(framesync.ExtCmdReliableAck, framesync.EncodeReliableAck(lastProcessed)))
+		_ = sendMsg(conn, codec.NewExtMessage(framesync.ExtCmdReliableAck, framesync.EncodeReliableAck(lastProcessed)))
 		return nil
 	}
 
@@ -1306,11 +1358,11 @@ func handleReliableMsg(conn *transport.Conn, msg *codec.Message) *codec.Message 
 	if inner != nil && reliableDispatch != nil {
 		rsp := reliableDispatch(conn, inner)
 		if rsp != nil {
-			sendMsg(conn, rsp)
+			_ = sendMsg(conn, rsp)
 		}
 	}
 
-	sendMsg(conn, codec.NewExtMessage(framesync.ExtCmdReliableAck, framesync.EncodeReliableAck(seq)))
+	_ = sendMsg(conn, codec.NewExtMessage(framesync.ExtCmdReliableAck, framesync.EncodeReliableAck(seq)))
 	return nil
 }
 

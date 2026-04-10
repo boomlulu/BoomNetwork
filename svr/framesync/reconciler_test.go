@@ -75,7 +75,7 @@ func TestDelegate_PlayerJoinedAndReconnected(t *testing.T) {
 	r.SetDelegate(d)
 
 	// 首次加入 → OnPlayerJoined
-	r.AddPlayer(1, nopConn{}, 0)
+	r.AddPlayer(1, nopConn{}, false, 0)
 	if d.joinedCount() != 1 {
 		t.Errorf("expected OnPlayerJoined called once, got %d", d.joinedCount())
 	}
@@ -84,7 +84,7 @@ func TestDelegate_PlayerJoinedAndReconnected(t *testing.T) {
 	}
 
 	// 相同 ID 再次加入 → OnPlayerReconnected
-	r.AddPlayer(1, nopConn{}, 0)
+	r.AddPlayer(1, nopConn{}, false, 0)
 	if d.reconnectedCount() != 1 {
 		t.Errorf("expected OnPlayerReconnected called once, got %d", d.reconnectedCount())
 	}
@@ -97,7 +97,7 @@ func TestDelegate_PlayerDisconnected(t *testing.T) {
 	d := &mockDelegate{}
 	r := newTestRoom()
 	r.SetDelegate(d)
-	r.AddPlayer(1, nopConn{}, 0)
+	r.AddPlayer(1, nopConn{}, false, 0)
 
 	r.DisconnectPlayer(1)
 
@@ -113,8 +113,8 @@ func TestDelegate_PlayerRemoved(t *testing.T) {
 	d := &mockDelegate{}
 	r := newTestRoom()
 	r.SetDelegate(d)
-	r.AddPlayer(1, nopConn{}, 0)
-	r.AddPlayer(2, nopConn{}, 0)
+	r.AddPlayer(1, nopConn{}, false, 0)
+	r.AddPlayer(2, nopConn{}, false, 0)
 
 	r.RemovePlayer(1)
 
@@ -138,7 +138,7 @@ func TestDelegate_PlayerRemoved(t *testing.T) {
 
 func TestDelegate_EmptyAt_ClearedOnAddPlayer(t *testing.T) {
 	r := newTestRoom()
-	r.AddPlayer(1, nopConn{}, 0)
+	r.AddPlayer(1, nopConn{}, false, 0)
 	r.RemovePlayer(1)
 
 	if r.EmptyAt().IsZero() {
@@ -146,7 +146,7 @@ func TestDelegate_EmptyAt_ClearedOnAddPlayer(t *testing.T) {
 	}
 
 	// 新玩家加入，emptyAt 应清零
-	r.AddPlayer(2, nopConn{}, 0)
+	r.AddPlayer(2, nopConn{}, false, 0)
 	if !r.EmptyAt().IsZero() {
 		t.Error("emptyAt should be cleared after new player joins")
 	}
@@ -202,8 +202,8 @@ func TestDelegate_PauseAndResume(t *testing.T) {
 
 func TestRemovePlayerLocked_ElectsHostOnRemove(t *testing.T) {
 	r := newTestRoom()
-	r.AddPlayer(1, nopConn{}, 0) // player 1 becomes host
-	r.AddPlayer(2, nopConn{}, 0)
+	r.AddPlayer(1, nopConn{}, false, 0) // player 1 becomes host
+	r.AddPlayer(2, nopConn{}, false, 0)
 
 	if r.HostPlayerId() != 1 {
 		t.Fatalf("player 1 should be host, got %d", r.HostPlayerId())
@@ -227,8 +227,8 @@ func TestReconcilePlayers_EvictsTimedOutPlayers(t *testing.T) {
 	r := newTestRoom() // DisconnectKeepAlive = 100ms
 	r.SetDelegate(d)
 
-	r.AddPlayer(1, nopConn{}, 0)
-	r.AddPlayer(2, nopConn{}, 0)
+	r.AddPlayer(1, nopConn{}, false, 0)
+	r.AddPlayer(2, nopConn{}, false, 0)
 	r.DisconnectPlayer(1)
 	r.DisconnectPlayer(2)
 
@@ -258,8 +258,8 @@ func TestReconcilePlayers_EvictsTimedOutPlayers(t *testing.T) {
 
 func TestReconcilePlayers_KeepsActiveAndOnlinePlayers(t *testing.T) {
 	r := newTestRoom()
-	r.AddPlayer(1, nopConn{}, 0) // online，不应驱逐
-	r.AddPlayer(2, nopConn{}, 0)
+	r.AddPlayer(1, nopConn{}, false, 0) // online，不应驱逐
+	r.AddPlayer(2, nopConn{}, false, 0)
 	r.DisconnectPlayer(2)
 
 	// 等待 keepalive 到期
@@ -280,7 +280,7 @@ func TestReconcilePlayers_KeepsActiveAndOnlinePlayers(t *testing.T) {
 
 func TestShouldDestroy_FalseBeforeGrace(t *testing.T) {
 	r := newTestRoom()
-	r.AddPlayer(1, nopConn{}, 0)
+	r.AddPlayer(1, nopConn{}, false, 0)
 	r.RemovePlayer(1)
 
 	if r.ShouldDestroy(500 * time.Millisecond) {
@@ -290,7 +290,7 @@ func TestShouldDestroy_FalseBeforeGrace(t *testing.T) {
 
 func TestShouldDestroy_TrueAfterGrace(t *testing.T) {
 	r := newTestRoom()
-	r.AddPlayer(1, nopConn{}, 0)
+	r.AddPlayer(1, nopConn{}, false, 0)
 	r.RemovePlayer(1)
 
 	time.Sleep(60 * time.Millisecond)
@@ -302,7 +302,7 @@ func TestShouldDestroy_TrueAfterGrace(t *testing.T) {
 
 func TestShouldDestroy_FalseWhenHasPlayers(t *testing.T) {
 	r := newTestRoom()
-	r.AddPlayer(1, nopConn{}, 0)
+	r.AddPlayer(1, nopConn{}, false, 0)
 
 	if r.ShouldDestroy(0) {
 		t.Error("ShouldDestroy should be false while room has players")
@@ -368,8 +368,8 @@ func TestRoomReconciler_EvictsPlayersAndDestroysRoom(t *testing.T) {
 
 	room := mgr.CreateRoom()
 	room.SetDelegate(d)
-	room.AddPlayer(1, nopConn{}, 0)
-	room.AddPlayer(2, nopConn{}, 0)
+	room.AddPlayer(1, nopConn{}, false, 0)
+	room.AddPlayer(2, nopConn{}, false, 0)
 	room.DisconnectPlayer(1)
 	room.DisconnectPlayer(2)
 
@@ -433,7 +433,7 @@ func TestRoomReconciler_NewPlayerReconnect_CancelsDestroy(t *testing.T) {
 
 	room := mgr.CreateRoom()
 	room.SetDelegate(d)
-	room.AddPlayer(1, nopConn{}, 0)
+	room.AddPlayer(1, nopConn{}, false, 0)
 	room.DisconnectPlayer(1)
 
 	rec := NewRoomReconciler(mgr, d, 100*time.Millisecond, 10*time.Millisecond)
@@ -442,7 +442,7 @@ func TestRoomReconciler_NewPlayerReconnect_CancelsDestroy(t *testing.T) {
 	rec.Reconcile() // player 1 evicted, emptyAt set
 
 	// 新玩家加入 → emptyAt 清零
-	room.AddPlayer(2, nopConn{}, 0)
+	room.AddPlayer(2, nopConn{}, false, 0)
 
 	time.Sleep(150 * time.Millisecond)
 	rec.Reconcile() // grace 看起来超了，但 emptyAt 已清零
@@ -462,7 +462,7 @@ func BenchmarkReconcilePlayers_ManyStale(b *testing.B) {
 		DisconnectKeepAlive: time.Nanosecond, // 立即到期
 	})
 	for i := int32(1); i <= 100; i++ {
-		r.AddPlayer(i, nopConn{}, 0)
+		r.AddPlayer(i, nopConn{}, false, 0)
 		r.DisconnectPlayer(i)
 	}
 	time.Sleep(time.Millisecond)
@@ -501,7 +501,7 @@ func BenchmarkReconciler_1000Rooms(b *testing.B) {
 	for i := 0; i < numRooms; i++ {
 		room := mgr.CreateRoom()
 		for j := int32(0); j < playersPerRoom; j++ {
-			room.AddPlayer(j+1, nopConn{}, 0)
+			room.AddPlayer(j+1, nopConn{}, false, 0)
 			room.DisconnectPlayer(j + 1)
 		}
 	}
@@ -566,7 +566,7 @@ func TestStress_ConcurrentReconcileAndJoin(t *testing.T) {
 					return
 				default:
 					room := rooms[workerID%numRooms]
-					room.AddPlayer(pid, nopConn{}, 0)
+					room.AddPlayer(pid, nopConn{}, false, 0)
 					time.Sleep(5 * time.Millisecond)
 					room.DisconnectPlayer(pid)
 					time.Sleep(30 * time.Millisecond)

@@ -82,7 +82,7 @@ func TestCleanupEmptyRooms_NeverHadPlayer_AfterTimeout_Removed(t *testing.T) {
 func TestCleanupEmptyRooms_HadPlayer_RemovedImmediately(t *testing.T) {
 	rm := NewRoomManager()
 	room := rm.CreateRoom()
-	room.AddPlayer(1, nopConn{}, 0)
+	room.AddPlayer(1, nopConn{}, false, 0)
 	room.RemovePlayer(1) // 曾有玩家，现在为空
 
 	// idle timeout 1h — 但 HadPlayer=true，应立即清理
@@ -115,7 +115,7 @@ func TestCleanupEmptyRooms_MultipleRooms_OnlyRemovesEligible(t *testing.T) {
 
 	// r1: 曾有玩家 → 应清理
 	r1 := rm.CreateRoom()
-	r1.AddPlayer(1, nopConn{}, 0)
+	r1.AddPlayer(1, nopConn{}, false, 0)
 	r1.RemovePlayer(1)
 
 	// r2: 正在运行 → 不清理
