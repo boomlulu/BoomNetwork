@@ -618,7 +618,15 @@ namespace BoomNetwork.Client.FrameSync
             }
             else
             {
-                LastFrameNumber = context.ServerFrameNumber;
+                // 快速重连: deliveryLoop 阶段 1 会从 LastFrameNumber+1 开始补帧,
+                // 不能将 LastFrameNumber 推进到 ServerFrameNumber, 否则补帧全部被判为 DuplicateFrame.
+                // LastFrameNumber 保持断线前的值 (= 发给服务器的 lastFrame), 让补帧自然推进.
+                //
+                // 快照重连无快照数据: deliveryLoop 从当前帧开始推送 live 帧,
+                // LastFrameNumber 保持断线前的值同样安全 (live 帧号 > 断线前帧号).
+                //
+                // 注: HandleDisconnected 不重置 LastFrameNumber, 此处断言其保留了断线前的值.
+                //
                 // 快速重连未走快照恢复路径：服务器可能未收到我们断线前的最后一次快照上传
                 // （上传中途断线 → CancelAllPending 触发超时 → HandleDisconnected 清空 _pendingSnapshotData）。
                 // 重置 _lastSnapshotFrame 强制 CheckSnapshotUpload 在下一帧边界重新上传，

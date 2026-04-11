@@ -117,3 +117,4 @@ Agent 执行时应：
 - [原始审计报告](../server_audit_findings.md)
 - [4003 修复方案 v2](../desync_duplicate_frame_4003_v2.md)
 - [统一投递架构方案](../framesync_unified_delivery_architecture.md)
+- [二轮审计：性能优化 · 架构改进 · 隐患排查](round2_performance_architecture.md)
