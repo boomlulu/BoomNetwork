@@ -2,6 +2,7 @@ package framesync
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"math"
 	"sync"
@@ -17,6 +18,10 @@ const (
 	replayBatchSize  = 100            // 补帧批次大小：每发完 N 帧休眠一次
 	replayBatchDelay = 5 * time.Millisecond // 补帧批次间隔
 )
+
+// ErrRoomFull 新玩家加入时房间已满
+// NEW-04: AddPlayer 内部原子容量检查，消除外部 check-then-act TOCTOU。
+var ErrRoomFull = errors.New("room is full")
 
 // PlayerConn 玩家连接接口
 type PlayerConn interface {
@@ -283,7 +288,9 @@ func (r *Room) removePlayerLocked(id int32) {
 // startFrame：玩家已有帧号（delivery loop 从此处之后开始追帧）。
 // replaying：true 表示玩家处于补帧阶段（PlayerReplaying），不参与实时广播；补帧完成后调用 SetPlayerLive 升级为 PlayerOnline。
 // preamble：在帧数据之前先投递的控制消息（快照/StartFrameSync/S2C reliable 等）。
-func (r *Room) AddPlayer(id int32, conn PlayerConn, replaying bool, startFrame uint32, preamble ...*codec.Message) {
+// NEW-04: 返回 error，在锁内做容量检查，消除外部 check-then-act TOCTOU。
+// 重连（已存在玩家 ID）不受容量限制，直接替换连接。
+func (r *Room) AddPlayer(id int32, conn PlayerConn, replaying bool, startFrame uint32, preamble ...*codec.Message) error {
 	initialState := PlayerOnline
 	if replaying {
 		initialState = PlayerReplaying
@@ -308,6 +315,11 @@ func (r *Room) AddPlayer(id int32, conn PlayerConn, replaying bool, startFrame u
 		isReconnect = true
 		player = existing
 	} else {
+		// NEW-04: 新玩家容量检查在锁内执行，消除 TOCTOU
+		if r.config.MaxPlayers > 0 && len(r.players) >= r.config.MaxPlayers {
+			r.mu.Unlock()
+			return ErrRoomFull
+		}
 		atomic.AddInt32(&r.onlineCount, 1)
 		player = &Player{ID: id, Conn: conn, State: initialState, JoinedAt: time.Now(), cursor: startFrame}
 		r.players[id] = player
@@ -337,6 +349,7 @@ func (r *Room) AddPlayer(id int32, conn PlayerConn, replaying bool, startFrame u
 			d.OnPlayerJoined(r, player)
 		}
 	}
+	return nil
 }
 
 // SetPlayerLive 将 PlayerReplaying 状态的玩家升级为 PlayerOnline，开始接收实时帧。
@@ -511,6 +524,7 @@ func (r *Room) IsGamePaused() bool {
 }
 
 // GamePause 设置游戏级暂停。返回 true 表示状态变更（从运行→暂停）。
+// NEW-01: 暂停时主动清空 frameHashes，避免暂停期间帧号不递增导致哈希永驻内存。
 func (r *Room) GamePause() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -518,6 +532,7 @@ func (r *Room) GamePause() bool {
 		return false
 	}
 	r.gamePaused = true
+	r.frameHashes = make(map[uint32]map[int32]uint32)
 	return true
 }
 
@@ -969,6 +984,7 @@ func (r *Room) stepFrame() {
 		staleLimit := uint32(r.config.SnapshotIntervalFrames * 3)
 		if r.snapshotStaleFrames >= staleLimit && !r.snapshotPaused {
 			r.snapshotPaused = true
+			r.frameHashes = make(map[uint32]map[int32]uint32) // NEW-01: 暂停时清空，避免帧号不递增导致哈希永驻内存
 			slog.Warn("no snapshot received, pausing frame sync", "roomId", r.ID, "staleFrames", r.snapshotStaleFrames, "limit", staleLimit)
 			d := r.delegate
 			r.mu.Unlock()

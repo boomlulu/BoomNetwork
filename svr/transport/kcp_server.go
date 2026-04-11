@@ -169,7 +169,7 @@ func (s *KcpServer) handleConn(c *Conn) {
 		slog.Info("client disconnected", "component", "kcp", "connId", c.ID)
 	}()
 
-	reader := codec.NewFrameReader(c.conn)
+	reader := codec.NewFrameReader(c.conn, 0) // 0 = use default (64KB)
 
 	// Connection health: ReadDeadline (60s default) kills silent connections.
 	// KCP is UDP-based so there's no OS-level KeepAlive, but the read deadline

@@ -109,7 +109,7 @@ func BenchmarkFrameReader_Small(b *testing.B) {
 	data := buf.Bytes()
 
 	src := bytes.NewReader(data)
-	reader := NewFrameReader(src)
+	reader := NewFrameReader(src, 0)
 
 	b.ReportAllocs()
 	b.ResetTimer()

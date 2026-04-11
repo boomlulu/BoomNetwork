@@ -563,8 +563,11 @@ func handleSessionBind(conn *transport.Conn, msg *codec.Message) *codec.Message 
 	// autoroom 模式：SessionBind 时自动分房（兼容压测和旧版 FrameSyncExample）
 	if *autoRoom {
 		room := roomMgr.AutoAssignRoom(*ppr)
-		bindPlayerToRoom(playerId, conn, room, false)
-		slog.Info("player bound (auto room)", "playerId", playerId, "connId", conn.ID, "roomId", room.ID, "online", room.PlayerCount())
+		if err := bindPlayerToRoom(playerId, conn, room, false); err != nil {
+			slog.Warn("auto-room bindPlayerToRoom failed (room full)", "playerId", playerId, "connId", conn.ID, "roomId", room.ID, "err", err)
+		} else {
+			slog.Info("player bound (auto room)", "playerId", playerId, "connId", conn.ID, "roomId", room.ID, "online", room.PlayerCount())
+		}
 	} else {
 		slog.Info("player bound", "playerId", playerId, "connId", conn.ID)
 	}
@@ -728,7 +731,11 @@ func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	// 追帧和实时帧均由 delivery loop 单 goroutine 串行写 conn，消除竞态。
 	// replaying=true：追帧完成前不参与实时广播，delivery loop 内部调用 SetPlayerLive 升级。
 	wrappedConn := &statsConn{inner: &simConn{inner: conn, cfg: GlobalNetSim}, pid: playerId}
-	room.AddPlayer(playerId, wrappedConn, replayFrom > 0, replayFrom, preamble...)
+	if err := room.AddPlayer(playerId, wrappedConn, replayFrom > 0, replayFrom, preamble...); err != nil {
+		// 重连路径：玩家已在 players 表中，AddPlayer 不应返回 ErrRoomFull；若发生则为异常
+		slog.Error("reconnect AddPlayer failed", "playerId", playerId, "roomId", room.ID, "err", err)
+		return nil
+	}
 
 	slog.Info("player reconnected", "playerId", playerId, "roomId", room.ID, "serverFrame", currentFrame, "snapshotFrame", snapshotFrame, "serverLastC2SSeq", serverLastC2SSeq, "replayFrom", replayFrom)
 	return nil
@@ -859,12 +866,20 @@ func handleJoinRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 
 			// AddPlayer 启动 delivery loop：preamble → Phase 1（追帧）→ Phase 2（实时）
 			// replaying=true：追帧完成前不参与实时广播，delivery loop 内部调用 SetPlayerLive 升级。
-			room.AddPlayer(playerId, wrappedConn, true, replayFrom, preamble...)
+			if err := room.AddPlayer(playerId, wrappedConn, true, replayFrom, preamble...); err != nil {
+				// NEW-04: 极低概率：并发 join 导致容量超限（外部 check 已过滤大部分），直接关闭连接
+				slog.Warn("late-join AddPlayer failed (room full)", "playerId", playerId, "roomId", room.ID, "err", err)
+				wrappedConn.Close()
+				return
+			}
 			slog.Info("late-join player delivery loop started", "playerId", playerId, "roomId", room.ID, "frame", currentFrame, "replayFrom", replayFrom)
 		}()
 	} else {
 		// 房间未运行：立即以 startFrame=0 启动 delivery loop（Phase 1 为空，Phase 2 等待实时帧）
-		room.AddPlayer(playerId, wrappedConn, false, 0)
+		if err := room.AddPlayer(playerId, wrappedConn, false, 0); err != nil {
+			slog.Warn("joinRoom AddPlayer failed (room full)", "playerId", playerId, "roomId", room.ID, "err", err)
+			return nil
+		}
 		if !room.DataStoreEmpty() {
 			entries, version := room.GetDataSnapshot()
 			_ = sendMsg(conn, codec.NewExtMessage(framesync.ExtCmdPushDataSync, framesync.EncodePushDataSync(version, entries)))
@@ -1012,12 +1027,19 @@ func handleMatchRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 			}
 
 			// replaying=true：追帧完成前不参与实时广播，delivery loop 内部调用 SetPlayerLive 升级。
-			room.AddPlayer(playerId, wrappedConn, true, replayFrom, preamble...)
+			if err := room.AddPlayer(playerId, wrappedConn, true, replayFrom, preamble...); err != nil {
+				slog.Warn("late-join (matchRoom) AddPlayer failed (room full)", "playerId", playerId, "roomId", room.ID, "err", err)
+				wrappedConn.Close()
+				return
+			}
 			slog.Info("late-join (matchRoom) delivery loop started", "playerId", playerId, "roomId", room.ID, "frame", currentFrame, "replayFrom", replayFrom)
 		}()
 	} else {
 		// 房间未运行：立即以 startFrame=0 启动 delivery loop，KV 同步直接发送（无需独立 goroutine）
-		room.AddPlayer(playerId, wrappedConn, false, 0)
+		if err := room.AddPlayer(playerId, wrappedConn, false, 0); err != nil {
+			slog.Warn("matchRoom AddPlayer failed (room full)", "playerId", playerId, "roomId", room.ID, "err", err)
+			return codec.NewExtMessage(framesync.ExtCmdMatchRoomRsp, framesync.EncodeJoinRoomError(framesync.JoinRoomFull))
+		}
 		if !room.DataStoreEmpty() {
 			entries, version := room.GetDataSnapshot()
 			_ = sendMsg(conn, codec.NewExtMessage(framesync.ExtCmdPushDataSync, framesync.EncodePushDataSync(version, entries)))
@@ -1040,9 +1062,10 @@ func bindMapsToRoom(playerId int32, conn *transport.Conn, room *framesync.Room) 
 }
 
 // bindPlayerToRoom 绑定映射并以 startFrame=0 启动 delivery loop（房间未运行时的快速路径）。
-func bindPlayerToRoom(playerId int32, conn *transport.Conn, room *framesync.Room, replaying bool) {
+// 返回 error（如 ErrRoomFull）；调用方负责错误处理。
+func bindPlayerToRoom(playerId int32, conn *transport.Conn, room *framesync.Room, replaying bool) error {
 	bindMapsToRoom(playerId, conn, room)
-	room.AddPlayer(playerId, &statsConn{inner: &simConn{inner: conn, cfg: GlobalNetSim}, pid: playerId}, replaying, 0)
+	return room.AddPlayer(playerId, &statsConn{inner: &simConn{inner: conn, cfg: GlobalNetSim}, pid: playerId}, replaying, 0)
 }
 
 func handleRequestStart(conn *transport.Conn, msg *codec.Message) *codec.Message {

@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"runtime"
 	"sync"
@@ -195,7 +196,7 @@ func (es *embeddedServer) acceptLoop() {
 }
 
 func (es *embeddedServer) handleConn(conn *kcp.UDPSession, playerId int32) {
-	reader := codec.NewFrameReader(conn)
+	reader := codec.NewFrameReader(conn, 0)
 	writer := codec.NewFrameWriter(conn)
 
 	// 读 SessionBind
@@ -224,7 +225,10 @@ func (es *embeddedServer) handleConn(conn *kcp.UDPSession, playerId int32) {
 	writer.Flush()
 
 	pc := &writerConn{writer: writer}
-	room.AddPlayer(playerId, pc, false, 0)
+	if err := room.AddPlayer(playerId, pc, false, 0); err != nil {
+		slog.Warn("kcpstress AddPlayer failed", "playerId", playerId, "err", err)
+		return
+	}
 	if shouldStart {
 		room.Start()
 	}
@@ -270,7 +274,7 @@ func runClient(stopCh chan struct{}) {
 	conn.SetNoDelay(1, 10, 2, 1)
 	conn.SetWindowSize(256, 256)
 
-	reader := codec.NewFrameReader(conn)
+	reader := codec.NewFrameReader(conn, 0)
 	writer := codec.NewFrameWriter(conn)
 
 	// Bind

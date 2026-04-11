@@ -283,10 +283,7 @@ func (s *WsServer) handleConn(c *Conn) {
 		slog.Info("client disconnected", "component", "ws", "connId", c.ID)
 	}()
 
-	reader := codec.NewFrameReader(c.conn)
-	if s.security.MaxMessageSize > 0 {
-		reader.SetMaxMessageSize(s.security.MaxMessageSize)
-	}
+	reader := codec.NewFrameReader(c.conn, s.security.MaxMessageSize)
 
 	for {
 		if s.config.ReadTimeout > 0 {

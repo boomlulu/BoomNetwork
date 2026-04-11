@@ -139,7 +139,11 @@ func TestOnlineCount_AllPlayersDisconnected(t *testing.T) {
 // TestOnlineCount_Concurrent 并发 Add/Disconnect，最终计数严格正确
 func TestOnlineCount_Concurrent(t *testing.T) {
 	const numPlayers = 64
-	room := newP0Room()
+	room := NewRoomWithConfig(RoomConfig{
+		FrameRate:       20,
+		FrameBufferSize: 100,
+		MaxPlayers:      numPlayers, // NEW-04: 需指定容量以容纳全部并发玩家
+	})
 
 	// 阶段 1: 并发加入
 	var wg sync.WaitGroup

@@ -223,10 +223,7 @@ func (s *TcpServer) handleConn(c *Conn) {
 		slog.Info("client disconnected", "component", "tcp", "connId", c.ID)
 	}()
 
-	reader := codec.NewFrameReader(c.conn)
-	if s.security.MaxMessageSize > 0 {
-		reader.SetMaxMessageSize(s.security.MaxMessageSize)
-	}
+	reader := codec.NewFrameReader(c.conn, s.security.MaxMessageSize)
 
 	// Connection health: ReadDeadline (60s default) kills silent connections.
 	// Combined with TCP KeepAlive (30s), this detects dead peers without

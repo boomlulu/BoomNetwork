@@ -50,7 +50,7 @@ func (p *pipeConn) Close() error {
 
 // readAllMessages 从 clientSide 读取消息直到连接关闭，收集到 msgs 通道
 func readAllMessages(clientSide net.Conn, msgs chan<- *codec.Message) {
-	reader := codec.NewFrameReader(clientSide)
+	reader := codec.NewFrameReader(clientSide, 0)
 	for {
 		msg, err := reader.ReadMessage()
 		if err != nil {

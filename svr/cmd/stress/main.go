@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"flag"
 	"fmt"
+	"log/slog"
 	"math/rand"
 	"net"
 	"os"
@@ -254,7 +255,7 @@ func (es *embeddedServer) acceptLoop() {
 }
 
 func (es *embeddedServer) handleConn(conn net.Conn, playerId int32) {
-	reader := codec.NewFrameReader(conn)
+	reader := codec.NewFrameReader(conn, 0)
 	writer := codec.NewFrameWriter(conn)
 
 	msg, err := reader.ReadMessageCopy()
@@ -281,7 +282,10 @@ func (es *embeddedServer) handleConn(conn net.Conn, playerId int32) {
 	writer.Flush()
 
 	pc := &writerConn{writer: writer}
-	room.AddPlayer(playerId, pc, false, 0)
+	if err := room.AddPlayer(playerId, pc, false, 0); err != nil {
+		slog.Warn("stress AddPlayer failed", "playerId", playerId, "err", err)
+		return
+	}
 
 	if shouldStart {
 		room.Start()
@@ -329,7 +333,7 @@ func runClient(stopCh chan struct{}) {
 		tcp.SetNoDelay(true)
 	}
 
-	reader := codec.NewFrameReader(conn)
+	reader := codec.NewFrameReader(conn, 0)
 	writer := codec.NewFrameWriter(conn)
 
 	// Bind
