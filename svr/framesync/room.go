@@ -192,6 +192,7 @@ type Room struct {
 
 	// 房间生命周期
 	createdAt time.Time  // 创建时间
+	alive     atomic.Bool // 是否仍在 RoomManager 中（原子标志，消除热路径 RLock）
 	hadPlayer atomic.Bool // 是否有过玩家加入（原子读写，无需持锁）
 	startedAt time.Time  // 指标：Start 时间
 	emptyAt   time.Time  // 最近一次变空的时刻；有玩家时为零值
@@ -825,6 +826,12 @@ func (r *Room) CreatedAt() time.Time { return r.createdAt }
 // HadPlayer 是否有过玩家加入（原子读，无锁）
 func (r *Room) HadPlayer() bool {
 	return r.hadPlayer.Load()
+}
+
+// IsAlive 返回房间是否仍在 RoomManager 中（原子读，无锁）
+// 供 handleFrameInput 热路径替代 roomMgr.GetRoom()，消除每帧 Mutex RLock。
+func (r *Room) IsAlive() bool {
+	return r.alive.Load()
 }
 
 // Start 开始帧同步

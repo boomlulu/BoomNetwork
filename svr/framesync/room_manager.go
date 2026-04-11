@@ -69,6 +69,7 @@ func (rm *RoomManager) createRoomLocked() *Room {
 	id := rm.nextID
 	room := NewRoomWithConfig(rm.config)
 	room.ID = id
+	room.alive.Store(true) // PERF-04: 原子标志，消除热路径 RLock
 	rm.rooms[id] = room
 	rm.matchIndexAddLocked(room)
 	Metrics.RoomsCurrent.Inc()
@@ -97,6 +98,7 @@ func (rm *RoomManager) RemoveRoom(id int32) {
 	if ok {
 		delete(rm.rooms, id)
 		rm.matchIndexRemoveLocked(room)
+		room.alive.Store(false) // PERF-04: 原子清除，handleFrameInput 热路径无需 RLock
 	}
 	rm.mu.Unlock()
 
@@ -156,6 +158,7 @@ func (rm *RoomManager) CreateRoomWithMaxPlayers(maxPlayers int, matchKey string)
 	room := NewRoomWithConfig(cfg)
 	room.ID = id
 	room.MatchKey = matchKey
+	room.alive.Store(true) // PERF-04: 原子标志
 	rm.rooms[id] = room
 	rm.matchIndexAddLocked(room)
 	Metrics.RoomsCurrent.Inc()
@@ -192,6 +195,7 @@ func (rm *RoomManager) StopAll() {
 	rm.mu.Lock()
 	rooms := make([]*Room, 0, len(rm.rooms))
 	for _, r := range rm.rooms {
+		r.alive.Store(false) // PERF-04: 批量清除原子标志
 		rooms = append(rooms, r)
 	}
 	rm.rooms = make(map[int32]*Room)
@@ -230,6 +234,7 @@ func (rm *RoomManager) MatchRoom(maxPlayers int, matchKey string) *Room {
 	room := NewRoomWithConfig(cfg)
 	room.ID = id
 	room.MatchKey = matchKey
+	room.alive.Store(true) // PERF-04: 原子标志
 	rm.rooms[id] = room
 	rm.matchIndexAddLocked(room)
 	Metrics.RoomsCurrent.Inc()

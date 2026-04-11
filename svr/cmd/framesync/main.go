@@ -370,6 +370,10 @@ func main() {
 
 	// 4. Close server (closes listener + all connections)
 	server.Close()
+	// ARCH-05: 同步关闭 WebSocket server，避免 WS goroutine 泄漏
+	if wsServer != nil {
+		wsServer.Close()
+	}
 
 	// 5. Wait for connection goroutines to drain (30s timeout)
 	done := make(chan struct{})
@@ -577,7 +581,8 @@ func handleFrameInput(conn *transport.Conn, msg *codec.Message) *codec.Message {
 		return nil
 	}
 	// H6: 验证房间仍在 RoomManager 中，防止向已清理的房间写入
-	if roomMgr != nil && roomMgr.GetRoom(ctx.room.ID) == nil {
+	// PERF-04: 用原子标志 IsAlive() 替代 GetRoom()，消除每帧 Mutex Lock/Unlock
+	if !ctx.room.IsAlive() {
 		connContextMap.Delete(conn.ID)
 		return nil
 	}
