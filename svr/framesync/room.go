@@ -606,28 +606,38 @@ func (r *Room) SendReliableToPlayer(playerId int32, inner *codec.Message) {
 	}
 }
 
-// BroadcastReliable 向房间内所有在线玩家（可选排除一个）广播可靠消息
+// BroadcastReliable 向房间内所有在线玩家（可选排除一个）广播可靠消息。
+// PERF-03: 内联 SendReliableToPlayer 逻辑，一次锁内完成 seq 递增、s2cBuf 记录
+// 和 (conn, msg) 收集，锁外批量 Send，将 N+1 次 mutex 降为 1 次。
 func (r *Room) BroadcastReliable(excludePlayerId int32, inner *codec.Message) {
+	type pendingSend struct {
+		conn PlayerConn
+		msg  *codec.Message
+	}
+	var sends []pendingSend
+
 	r.mu.Lock()
-	sp := playerSlicePool.Get().(*[]*Player)
-	players := (*sp)[:0]
 	for _, p := range r.players {
-		if p.ID != excludePlayerId {
-			players = append(players, p)
+		if p.ID == excludePlayerId || p.State != PlayerOnline {
+			continue
+		}
+		p.s2cSeq++
+		seq := p.s2cSeq
+		data := EncodeReliableMsgData(seq, inner)
+		reliableMsg := codec.NewExtMessage(ExtCmdReliableMsg, data)
+		slot := seq % s2cBufSize
+		p.s2cBuf[slot] = cachedS2CMsg{seq: seq, msg: reliableMsg}
+		if seq >= s2cBufSize {
+			p.s2cBufHead = seq - s2cBufSize + 1
+		}
+		if p.Conn != nil {
+			sends = append(sends, pendingSend{conn: p.Conn, msg: reliableMsg})
 		}
 	}
 	r.mu.Unlock()
 
-	for _, p := range players {
-		r.SendReliableToPlayer(p.ID, inner)
-	}
-
-	for i := range players {
-		players[i] = nil
-	}
-	if cap(players) <= 64 {
-		*sp = players[:0]
-		playerSlicePool.Put(sp)
+	for _, s := range sends {
+		_ = s.conn.Send(s.msg)
 	}
 }
 
@@ -1005,26 +1015,21 @@ func (r *Room) stepFrame() {
 	r.pendingEventsBuf = events
 	r.mu.Unlock()
 
-	// M1: 编码在锁外执行（inputs/events 已局部持有）
+	// PERF-01: 直接在锁内确定 slot 位置并编码，省掉 frameBuf 中间 copy。
+	// inputs/events 已在锁外局部持有，编码在锁内完成。
 	frame := &FrameData{FrameNumber: frameNum, Inputs: inputs, Events: events}
 	size := FrameDataSize(frame)
-	if cap(r.frameBuf) < size {
-		r.frameBuf = make([]byte, size)
-	} else {
-		r.frameBuf = r.frameBuf[:size]
-	}
-	EncodeFrameData(frame, r.frameBuf)
 
 	// 写入环形缓冲区，同时向每个玩家的 delivery channel 投递（单写者原则：只有各自的 deliveryLoop 写 conn）
 	r.mu.Lock()
 	slot := &r.frameRing[r.frameRingPos]
 	slot.FrameNumber = frameNum
-	if cap(slot.EncodedData) >= size {
-		slot.EncodedData = slot.EncodedData[:size]
-	} else {
+	if cap(slot.EncodedData) < size {
 		slot.EncodedData = make([]byte, size)
+	} else {
+		slot.EncodedData = slot.EncodedData[:size]
 	}
-	copy(slot.EncodedData, r.frameBuf[:size])
+	EncodeFrameData(frame, slot.EncodedData)
 	r.frameRingPos = (r.frameRingPos + 1) % len(r.frameRing)
 	if r.frameRingLen < len(r.frameRing) {
 		r.frameRingLen++
@@ -1053,6 +1058,13 @@ func (r *Room) stepFrame() {
 func (r *Room) deliveryLoop(ctx context.Context, p *Player, conn PlayerConn, frameCh chan *CachedFrame, preamble []*codec.Message) {
 	defer r.onDeliveryExit(p, conn)
 
+	// PERF-02: 复用 Timer，避免追帧阶段每批次创建新 Timer 对象。
+	replayTimer := time.NewTimer(0)
+	if !replayTimer.Stop() {
+		<-replayTimer.C
+	}
+	defer replayTimer.Stop()
+
 	// 前导消息（快照 / StartFrameSync / S2C reliable 等），在帧数据前先发
 	for _, msg := range preamble {
 		select {
@@ -1080,10 +1092,11 @@ func (r *Room) deliveryLoop(ctx context.Context, p *Player, conn PlayerConn, fra
 			}
 			p.cursor = cf.FrameNumber
 			if (i+1)%replayBatchSize == 0 && i+1 < len(frames) {
+				replayTimer.Reset(replayBatchDelay)
 				select {
 				case <-ctx.Done():
 					return
-				case <-time.After(replayBatchDelay):
+				case <-replayTimer.C:
 				}
 			}
 		}
