@@ -6,7 +6,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
     public static class WaveSystem
     {
         const uint WaveGapFrames = 30;
-        const int BaseEnemyCount = 5120;
+        const int BaseEnemyCount = 200;
         const int EnemiesPerWave = 500;
         const int TargetFillSeconds = 20; // 动态批量：20 秒内刷完当波全部怪物
 

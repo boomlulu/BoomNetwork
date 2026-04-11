@@ -148,7 +148,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
     public class GameState
     {
         public const int MaxPlayers = 4;
-        public const int MaxEnemies = 5120;
+        public const int MaxEnemies = 200;
         public const int MaxProjectiles = 2048;
         public const int MaxGems = 5120;
         public const int MaxLightningFlashes = 255;
