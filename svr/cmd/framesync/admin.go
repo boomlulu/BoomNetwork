@@ -371,21 +371,19 @@ func handleKick(w http.ResponseWriter, r *http.Request) {
 	playerId := int32(pid)
 
 	// 找到玩家所在房间
-	roomVal, ok := playerRoomMap.Load(playerId)
-	if !ok {
+	room, conn, ok := sessions.ByPlayer(playerId)
+	if !ok || room == nil {
 		jsonError(w, http.StatusNotFound, fmt.Sprintf("player %d not in any room", playerId))
 		return
 	}
-	room := roomVal.(*framesync.Room)
 
 	// 从房间移除
 	room.RemovePlayer(playerId)
-	playerRoomMap.Delete(playerId)
+	sessions.DeleteByPlayer(playerId)
 
 	// 断开连接（先通知再关闭）
-	if connVal, ok := playerConnMap.LoadAndDelete(playerId); ok {
-		conn := connVal.(*transport.Conn)
-		conn.Send(codec.NewCoreMessage(framesync.CmdKicked, []byte{framesync.KickReasonAdmin}))
+	if conn != nil {
+		conn.Send(codec.NewCoreMessage(framesync.CmdKicked, []byte{framesync.KickReasonAdmin})) //nolint:errcheck
 		conn.Close()
 	}
 
@@ -428,9 +426,9 @@ func handleStopRoom(w http.ResponseWriter, r *http.Request) {
 	// 停止帧同步
 	room.Stop()
 
-	// 清理所有玩家的房间映射
+	// 清理所有玩家的会话映射
 	room.ForEachPlayer(func(p framesync.PlayerInfo) {
-		playerRoomMap.Delete(p.ID)
+		sessions.DeleteByPlayer(p.ID)
 	})
 
 	// 从管理器移除
@@ -466,9 +464,10 @@ func handleAdminKillRoom(w http.ResponseWriter, r *http.Request) {
 
 	// 强制销毁：关闭所有玩家连接，跳过优雅广播
 	room.ForEachPlayer(func(p framesync.PlayerInfo) {
-		playerRoomMap.Delete(p.ID)
-		if connVal, ok := playerConnMap.LoadAndDelete(p.ID); ok {
-			connVal.(*transport.Conn).Close()
+		_, playerConn, _ := sessions.ByPlayer(p.ID)
+		sessions.DeleteByPlayer(p.ID)
+		if playerConn != nil {
+			playerConn.Close()
 		}
 	})
 	room.Stop()
@@ -512,9 +511,8 @@ func handleAdminCreateRoom(w http.ResponseWriter, r *http.Request) {
 
 func countOnlinePlayers() int {
 	count := 0
-	connPlayerMap.Range(func(_, _ any) bool {
+	sessions.RangeConns(func(_ *transport.Conn) {
 		count++
-		return true
 	})
 	return count
 }
@@ -542,14 +540,13 @@ func handlePlayerDetail(w http.ResponseWriter, r *http.Request) {
 		"room":   0,
 	}
 
-	// 是否有连接
-	if _, ok := playerConnMap.Load(playerId); ok {
+	// 是否有连接 + 所在房间（一次查询）
+	room, playerConn, ok := sessions.ByPlayer(playerId)
+	if ok && playerConn != nil {
 		detail["online"] = true
 	}
 
-	// 所在房间
-	if roomVal, ok := playerRoomMap.Load(playerId); ok {
-		room := roomVal.(*framesync.Room)
+	if ok && room != nil {
 		detail["room"] = room.ID
 		detail["room_running"] = room.IsRunning()
 		detail["room_frame"] = room.CurrentFrameNumber()
@@ -789,7 +786,7 @@ func handleStopAll(w http.ResponseWriter, r *http.Request) {
 		}
 		room.Stop()
 		room.ForEachPlayer(func(p framesync.PlayerInfo) {
-			playerRoomMap.Delete(p.ID)
+			sessions.DeleteByPlayer(p.ID)
 		})
 		roomMgr.RemoveRoom(info.RoomId)
 		stopped++

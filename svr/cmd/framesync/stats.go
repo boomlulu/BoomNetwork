@@ -171,17 +171,16 @@ var (
 	MsgLog    = &msgRing{}
 )
 
-// lookupRoom 通过 playerRoomMap 查询玩家所在房间的 RoomID 和 MatchKey
+// lookupRoom 通过 sessions 查询玩家所在房间的 RoomID 和 MatchKey
 func lookupRoom(pid int32) (int32, string) {
 	if pid == 0 {
 		return 0, ""
 	}
-	if val, ok := playerRoomMap.Load(pid); ok {
-		if r, ok := val.(*framesync.Room); ok {
-			return r.ID, r.MatchKey
-		}
+	room, _, ok := sessions.ByPlayer(pid)
+	if !ok || room == nil {
+		return 0, ""
 	}
-	return 0, ""
+	return room.ID, room.MatchKey
 }
 
 // LogMsg 记录一条网络消息到环形缓冲 + G8 速率统计
@@ -302,12 +301,13 @@ func (sc *statsConn) Send(msg *codec.Message) error {
 
 func (sc *statsConn) Close() error { return sc.inner.Close() }
 
-// connPid 从 connPlayerMap 取 playerId
+// connPid 从 sessions 取 playerId
 func connPid(conn *transport.Conn) int32 {
-	if v, ok := connPlayerMap.Load(conn.ID); ok {
-		return v.(int32)
+	pid, _, ok := sessions.ByConn(conn.ID)
+	if !ok {
+		return 0
 	}
-	return 0
+	return pid
 }
 
 // ===================== G8: Per-player 消息速率 =====================

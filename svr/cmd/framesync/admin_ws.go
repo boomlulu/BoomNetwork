@@ -12,7 +12,6 @@ import (
 
 	"github.com/boomlulu/boomnetwork/codec"
 	"github.com/boomlulu/boomnetwork/framesync"
-	"github.com/boomlulu/boomnetwork/transport"
 	"github.com/gorilla/websocket"
 	"github.com/vmihailenco/msgpack/v5"
 )
@@ -523,18 +522,17 @@ func (c *GMConn) rpcKick(env *GMEnvelope) {
 		return
 	}
 
-	room, ok := loadPlayerRoom(p.Pid) // L1: safe type assertion
-	if !ok {
+	room, kickConn, ok := sessions.ByPlayer(p.Pid)
+	if !ok || room == nil {
 		c.sendError(env.ID, "kick", "player not in any room")
 		return
 	}
 
 	room.RemovePlayer(p.Pid)
-	playerRoomMap.Delete(p.Pid)
-	if connVal, ok := playerConnMap.LoadAndDelete(p.Pid); ok {
-		conn := connVal.(*transport.Conn)
-		conn.Send(codec.NewCoreMessage(framesync.CmdKicked, []byte{framesync.KickReasonAdmin}))
-		conn.Close()
+	sessions.DeleteByPlayer(p.Pid)
+	if kickConn != nil {
+		kickConn.Send(codec.NewCoreMessage(framesync.CmdKicked, []byte{framesync.KickReasonAdmin})) //nolint:errcheck
+		kickConn.Close()
 	}
 	if room.IsRunning() {
 		room.EnqueueEvent(framesync.FrameEventPlayerLeft, p.Pid)
@@ -561,7 +559,7 @@ func (c *GMConn) rpcStopRoom(env *GMEnvelope) {
 
 	room.Stop()
 	room.ForEachPlayer(func(pi framesync.PlayerInfo) {
-		playerRoomMap.Delete(pi.ID)
+		sessions.DeleteByPlayer(pi.ID)
 	})
 	roomMgr.RemoveRoom(p.RoomID)
 
@@ -584,9 +582,10 @@ func (c *GMConn) rpcKillRoom(env *GMEnvelope) {
 
 	// 强制销毁：关闭所有玩家连接，跳过优雅广播
 	room.ForEachPlayer(func(pi framesync.PlayerInfo) {
-		playerRoomMap.Delete(pi.ID)
-		if connVal, ok := playerConnMap.LoadAndDelete(pi.ID); ok {
-			connVal.(*transport.Conn).Close()
+		_, piConn, _ := sessions.ByPlayer(pi.ID)
+		sessions.DeleteByPlayer(pi.ID)
+		if piConn != nil {
+			piConn.Close()
 		}
 	})
 	room.Stop()

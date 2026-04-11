@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -48,10 +47,8 @@ var (
 
 var roomMgr *framesync.RoomManager
 
-// 映射关系
-var connPlayerMap sync.Map // connID → int32(playerId)
-var playerRoomMap sync.Map // int32(playerId) → *Room
-var playerConnMap sync.Map // int32(playerId) → *transport.Conn
+// sessions 统一管理连接→玩家→房间的会话映射（替代原来的 4 个 sync.Map）
+var sessions = newSessionStore()
 
 // roomLifecycleDelegate 框架级生命周期委托
 // 处理 Reconciler 驱动的玩家超时驱逐和 panic 后的外层映射清理
@@ -61,13 +58,13 @@ type roomLifecycleDelegate struct {
 }
 
 func (d *roomLifecycleDelegate) OnPlayerRemoved(room *framesync.Room, playerID int32) {
-	playerRoomMap.Delete(playerID)
+	sessions.DeleteByPlayer(playerID)
 	slog.Info("player removed (disconnect timeout)", "roomId", room.ID, "playerId", playerID)
 }
 
 func (d *roomLifecycleDelegate) OnRoomPanicked(room *framesync.Room, playerIds []int32) {
 	for _, pid := range playerIds {
-		playerRoomMap.Delete(pid)
+		sessions.DeleteByPlayer(pid)
 	}
 	roomMgr.RemoveRoom(room.ID)
 	slog.Error("room cleaned up after panic", "roomId", room.ID, "evictedPlayers", len(playerIds))
@@ -76,15 +73,6 @@ func (d *roomLifecycleDelegate) OnRoomPanicked(room *framesync.Room, playerIds [
 var globalDelegate = &roomLifecycleDelegate{}
 
 var playerCounter int64
-
-// connContext 缓存连接对应的玩家 ID 和房间，减少 handleFrameInput 热路径上的重复 sync.Map 查找
-type connContext struct {
-	playerId int32
-	room     *framesync.Room
-}
-
-// connContextMap 单次查找替代原来的 connPlayerMap + playerRoomMap 双查找
-var connContextMap sync.Map // connID → *connContext
 
 
 // reliableDispatch 用于 handleReliableMsg 内部分发解包后的 inner 消息
@@ -355,11 +343,8 @@ func main() {
 	slog.Info("framesync server shutting down...")
 
 	// 1. Broadcast ServerShutdown to all connected clients
-	playerConnMap.Range(func(key, val any) bool {
-		if conn, ok := val.(*transport.Conn); ok {
-			conn.Send(codec.NewCoreMessage(framesync.CmdServerShutdown, nil))
-		}
-		return true
+	sessions.RangeConns(func(conn *transport.Conn) {
+		conn.Send(codec.NewCoreMessage(framesync.CmdServerShutdown, nil)) //nolint:errcheck
 	})
 
 	// 2. Cancel admin server + WS hub
@@ -403,52 +388,6 @@ func reloadConfig() {
 	slog.Info("config reloaded", "path", *configFile)
 }
 
-// L1: sync.Map 安全类型断言辅助函数，防止类型不匹配时 panic
-// 键类型：connPlayerMap/connContextMap 以 int(conn.ID) 为键；playerRoomMap/playerConnMap 以 int32(playerId) 为键。
-func loadConnPlayerId(connId int) (int32, bool) {
-	val, ok := connPlayerMap.Load(connId)
-	if !ok {
-		return 0, false
-	}
-	pid, ok2 := val.(int32)
-	return pid, ok2
-}
-
-func loadConnPlayerIdAndDelete(connId int) (int32, bool) {
-	val, ok := connPlayerMap.LoadAndDelete(connId)
-	if !ok {
-		return 0, false
-	}
-	pid, ok2 := val.(int32)
-	return pid, ok2
-}
-
-func loadPlayerRoom(playerId int32) (*framesync.Room, bool) {
-	val, ok := playerRoomMap.Load(playerId)
-	if !ok {
-		return nil, false
-	}
-	room, ok2 := val.(*framesync.Room)
-	return room, ok2
-}
-
-func loadPlayerRoomAndDelete(playerId int32) (*framesync.Room, bool) {
-	val, ok := playerRoomMap.LoadAndDelete(playerId)
-	if !ok {
-		return nil, false
-	}
-	room, ok2 := val.(*framesync.Room)
-	return room, ok2
-}
-
-func loadConnContext(connId int) (*connContext, bool) {
-	val, ok := connContextMap.Load(connId)
-	if !ok {
-		return nil, false
-	}
-	ctx, ok2 := val.(*connContext)
-	return ctx, ok2
-}
 
 // sdNotifyReady sends READY=1 to systemd when running under Type=notify.
 // It is a no-op when NOTIFY_SOCKET is not set (dev / Docker / bare process).
@@ -484,18 +423,11 @@ func nextPlayerId() int32 {
 func onClientDisconnect(conn *transport.Conn) {
 	framesync.Metrics.ConnectionsCurrent.Dec()
 
-	playerId, ok := loadConnPlayerIdAndDelete(conn.ID) // L1: safe type assertion
-	if !ok {
+	playerId, room, shouldCleanup := sessions.Disconnect(conn.ID)
+	if playerId == 0 {
 		return
 	}
-	connContextMap.Delete(conn.ID) // 清理热路径缓存
-
-	// CAS 检查：只有当 playerConnMap 中仍指向当前 conn 时才删除
-	// 防止重连后旧连接断开覆盖新连接的映射
-	currentConn, loaded := playerConnMap.Load(playerId)
-	if loaded && currentConn.(*transport.Conn) == conn {
-		playerConnMap.Delete(playerId)
-	} else {
+	if !shouldCleanup {
 		// 已被新连接替换，跳过房间断线处理
 		slog.Info("old conn disconnected, already reconnected — skip room cleanup", "playerId", playerId, "connId", conn.ID)
 		return
@@ -504,8 +436,7 @@ func onClientDisconnect(conn *transport.Conn) {
 	// 清理 per-player 速率统计，防止 map 泄漏
 	PlayerRates.Remove(playerId)
 
-	room, ok := loadPlayerRoom(playerId) // L1: safe type assertion
-	if !ok {
+	if room == nil {
 		return
 	}
 	room.DisconnectPlayer(playerId)
@@ -556,9 +487,8 @@ func handleSessionBind(conn *transport.Conn, msg *codec.Message) *codec.Message 
 
 	playerId := nextPlayerId()
 
-	// 记录映射
-	connPlayerMap.Store(conn.ID, playerId)
-	playerConnMap.Store(playerId, conn)
+	// 记录映射（room=nil，稍后 BindToRoom 补充）
+	sessions.Bind(conn.ID, playerId, conn)
 
 	// autoroom 模式：SessionBind 时自动分房（兼容压测和旧版 FrameSyncExample）
 	if *autoRoom {
@@ -579,17 +509,20 @@ func handleSessionBind(conn *transport.Conn, msg *codec.Message) *codec.Message 
 }
 
 func handleFrameInput(conn *transport.Conn, msg *codec.Message) *codec.Message {
-	ctx, ok := loadConnContext(conn.ID) // L1: safe type assertion
+	playerId, room, ok := sessions.ByConn(conn.ID)
 	if !ok {
+		return nil
+	}
+	if room == nil {
 		return nil
 	}
 	// H6: 验证房间仍在 RoomManager 中，防止向已清理的房间写入
 	// PERF-04: 用原子标志 IsAlive() 替代 GetRoom()，消除每帧 Mutex Lock/Unlock
-	if !ctx.room.IsAlive() {
-		connContextMap.Delete(conn.ID)
+	if !room.IsAlive() {
+		sessions.DeleteByConn(conn.ID)
 		return nil
 	}
-	ctx.room.OnInput(ctx.playerId, msg.Data)
+	room.OnInput(playerId, msg.Data)
 	framesync.Metrics.InputsReceived.Inc()
 	return nil
 }
@@ -616,22 +549,18 @@ func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
 		lastS2CSeq = binary.LittleEndian.Uint32(msg.Data[8:12])
 	}
 
-	roomVal, ok := playerRoomMap.Load(playerId)
-	if !ok {
+	room, _, ok := sessions.ByPlayer(playerId)
+	if !ok || room == nil {
 		slog.Warn("reconnect failed: player not found in any room", "playerId", playerId)
 		framesync.Metrics.ReconnectFail.Inc()
 		rsp := framesync.EncodeReconnectRsp(framesync.ReconnectFail, 0, 0, 0, 0, nil)
 		return codec.NewCoreMessage(framesync.CmdReconnectRsp, rsp)
 	}
-	room, ok2 := roomVal.(*framesync.Room) // L1: safe type assertion
-	if !ok2 {
-		return nil
-	}
 
 	// 检查房间是否还在 RoomManager 中（可能已被清理）
 	if roomMgr.GetRoom(room.ID) == nil {
 		slog.Warn("reconnect failed: room already cleaned up", "playerId", playerId, "roomId", room.ID)
-		playerRoomMap.Delete(playerId)
+		sessions.DeleteByPlayer(playerId)
 		framesync.Metrics.ReconnectFail.Inc()
 		rsp := framesync.EncodeReconnectRsp(framesync.ReconnectFail, 0, 0, 0, 0, nil)
 		return codec.NewCoreMessage(framesync.CmdReconnectRsp, rsp)
@@ -658,23 +587,12 @@ func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
 		}
 	}
 
-	// 先保存旧连接引用，更新所有映射到新连接后再关闭（避免旧连接的 onDisconnect 干扰新映射）
-	var oldConn *transport.Conn
-	if v, ok := playerConnMap.Load(playerId); ok {
-		if oc := v.(*transport.Conn); oc != conn {
-			oldConn = oc
-		}
-	}
+	// 原子完成旧→新连接映射切换，返回旧连接（锁外 Close）
+	// Reconnect 内部：删 byConn[oldConnID] → 写 byConn[newConnID] + byPlayer[playerId]
+	_, oldConn := sessions.Reconnect(conn.ID, playerId, conn, room)
 
-	// 更新连接映射（AddPlayer 在 replayFrom 确定后调用，delivery loop 从正确帧号起追）
-	connPlayerMap.Store(conn.ID, playerId)
-	playerConnMap.Store(playerId, conn)
-	connContextMap.Store(conn.ID, &connContext{playerId: playerId, room: room})
-
-	// 新映射建立后再关闭旧连接（其 onDisconnect CAS 检查会跳过新连接的映射）
+	// 新映射建立后再关闭旧连接（其 onDisconnect Disconnect() 取不到 byConn[oldConnID]，shouldCleanup=false）
 	if oldConn != nil {
-		connPlayerMap.Delete(oldConn.ID)
-		connContextMap.Delete(oldConn.ID)
 		oldConn.Close()
 	}
 	room.SetDelegate(globalDelegate) // 幂等
@@ -802,13 +720,14 @@ func handleJoinRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	existingPlayers := room.GetPlayerIds()
 
 	// 复用 SessionBind 时分配的 playerId，不重新分配
-	playerId, ok := loadConnPlayerId(conn.ID) // L1: safe type assertion
+	playerId, _, ok := sessions.ByConn(conn.ID)
 	if !ok {
 		slog.Warn("join room failed: conn not bound (SessionBind missing)", "connId", conn.ID)
 		return codec.NewExtMessage(framesync.ExtCmdJoinRoomRsp, framesync.EncodeJoinRoomError(framesync.JoinRoomNotBound))
 	}
 	// 只绑定映射，不启动 delivery loop（需先确定 startFrame + preamble）
-	bindMapsToRoom(playerId, conn, room)
+	sessions.BindToRoom(conn.ID, playerId, conn, room)
+	room.SetDelegate(globalDelegate)
 	wrappedConn := &statsConn{inner: &simConn{inner: conn, cfg: GlobalNetSim}, pid: playerId}
 
 	slog.Info("player joined room", "playerId", playerId, "roomId", room.ID, "online", room.PlayerCount(), "maxPlayers", room.MaxPlayers(), "existingPlayers", existingPlayers)
@@ -890,19 +809,19 @@ func handleJoinRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 }
 
 func handleLeaveRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
-	playerId, ok := loadConnPlayerId(conn.ID) // L1: safe type assertion
+	playerId, room, ok := sessions.ByConn(conn.ID)
 	if !ok {
 		return codec.NewExtMessage(framesync.ExtCmdLeaveRoomRsp, nil)
 	}
-
-	room, ok := loadPlayerRoomAndDelete(playerId) // L1: safe type assertion
-	if !ok {
+	if room == nil {
 		return codec.NewExtMessage(framesync.ExtCmdLeaveRoomRsp, nil)
 	}
+	// 清除 byPlayer 中的 room 字段：重新 Bind（保留 conn，清空 room）
+	// 这样 re-JoinRoom 时 ByConn 仍能找到 playerId，但 room=nil
+	sessions.Bind(conn.ID, playerId, conn)
 	room.RemovePlayer(playerId)
-	// 注意：不删除 connPlayerMap / playerConnMap
-	// 这两个映射是 SessionBind 建立的，LeaveRoom 只清理房间关系
-	// 删了会导致 re-JoinRoom 失败（"SessionBind missing"）
+	// 注意：sessions.Bind 保留了 conn/player 映射（SessionBind 建立的）
+	// LeaveRoom 只清理房间关系，re-JoinRoom 仍可成功
 
 	// 清除该玩家的 KV 数据并广播删除
 	deleted, versions := room.ClearPlayerData(playerId)
@@ -948,7 +867,7 @@ func handleMatchRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 		}
 	}
 
-	playerId, ok := loadConnPlayerId(conn.ID) // L1: safe type assertion
+	playerId, _, ok := sessions.ByConn(conn.ID)
 	if !ok {
 		slog.Warn("match room failed: conn not bound", "connId", conn.ID)
 		return codec.NewExtMessage(framesync.ExtCmdMatchRoomRsp, make([]byte, 8))
@@ -961,7 +880,8 @@ func handleMatchRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	}
 	existingPlayers := room.GetPlayerIds()
 	// 只绑定映射，delivery loop 在确定 startFrame + preamble 后启动
-	bindMapsToRoom(playerId, conn, room)
+	sessions.BindToRoom(conn.ID, playerId, conn, room)
+	room.SetDelegate(globalDelegate)
 	wrappedConn := &statsConn{inner: &simConn{inner: conn, cfg: GlobalNetSim}, pid: playerId}
 
 	slog.Info("player matched to room", "playerId", playerId, "roomId", room.ID, "online", room.PlayerCount(), "maxPlayers", room.MaxPlayers(), "matchKey", matchKey)
@@ -1050,32 +970,18 @@ func handleMatchRoom(conn *transport.Conn, msg *codec.Message) *codec.Message {
 
 // ===================== 工具函数 =====================
 
-// bindMapsToRoom 只绑定连接→玩家→房间三张映射表 + SetDelegate，不启动 delivery loop。
-// AddPlayer（含 delivery loop 启动）由调用方在确定 startFrame + preamble 后单独调用。
-func bindMapsToRoom(playerId int32, conn *transport.Conn, room *framesync.Room) {
-	connPlayerMap.Store(conn.ID, playerId)
-	playerRoomMap.Store(playerId, room)
-	playerConnMap.Store(playerId, conn)
-	connContextMap.Store(conn.ID, &connContext{playerId: playerId, room: room})
-	room.SetDelegate(globalDelegate) // 幂等：多次 SetDelegate 安全
-}
-
 // bindPlayerToRoom 绑定映射并以 startFrame=0 启动 delivery loop（房间未运行时的快速路径）。
 // 返回 error（如 ErrRoomFull）；调用方负责错误处理。
 func bindPlayerToRoom(playerId int32, conn *transport.Conn, room *framesync.Room, replaying bool) error {
-	bindMapsToRoom(playerId, conn, room)
+	sessions.BindToRoom(conn.ID, playerId, conn, room)
+	room.SetDelegate(globalDelegate)
 	return room.AddPlayer(playerId, &statsConn{inner: &simConn{inner: conn, cfg: GlobalNetSim}, pid: playerId}, replaying, 0)
 }
 
 func handleRequestStart(conn *transport.Conn, msg *codec.Message) *codec.Message {
-	playerId, ok := loadConnPlayerId(conn.ID) // L1: safe type assertion
-	if !ok {
-		return nil
-	}
-
-	room, ok := loadPlayerRoom(playerId) // L1: safe type assertion
-	if !ok {
-		slog.Warn("request start failed: player not in room", "playerId", playerId)
+	playerId, room, ok := sessions.ByConn(conn.ID)
+	if !ok || room == nil {
+		slog.Warn("request start failed: player not in room", "connId", conn.ID)
 		return nil
 	}
 
@@ -1097,13 +1003,8 @@ func handleRequestStart(conn *transport.Conn, msg *codec.Message) *codec.Message
 }
 
 func handleRequestStop(conn *transport.Conn, msg *codec.Message) *codec.Message {
-	playerId, ok := loadConnPlayerId(conn.ID) // L1: safe type assertion
-	if !ok {
-		return nil
-	}
-
-	room, ok := loadPlayerRoom(playerId) // L1: safe type assertion
-	if !ok {
+	playerId, room, ok := sessions.ByConn(conn.ID)
+	if !ok || room == nil {
 		return nil
 	}
 
@@ -1135,13 +1036,8 @@ func broadcastToRoom(room *framesync.Room, excludePlayerId int32, msg *codec.Mes
 // ===================== 快照 Handler =====================
 
 func handleUploadSnapshot(conn *transport.Conn, msg *codec.Message) *codec.Message {
-	playerId, ok := loadConnPlayerId(conn.ID) // L1: safe type assertion
-	if !ok {
-		return codec.NewExtMessage(framesync.ExtCmdUploadSnapshotRsp, []byte{0})
-	}
-
-	room, ok := loadPlayerRoom(playerId) // L1: safe type assertion
-	if !ok {
+	_, room, ok := sessions.ByConn(conn.ID)
+	if !ok || room == nil {
 		return codec.NewExtMessage(framesync.ExtCmdUploadSnapshotRsp, []byte{0})
 	}
 
@@ -1160,13 +1056,8 @@ func handleUploadSnapshot(conn *transport.Conn, msg *codec.Message) *codec.Messa
 
 // handleSendEntityState 实体权威同步：透传给同房其他玩家（prepend senderPid）
 func handleRequestAuthorityTransfer(conn *transport.Conn, msg *codec.Message) *codec.Message {
-	playerId, ok := loadConnPlayerId(conn.ID) // L1: safe type assertion
-	if !ok {
-		return nil
-	}
-
-	room, ok := loadPlayerRoom(playerId) // L1: safe type assertion
-	if !ok {
+	playerId, room, ok := sessions.ByConn(conn.ID)
+	if !ok || room == nil {
 		return nil
 	}
 
@@ -1200,13 +1091,8 @@ func handleRequestAuthorityTransfer(conn *transport.Conn, msg *codec.Message) *c
 }
 
 func handleSendEntityState(conn *transport.Conn, msg *codec.Message) *codec.Message {
-	playerId, ok := loadConnPlayerId(conn.ID) // L1: safe type assertion
-	if !ok {
-		return nil
-	}
-
-	room, ok := loadPlayerRoom(playerId) // L1: safe type assertion
-	if !ok {
+	playerId, room, ok := sessions.ByConn(conn.ID)
+	if !ok || room == nil {
 		return nil
 	}
 
@@ -1224,13 +1110,8 @@ func handleSendEntityState(conn *transport.Conn, msg *codec.Message) *codec.Mess
 
 // handleSendStateMsg 状态消息：加上 playerId 前缀，转发给同房其他玩家
 func handleSendStateMsg(conn *transport.Conn, msg *codec.Message) *codec.Message {
-	playerId, ok := loadConnPlayerId(conn.ID) // L1: safe type assertion
-	if !ok {
-		return nil
-	}
-
-	room, ok := loadPlayerRoom(playerId) // L1: safe type assertion
-	if !ok {
+	playerId, room, ok := sessions.ByConn(conn.ID)
+	if !ok || room == nil {
 		return nil
 	}
 
@@ -1241,13 +1122,8 @@ func handleSendStateMsg(conn *transport.Conn, msg *codec.Message) *codec.Message
 
 // handleSetData KV 数据设置：存储到房间，增量广播给其他玩家
 func handleSetData(conn *transport.Conn, msg *codec.Message) *codec.Message {
-	playerId, ok := loadConnPlayerId(conn.ID) // L1: safe type assertion
-	if !ok {
-		return nil
-	}
-
-	room, ok := loadPlayerRoom(playerId) // L1: safe type assertion
-	if !ok {
+	playerId, room, ok := sessions.ByConn(conn.ID)
+	if !ok || room == nil {
 		return nil
 	}
 
@@ -1264,13 +1140,8 @@ func handleSetData(conn *transport.Conn, msg *codec.Message) *codec.Message {
 
 // handleRequestDataSync 全量 KV 同步请求
 func handleRequestDataSync(conn *transport.Conn, msg *codec.Message) *codec.Message {
-	playerId, ok := loadConnPlayerId(conn.ID) // L1: safe type assertion
-	if !ok {
-		return nil
-	}
-
-	room, ok := loadPlayerRoom(playerId) // L1: safe type assertion
-	if !ok {
+	_, room, ok := sessions.ByConn(conn.ID)
+	if !ok || room == nil {
 		return nil
 	}
 
@@ -1280,17 +1151,12 @@ func handleRequestDataSync(conn *transport.Conn, msg *codec.Message) *codec.Mess
 
 // handleFrameHash 帧 hash 上报：收集并检测 desync
 func handleFrameHash(conn *transport.Conn, msg *codec.Message) *codec.Message {
-	playerId, ok := loadConnPlayerId(conn.ID) // L1: safe type assertion
-	if !ok {
+	playerId, room, ok := sessions.ByConn(conn.ID)
+	if !ok || room == nil {
 		return nil
 	}
 
 	frameNum, hash, ok := framesync.DecodeFrameHash(msg.Data)
-	if !ok {
-		return nil
-	}
-
-	room, ok := loadPlayerRoom(playerId) // L1: safe type assertion
 	if !ok {
 		return nil
 	}
@@ -1316,13 +1182,8 @@ func handleFrameHash(conn *transport.Conn, msg *codec.Message) *codec.Message {
 
 // handleRequestGamePause 客户端请求游戏级暂停
 func handleRequestGamePause(conn *transport.Conn, msg *codec.Message) *codec.Message {
-	playerId, ok := loadConnPlayerId(conn.ID) // L1: safe type assertion
-	if !ok {
-		return nil
-	}
-
-	room, ok := loadPlayerRoom(playerId) // L1: safe type assertion
-	if !ok {
+	playerId, room, ok := sessions.ByConn(conn.ID)
+	if !ok || room == nil {
 		return nil
 	}
 
@@ -1335,13 +1196,8 @@ func handleRequestGamePause(conn *transport.Conn, msg *codec.Message) *codec.Mes
 
 // handleRequestGameResume 客户端请求解除游戏级暂停
 func handleRequestGameResume(conn *transport.Conn, msg *codec.Message) *codec.Message {
-	playerId, ok := loadConnPlayerId(conn.ID) // L1: safe type assertion
-	if !ok {
-		return nil
-	}
-
-	room, ok := loadPlayerRoom(playerId) // L1: safe type assertion
-	if !ok {
+	playerId, room, ok := sessions.ByConn(conn.ID)
+	if !ok || room == nil {
 		return nil
 	}
 
@@ -1360,13 +1216,8 @@ func handleReliableMsg(conn *transport.Conn, msg *codec.Message) *codec.Message 
 		return nil
 	}
 
-	playerId, ok := loadConnPlayerId(conn.ID) // L1: safe type assertion
-	if !ok {
-		return nil
-	}
-
-	room, ok := loadPlayerRoom(playerId) // L1: safe type assertion
-	if !ok {
+	playerId, room, ok := sessions.ByConn(conn.ID)
+	if !ok || room == nil {
 		return nil
 	}
 
@@ -1392,13 +1243,8 @@ func handleReliableMsg(conn *transport.Conn, msg *codec.Message) *codec.Message 
 }
 
 func handleGameRelay(conn *transport.Conn, msg *codec.Message) *codec.Message {
-	playerId, ok := loadConnPlayerId(conn.ID) // L1: safe type assertion
-	if !ok {
-		return nil
-	}
-
-	room, ok := loadPlayerRoom(playerId) // L1: safe type assertion
-	if !ok {
+	playerId, room, ok := sessions.ByConn(conn.ID)
+	if !ok || room == nil {
 		return nil
 	}
 

@@ -4,7 +4,7 @@ package main
 //
 // 覆盖范围:
 //   P0-1  nextPlayerId: atomic.AddInt32 并发安全性
-//   P0-2  connContextMap: 单次查找的生命周期一致性 + handleFrameInput 路径验证
+//   P0-2  SessionStore.ByConn: 单次查找的生命周期一致性 + handleFrameInput 路径验证
 
 import (
 	"math"
@@ -92,45 +92,43 @@ func TestNextPlayerId_ReturnsPositive(t *testing.T) {
 	}
 }
 
-// ─── P0-2: connContextMap 生命周期 ──────────────────────────────────────────
+// ─── P0-2: SessionStore.ByConn 生命周期 ──────────────────────────────────────
 
-// TestConnContextMap_StoreAndLoad 验证存储后能正确读回 playerId 和 room 指针
-func TestConnContextMap_StoreAndLoad(t *testing.T) {
+// TestSessionStore_StoreAndLoad 验证存储后能正确读回 playerId 和 room 指针
+func TestSessionStore_StoreAndLoad(t *testing.T) {
 	const testConnID = 9000001
 	room := newBenchRoom()
-	ctx := &connContext{playerId: 42, room: room}
 
-	connContextMap.Store(testConnID, ctx)
-	defer connContextMap.Delete(testConnID)
+	sessions.BindToRoom(testConnID, 42, fakeConn(testConnID), room)
+	defer sessions.DeleteByConn(testConnID)
 
-	val, ok := connContextMap.Load(testConnID)
+	pid, r, ok := sessions.ByConn(testConnID)
 	if !ok {
 		t.Fatal("expected entry to exist")
 	}
-	loaded := val.(*connContext)
-	if loaded.playerId != 42 {
-		t.Errorf("playerId: want 42, got %d", loaded.playerId)
+	if pid != 42 {
+		t.Errorf("playerId: want 42, got %d", pid)
 	}
-	if loaded.room != room {
+	if r != room {
 		t.Error("room pointer mismatch")
 	}
 }
 
-// TestConnContextMap_Delete 验证 Delete 后 Load 返回 !ok
-func TestConnContextMap_Delete(t *testing.T) {
+// TestSessionStore_Delete 验证 DeleteByConn 后 ByConn 返回 !ok
+func TestSessionStore_Delete(t *testing.T) {
 	const testConnID = 9000002
-	connContextMap.Store(testConnID, &connContext{playerId: 1, room: newBenchRoom()})
+	sessions.BindToRoom(testConnID, 1, fakeConn(testConnID), newBenchRoom())
 
-	connContextMap.Delete(testConnID)
+	sessions.DeleteByConn(testConnID)
 
-	if _, ok := connContextMap.Load(testConnID); ok {
+	if _, _, ok := sessions.ByConn(testConnID); ok {
 		t.Error("expected entry to be deleted")
 	}
 }
 
-// TestConnContextMap_HandleFrameInput_Miss
-// 当 connID 不在 map 中时，handleFrameInput 应立即返回 nil（不 panic）
-func TestConnContextMap_HandleFrameInput_Miss(t *testing.T) {
+// TestSessionStore_HandleFrameInput_Miss
+// 当 connID 不在 sessions 中时，handleFrameInput 应立即返回 nil（不 panic）
+func TestSessionStore_HandleFrameInput_Miss(t *testing.T) {
 	conn := fakeConn(9000003) // 未注册
 	msg := &codec.Message{Data: []byte{0xFF}}
 	result := handleFrameInput(conn, msg)
@@ -139,9 +137,9 @@ func TestConnContextMap_HandleFrameInput_Miss(t *testing.T) {
 	}
 }
 
-// TestConnContextMap_HandleFrameInput_Hit
-// 当 connID 在 map 中时，handleFrameInput 应调用 room.OnInput 并递增 InputsReceived
-func TestConnContextMap_HandleFrameInput_Hit(t *testing.T) {
+// TestSessionStore_HandleFrameInput_Hit
+// 当 connID 在 sessions 中时，handleFrameInput 应调用 room.OnInput 并递增 InputsReceived
+func TestSessionStore_HandleFrameInput_Hit(t *testing.T) {
 	const testConnID = 9000004
 	const testPid = int32(77)
 
@@ -155,8 +153,8 @@ func TestConnContextMap_HandleFrameInput_Hit(t *testing.T) {
 	}
 	defer roomMgr.RemoveRoom(room.ID)
 
-	connContextMap.Store(testConnID, &connContext{playerId: testPid, room: room})
-	defer connContextMap.Delete(testConnID)
+	sessions.BindToRoom(testConnID, testPid, fakeConn(testConnID), room)
+	defer sessions.DeleteByConn(testConnID)
 
 	conn := fakeConn(testConnID)
 	msg := &codec.Message{Data: []byte{0x01, 0x02, 0x03}}
@@ -174,19 +172,19 @@ func TestConnContextMap_HandleFrameInput_Hit(t *testing.T) {
 	}
 }
 
-// TestConnContextMap_HandleFrameInput_CorrectPlayerIdAndRoom
-// 验证 hit 路径使用了 context 中的 playerId，而非其他玩家的
-func TestConnContextMap_HandleFrameInput_CorrectPlayerIdAndRoom(t *testing.T) {
+// TestSessionStore_HandleFrameInput_CorrectPlayerIdAndRoom
+// 验证 hit 路径使用了正确的 playerId，而非其他玩家的
+func TestSessionStore_HandleFrameInput_CorrectPlayerIdAndRoom(t *testing.T) {
 	const testConnID = 9000005
 
-	// 两个房间 + 两组 context，确保路由不串
+	// 两个房间 + 两组 entry，确保路由不串
 	roomA := newBenchRoom()
 	roomB := newBenchRoom()
 
-	connContextMap.Store(testConnID, &connContext{playerId: 10, room: roomA})
-	connContextMap.Store(testConnID+1, &connContext{playerId: 20, room: roomB})
-	defer connContextMap.Delete(testConnID)
-	defer connContextMap.Delete(testConnID + 1)
+	sessions.BindToRoom(testConnID, 10, fakeConn(testConnID), roomA)
+	sessions.BindToRoom(testConnID+1, 20, fakeConn(testConnID+1), roomB)
+	defer sessions.DeleteByConn(testConnID)
+	defer sessions.DeleteByConn(testConnID + 1)
 
 	inputA := []byte{0xAA}
 	inputB := []byte{0xBB}
@@ -195,47 +193,46 @@ func TestConnContextMap_HandleFrameInput_CorrectPlayerIdAndRoom(t *testing.T) {
 	handleFrameInput(fakeConn(testConnID+1), &codec.Message{Data: inputB})
 
 	// 两次各自触发了 InputsReceived +1；主要验证没有 panic（路由正确）
-	// 实际 OnInput 内容由 room_p0_test.go 中的 framesync 包测试覆盖
 }
 
-// TestConnContextMap_Reconnect_UpdatesEntry
-// 重连时新 context 应覆盖旧 context（playerId 不变，room 可能变）
-func TestConnContextMap_Reconnect_UpdatesEntry(t *testing.T) {
+// TestSessionStore_Reconnect_UpdatesEntry
+// 重连时新 entry 应覆盖旧 entry（playerId 不变，room 可能变）
+func TestSessionStore_Reconnect_UpdatesEntry(t *testing.T) {
 	const testConnID = 9000006
 	const pid = int32(55)
 	roomOld := newBenchRoom()
 	roomNew := newBenchRoom()
+	connOld := fakeConn(testConnID)
 
 	// 第一次 bind
-	connContextMap.Store(testConnID, &connContext{playerId: pid, room: roomOld})
-	defer connContextMap.Delete(testConnID)
+	sessions.BindToRoom(testConnID, pid, connOld, roomOld)
+	defer sessions.DeleteByConn(testConnID)
 
-	// 重连：覆盖 context（room 指针更新）
-	connContextMap.Store(testConnID, &connContext{playerId: pid, room: roomNew})
+	// 重连：新 connID，覆盖 byPlayer entry
+	sessions.Reconnect(testConnID, pid, connOld, roomNew)
 
-	val, ok := connContextMap.Load(testConnID)
+	_, r, ok := sessions.ByConn(testConnID)
 	if !ok {
-		t.Fatal("context should exist after reconnect")
+		t.Fatal("entry should exist after reconnect")
 	}
-	loaded := val.(*connContext)
-	if loaded.room != roomNew {
+	if r != roomNew {
 		t.Error("reconnect should update room pointer to new room")
 	}
-	if loaded.playerId != pid {
-		t.Errorf("playerId should remain %d, got %d", pid, loaded.playerId)
+	pidOut, _, ok2 := sessions.ByConn(testConnID)
+	if !ok2 || pidOut != pid {
+		t.Errorf("playerId should remain %d, got %d", pid, pidOut)
 	}
 }
 
-// TestConnContextMap_Disconnect_ClearsEntry
-// onClientDisconnect 应清理 connContextMap，防止幽灵条目
-func TestConnContextMap_Disconnect_ClearsEntry(t *testing.T) {
+// TestSessionStore_Disconnect_ClearsEntry
+// Disconnect 之后 ByConn 应返回 !ok，防止幽灵条目
+func TestSessionStore_Disconnect_ClearsEntry(t *testing.T) {
 	const testConnID = 9000007
-	connContextMap.Store(testConnID, &connContext{playerId: 99, room: newBenchRoom()})
+	sessions.BindToRoom(testConnID, 99, fakeConn(testConnID), newBenchRoom())
 
-	// 模拟 onClientDisconnect 的清理行为
-	connContextMap.Delete(testConnID)
+	sessions.Disconnect(testConnID)
 
-	if _, ok := connContextMap.Load(testConnID); ok {
+	if _, _, ok := sessions.ByConn(testConnID); ok {
 		t.Error("entry should be cleared after disconnect")
 	}
 
@@ -266,12 +263,12 @@ func BenchmarkNextPlayerId_Parallel(b *testing.B) {
 	})
 }
 
-// BenchmarkHandleFrameInput 串行基准：单次 sync.Map 查找 + room.OnInput 的端到端开销
+// BenchmarkHandleFrameInput 串行基准：单次 SessionStore.ByConn + room.OnInput 的端到端开销
 func BenchmarkHandleFrameInput(b *testing.B) {
 	const benchConnID = 8000001
 	room := newBenchRoom()
-	connContextMap.Store(benchConnID, &connContext{playerId: 1, room: room})
-	defer connContextMap.Delete(benchConnID)
+	sessions.BindToRoom(benchConnID, 1, fakeConn(benchConnID), room)
+	defer sessions.DeleteByConn(benchConnID)
 
 	conn := fakeConn(benchConnID)
 	msg := &codec.Message{Data: []byte{0x01, 0x02, 0x03, 0x04}}
@@ -294,8 +291,8 @@ func BenchmarkHandleFrameInput_Parallel(b *testing.B) {
 		// 每个并行 goroutine 拥有独立 conn + room，消除 room.mu 竞争
 		id := int(atomic.AddInt32(&benchConnIDBase, 1))
 		room := newBenchRoom()
-		connContextMap.Store(id, &connContext{playerId: int32(id), room: room})
-		defer connContextMap.Delete(id)
+		sessions.BindToRoom(id, int32(id), fakeConn(id), room)
+		defer sessions.DeleteByConn(id)
 
 		conn := fakeConn(id)
 		msg := &codec.Message{Data: []byte{0x01, 0x02, 0x03, 0x04}}
@@ -331,48 +328,46 @@ func TestNextPlayerId_MaxInt32_WrapAround(t *testing.T) {
 
 // TestReconnect_NewMappingBeforeOldClose
 // P1-05 修复验证：重连时先更新映射再关闭旧连接，确保映射无残留旧条目。
+// 现在由 SessionStore.Reconnect 原子完成，无需手动顺序。
 func TestReconnect_NewMappingBeforeOldClose(t *testing.T) {
 	const pid = int32(7771)
 	const oldConnID = 90001
 	const newConnID = 90002
 
-	// Setup: simulate player with old conn
-	connPlayerMap.Store(oldConnID, pid)
-	playerConnMap.Store(pid, &transport.Conn{ID: oldConnID})
-	connContextMap.Store(oldConnID, &connContext{playerId: pid})
+	oldConn := &transport.Conn{ID: oldConnID}
+	newConnObj := &transport.Conn{ID: newConnID}
+
+	// Setup: 模拟玩家持有旧连接
+	sessions.BindToRoom(oldConnID, pid, oldConn, nil)
 	defer func() {
-		connPlayerMap.Delete(oldConnID)
-		connPlayerMap.Delete(newConnID)
-		playerConnMap.Delete(pid)
-		connContextMap.Delete(oldConnID)
-		connContextMap.Delete(newConnID)
+		sessions.DeleteByConn(oldConnID)
+		sessions.DeleteByConn(newConnID)
+		sessions.DeleteByPlayer(pid)
 	}()
 
-	newConn := &transport.Conn{ID: newConnID}
+	// Reconnect 原子完成：更新 byConn[newConnID] + byPlayer[pid]，删除 byConn[oldConnID]
+	retOldConnID, retOldConn := sessions.Reconnect(newConnID, pid, newConnObj, nil)
 
-	// Simulate P1-05 fix: update maps first, then delete old entries
-	connPlayerMap.Store(newConnID, pid)
-	playerConnMap.Store(pid, newConn)
-	connContextMap.Store(newConnID, &connContext{playerId: pid})
+	// Verify: Reconnect 返回了旧连接信息
+	if retOldConnID != oldConnID {
+		t.Errorf("expected retOldConnID=%d, got %d", oldConnID, retOldConnID)
+	}
+	if retOldConn != oldConn {
+		t.Errorf("expected retOldConn=%p, got %p", oldConn, retOldConn)
+	}
 
-	// Now delete old conn entries (simulating post-Close cleanup)
-	connPlayerMap.Delete(oldConnID)
-	connContextMap.Delete(oldConnID)
+	// Verify: 新 conn 在 sessions 中，旧 conn 已删除
+	pidOut, _, ok1 := sessions.ByConn(newConnID)
+	if !ok1 || pidOut != pid {
+		t.Errorf("new connId should exist in sessions with pid=%d", pid)
+	}
+	if _, _, ok2 := sessions.ByConn(oldConnID); ok2 {
+		t.Error("old connId should be removed from sessions")
+	}
 
-	// Verify: new conn is in maps, old conn is gone
-	if v, ok := playerConnMap.Load(pid); !ok || v.(*transport.Conn).ID != newConnID {
-		t.Error("playerConnMap should point to new conn")
-	}
-	if _, ok := connPlayerMap.Load(oldConnID); ok {
-		t.Error("old connId should be removed from connPlayerMap")
-	}
-	if _, ok := connPlayerMap.Load(newConnID); !ok {
-		t.Error("new connId should exist in connPlayerMap")
-	}
-	if _, ok := connContextMap.Load(oldConnID); ok {
-		t.Error("old connId should be removed from connContextMap")
-	}
-	if _, ok := connContextMap.Load(newConnID); !ok {
-		t.Error("new connId should exist in connContextMap")
+	// Verify: byPlayer 指向新连接
+	_, connOut, ok3 := sessions.ByPlayer(pid)
+	if !ok3 || connOut != newConnObj {
+		t.Errorf("byPlayer[%d] should point to newConn", pid)
 	}
 }
