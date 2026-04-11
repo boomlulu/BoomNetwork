@@ -342,7 +342,7 @@ func TestPerf_GET(t *testing.T) {
 	ensureTestGlobals()
 	// Clear perf cache
 	atomic.StoreInt64(&perfCacheTime, 0)
-	perfCachedJSON = nil
+	perfCache.Store([]byte(nil))
 
 	req := httptest.NewRequest(http.MethodGet, "/perf", nil)
 	rec := httptest.NewRecorder()

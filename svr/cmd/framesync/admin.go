@@ -187,7 +187,11 @@ func handleStats(w http.ResponseWriter, r *http.Request) {
 		s.Players += room.PlayerCount()
 		byMK[mk] = s
 	}
-	byMKJSON, _ := json.Marshal(byMK)
+	byMKJSON, err := json.Marshal(byMK)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
 
 	var mem runtime.MemStats
 	runtime.ReadMemStats(&mem)
@@ -232,7 +236,11 @@ func handleStats(w http.ResponseWriter, r *http.Request) {
 		TotalRooms:        roomMgr.RoomCount(),
 	}
 
-	respJSON, _ := json.Marshal(resp)
+	respJSON, err := json.Marshal(resp)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
 
 	// 拼入 by_match_key（避免嵌套 struct 带来的额外 alloc）
 	w.Header().Set("Content-Type", "application/json")
@@ -568,9 +576,10 @@ func handlePlayerDetail(w http.ResponseWriter, r *http.Request) {
 // ===================== GET /perf (G6) =====================
 
 // 缓存 ReadMemStats 结果，避免每次请求都触发 STW
+// NEW-07: perfCache 改用 atomic.Value，消除 []byte slice header 的非原子读写竞态。
 var (
-	perfCachedJSON []byte
-	perfCacheTime  int64 // unix seconds
+	perfCache     atomic.Value // stores []byte
+	perfCacheTime int64        // unix seconds（atomic 读写）
 )
 
 const perfCacheTTL = 5 // 秒
@@ -582,16 +591,16 @@ func handlePerf(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now().Unix()
-	if atomic.LoadInt64(&perfCacheTime)+perfCacheTTL > now && perfCachedJSON != nil {
+	if cached, ok := perfCache.Load().([]byte); ok && atomic.LoadInt64(&perfCacheTime)+perfCacheTTL > now {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(perfCachedJSON)
+		w.Write(cached)
 		return
 	}
 
 	var memStats runtime.MemStats
 	runtime.ReadMemStats(&memStats)
 
-	json := fmt.Appendf(nil,
+	jsonBytes := fmt.Appendf(nil,
 		`{"goroutines":%d,"heap_mb":%.2f,"sys_mb":%.2f,"gc_count":%d,"gc_pause_us":%d,"rooms":%d,"players":%d}`,
 		runtime.NumGoroutine(),
 		float64(memStats.HeapAlloc)/(1024*1024),
@@ -602,11 +611,11 @@ func handlePerf(w http.ResponseWriter, r *http.Request) {
 		countOnlinePlayers(),
 	)
 
-	perfCachedJSON = json
+	perfCache.Store(jsonBytes)
 	atomic.StoreInt64(&perfCacheTime, now)
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Write(json)
+	w.Write(jsonBytes)
 }
 
 // ===================== GET /rates (G8) =====================

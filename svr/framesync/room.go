@@ -838,6 +838,43 @@ func (r *Room) OldestBufferedFrame() uint32 {
 	return r.frameRing[idx].FrameNumber
 }
 
+// ReconnectSnapshot 重连所需的所有字段，一次加锁原子读取（NEW-03）
+type ReconnectSnapshot struct {
+	Running       bool
+	GamePaused    bool
+	Frame         uint32
+	OldestFrame   uint32
+	SnapshotFrame uint32
+	Snapshot      []byte
+}
+
+// GetReconnectSnapshot 一次加锁读取所有重连所需字段，避免多次独立调用之间的 TOCTOU。
+func (r *Room) GetReconnectSnapshot() ReconnectSnapshot {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	var oldestFrame uint32
+	if r.frameRingLen > 0 {
+		idx := (r.frameRingPos - r.frameRingLen + len(r.frameRing)) % len(r.frameRing)
+		oldestFrame = r.frameRing[idx].FrameNumber
+	}
+
+	var snapshotCopy []byte
+	if len(r.snapshotData) > 0 {
+		snapshotCopy = make([]byte, len(r.snapshotData))
+		copy(snapshotCopy, r.snapshotData)
+	}
+
+	return ReconnectSnapshot{
+		Running:       r.running,
+		GamePaused:    r.gamePaused,
+		Frame:         r.frameNumber,
+		OldestFrame:   oldestFrame,
+		SnapshotFrame: r.snapshotFrame,
+		Snapshot:      snapshotCopy,
+	}
+}
+
 // IsSnapshotPaused 是否因快照过期而暂停
 func (r *Room) IsSnapshotPaused() bool {
 	r.mu.Lock()

@@ -637,14 +637,16 @@ func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
 		return codec.NewCoreMessage(framesync.CmdReconnectRsp, rsp)
 	}
 
-	currentFrame := room.CurrentFrameNumber()
-	snapshotFrame, snapshotData := room.GetSnapshot()
+	// NEW-03: 一次加锁读取所有重连所需字段，避免多次独立调用之间的 TOCTOU（房间可能被 Reconciler 销毁）
+	rs := room.GetReconnectSnapshot()
+	currentFrame := rs.Frame
+	snapshotFrame := rs.SnapshotFrame
+	snapshotData := rs.Snapshot
 
 	// 快速重连路径: lastFrame > 0，检查帧环形缓冲区
 	if lastFrame > 0 {
-		oldestFrame := room.OldestBufferedFrame()
-		if oldestFrame > 0 && lastFrame < oldestFrame {
-			slog.Warn("reconnect frame buffer stale", "playerId", playerId, "lastFrame", lastFrame, "oldestFrame", oldestFrame)
+		if rs.OldestFrame > 0 && lastFrame < rs.OldestFrame {
+			slog.Warn("reconnect frame buffer stale", "playerId", playerId, "lastFrame", lastFrame, "oldestFrame", rs.OldestFrame)
 			rsp := framesync.EncodeReconnectRsp(framesync.ReconnectFailBufferStale, room.ID, currentFrame, 0, 0, nil)
 			return codec.NewCoreMessage(framesync.CmdReconnectRsp, rsp)
 		}
@@ -699,11 +701,8 @@ func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	framesync.Metrics.ReconnectSuccess.Inc()
 	rsp := framesync.EncodeReconnectRsp(framesync.ReconnectSuccess, room.ID, currentFrame, snapshotFrame, serverLastC2SSeq, snapshotData)
 
-	// 原子读取房间状态，避免连续两次独立读取的 TOCTOU（P2-13）
-	roomState := room.GetState()
-
-	// 通知同房其他玩家：恢复在线（非新加入）
-	if roomState.Running {
+	// 通知同房其他玩家：恢复在线（非新加入），使用原子快照中的 Running 状态
+	if rs.Running {
 		room.EnqueueEvent(framesync.FrameEventPlayerOnline, playerId)
 	} else {
 		broadcastToRoom(room, playerId, codec.NewExtMessage(framesync.ExtCmdPlayerOnline, framesync.EncodePlayerId(playerId)))
@@ -713,7 +712,7 @@ func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	_ = sendMsg(conn, codec.NewCoreMessage(framesync.CmdReconnectRsp, rsp))
 
 	// 若房间处于游戏级暂停，在 delivery loop 前补发（preamble 之外，conn 互斥保证顺序）
-	if roomState.GamePaused {
+	if rs.GamePaused {
 		_ = sendMsg(conn, codec.NewExtMessage(framesync.ExtCmdFrameSyncPaused, []byte{byte(framesync.PauseReasonGamePause)}))
 	}
 
