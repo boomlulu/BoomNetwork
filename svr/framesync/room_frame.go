@@ -135,10 +135,14 @@ func (r *Room) stepFrame() {
 		staleLimit := uint32(r.config.SnapshotIntervalFrames * 3)
 		if r.snapshotStaleFrames >= staleLimit && !r.snapshotPaused {
 			r.snapshotPaused = true
-			r.frameHashes = make(map[uint32]map[int32]uint32) // NEW-01: 暂停时清空，避免帧号不递增导致哈希永驻内存
 			slog.Warn("no snapshot received, pausing frame sync", "roomId", r.ID, "staleFrames", r.snapshotStaleFrames, "limit", staleLimit)
 			d := r.delegate
 			r.mu.Unlock()
+			// NEW-01: 暂停时清空 frameHashes，避免帧号不递增导致哈希永驻内存。
+			// 锁顺序规则：在 r.mu 释放后单独持 desyncMu（防死锁）。
+			r.desyncMu.Lock()
+			r.frameHashes = make(map[uint32]map[int32]uint32)
+			r.desyncMu.Unlock()
 			r.broadcast(codec.NewExtMessage(ExtCmdFrameSyncPaused, []byte{byte(PauseReasonSnapshotStale)}))
 			if d != nil {
 				d.OnRoomPaused(r, PauseReasonSnapshotStale)

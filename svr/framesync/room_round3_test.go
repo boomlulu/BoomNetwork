@@ -38,18 +38,12 @@ func TestDesyncDetection_DetectsHashMismatch(t *testing.T) {
 	}
 
 	// M9: 检测到 desync 后，frameHashes 必须被清空以释放内存
-	room.mu.Lock()
-	mapLen := len(room.frameHashes)
-	room.mu.Unlock()
-	if mapLen != 0 {
+	if mapLen := room.testOnlyFrameHashesLen(); mapLen != 0 {
 		t.Errorf("frameHashes should be cleared after desync, got len=%d", mapLen)
 	}
 
 	// desyncDetected flag 必须置位
-	room.mu.Lock()
-	detected := room.desyncDetected
-	room.mu.Unlock()
-	if !detected {
+	if !room.testOnlyDesyncDetected() {
 		t.Error("desyncDetected should be true after hash mismatch")
 	}
 }
@@ -70,10 +64,7 @@ func TestDesyncDetection_SameHash_NoDesync(t *testing.T) {
 		t.Error("same hash from two players should not detect desync")
 	}
 
-	room.mu.Lock()
-	detected := room.desyncDetected
-	room.mu.Unlock()
-	if detected {
+	if room.testOnlyDesyncDetected() {
 		t.Error("desyncDetected should be false when hashes match")
 	}
 }

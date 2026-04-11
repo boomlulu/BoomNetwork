@@ -49,14 +49,20 @@ func (r *Room) IsGamePaused() bool {
 
 // GamePause 设置游戏级暂停。返回 true 表示状态变更（从运行→暂停）。
 // NEW-01: 暂停时主动清空 frameHashes，避免暂停期间帧号不递增导致哈希永驻内存。
+// 锁顺序规则：先释放 r.mu，再持 r.desyncMu 清空 frameHashes（防死锁）。
 func (r *Room) GamePause() bool {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if r.gamePaused {
+		r.mu.Unlock()
 		return false
 	}
 	r.gamePaused = true
+	r.mu.Unlock()
+
+	// 在 r.mu 释放后单独持 desyncMu 清空，语义不变（暂停后清空）
+	r.desyncMu.Lock()
 	r.frameHashes = make(map[uint32]map[int32]uint32)
+	r.desyncMu.Unlock()
 	return true
 }
 

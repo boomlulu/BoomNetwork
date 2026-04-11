@@ -187,6 +187,8 @@ type Room struct {
 	dataVersion uint32
 
 	// Desync detection: frame hash collection
+	// desyncMu 独立保护 frameHashes + desyncDetected，避免 ReportFrameHash 阻塞 stepFrame
+	desyncMu       sync.Mutex
 	frameHashes    map[uint32]map[int32]uint32 // frameNumber → playerId → hash
 	desyncDetected bool
 

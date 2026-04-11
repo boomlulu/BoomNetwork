@@ -4,11 +4,22 @@ package framesync
 
 // ReportFrameHash 客户端上报帧 hash，检测不同步
 // Returns true if desync detected
+//
+// 锁顺序规则：先短暂持 r.mu 读 running，再持 r.desyncMu 操作 desync 状态。
+// 永远不在持有 r.desyncMu 时再获取 r.mu（防死锁）。
 func (r *Room) ReportFrameHash(playerId int32, frameNumber uint32, hash uint32) bool {
+	// 快速读取 running（由 r.mu 保护），不进入 desync 锁
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	running := r.running
+	r.mu.Unlock()
+	if !running {
+		return false
+	}
 
-	if r.desyncDetected || !r.running {
+	r.desyncMu.Lock()
+	defer r.desyncMu.Unlock()
+
+	if r.desyncDetected {
 		return false
 	}
 
@@ -53,8 +64,8 @@ func (r *Room) ReportFrameHash(playerId int32, frameNumber uint32, hash uint32) 
 
 // GetFrameHashes returns hashes for a specific frame (for logging)
 func (r *Room) GetFrameHashes(frameNumber uint32) map[int32]uint32 {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	r.desyncMu.Lock()
+	defer r.desyncMu.Unlock()
 	result := make(map[int32]uint32)
 	if hashes, ok := r.frameHashes[frameNumber]; ok {
 		for k, v := range hashes {
@@ -66,7 +77,39 @@ func (r *Room) GetFrameHashes(frameNumber uint32) map[int32]uint32 {
 
 // IsDesyncDetected 是否已检测到 desync（GM 检视用）
 func (r *Room) IsDesyncDetected() bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	r.desyncMu.Lock()
+	defer r.desyncMu.Unlock()
 	return r.desyncDetected
+}
+
+// ===================== Test-only helpers（同 package _test.go 调用，不 export）=====================
+
+// testOnlyFrameHashesLen 供测试读取 frameHashes 长度，使用正确的锁
+func (r *Room) testOnlyFrameHashesLen() int {
+	r.desyncMu.Lock()
+	defer r.desyncMu.Unlock()
+	return len(r.frameHashes)
+}
+
+// testOnlyDesyncDetected 供测试读取 desyncDetected 标志，使用正确的锁
+func (r *Room) testOnlyDesyncDetected() bool {
+	r.desyncMu.Lock()
+	defer r.desyncMu.Unlock()
+	return r.desyncDetected
+}
+
+// testOnlySetFrameHashes 供测试预置 frameHashes 数据，使用正确的锁
+func (r *Room) testOnlySetFrameHashes(m map[uint32]map[int32]uint32) {
+	r.desyncMu.Lock()
+	r.frameHashes = m
+	r.desyncMu.Unlock()
+}
+
+// testOnlyGetFrameHash 供测试读取特定帧的特定玩家 hash，使用正确的锁
+func (r *Room) testOnlyGetFrameHashEntry(frameNumber uint32, key uint32) (bool, bool) {
+	r.desyncMu.Lock()
+	defer r.desyncMu.Unlock()
+	_, has := r.frameHashes[key]
+	_, hasFrame := r.frameHashes[frameNumber]
+	return has, hasFrame
 }

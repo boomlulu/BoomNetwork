@@ -19,23 +19,19 @@ func TestReportFrameHash_CleanupOnlyAtPeriod(t *testing.T) {
 
 	// 塞入帧 1~210 的 hash，之后再调一帧来触发清理路径
 	// 先直接写入 frameHashes，模拟历史帧
-	room.mu.Lock()
+	initHashes := make(map[uint32]map[int32]uint32)
 	for fn := uint32(1); fn <= 210; fn++ {
-		room.frameHashes[fn] = map[int32]uint32{1: 0xABCD}
+		initHashes[fn] = map[int32]uint32{1: 0xABCD}
 	}
-	room.mu.Unlock()
+	room.testOnlySetFrameHashes(initHashes)
 
 	// 在 frameNumber=201（不整除 100）时上报，不应触发清理
 	room.ReportFrameHash(1, 201, 0xABCD)
-	room.mu.Lock()
-	countBefore := len(room.frameHashes)
-	room.mu.Unlock()
+	countBefore := room.testOnlyFrameHashesLen()
 
 	// 上报 frameNumber=300（整除 100）时才触发清理
 	room.ReportFrameHash(1, 300, 0xABCD)
-	room.mu.Lock()
-	countAfter := len(room.frameHashes)
-	room.mu.Unlock()
+	countAfter := room.testOnlyFrameHashesLen()
 
 	if countBefore == 0 {
 		t.Error("before period cleanup: frameHashes should not be empty")
@@ -46,10 +42,7 @@ func TestReportFrameHash_CleanupOnlyAtPeriod(t *testing.T) {
 		t.Errorf("periodic cleanup should reduce frameHashes: before=%d after=%d", countBefore, countAfter)
 	}
 	// 验证 cutoff 正确：帧 99 应不存在，帧 100 应存在
-	room.mu.Lock()
-	_, has99 := room.frameHashes[99]
-	_, has100 := room.frameHashes[100]
-	room.mu.Unlock()
+	has99, has100 := room.testOnlyGetFrameHashEntry(100, 99)
 	if has99 {
 		t.Error("frame 99 should have been cleaned up (cutoff=100)")
 	}
@@ -64,17 +57,15 @@ func TestReportFrameHash_NoCleanupBetweenPeriods(t *testing.T) {
 	setRunning(room, true)
 
 	// 写入 300 帧历史
-	room.mu.Lock()
+	initHashes2 := make(map[uint32]map[int32]uint32)
 	for fn := uint32(1); fn <= 300; fn++ {
-		room.frameHashes[fn] = map[int32]uint32{1: 0x1234}
+		initHashes2[fn] = map[int32]uint32{1: 0x1234}
 	}
-	room.mu.Unlock()
+	room.testOnlySetFrameHashes(initHashes2)
 
 	// 在非整除帧（201 = 300%100 != 0 → 这里使用 frameNumber=251）上报，不清理
 	room.ReportFrameHash(1, 251, 0x1234)
-	room.mu.Lock()
-	count := len(room.frameHashes)
-	room.mu.Unlock()
+	count := room.testOnlyFrameHashesLen()
 
 	// 301 条（原 300 + 刚写入的 251 已存在，不增加）
 	if count < 200 {
@@ -177,11 +168,11 @@ func BenchmarkReportFrameHash(b *testing.B) {
 	room := newP0Room()
 	setRunning(room, true)
 	// 预热：塞入 300 帧的 hash（稳态）
+	warmup := make(map[uint32]map[int32]uint32)
 	for fn := uint32(1); fn <= 300; fn++ {
-		room.mu.Lock()
-		room.frameHashes[fn] = map[int32]uint32{1: 0xABCD, 2: 0xABCD}
-		room.mu.Unlock()
+		warmup[fn] = map[int32]uint32{1: 0xABCD, 2: 0xABCD}
 	}
+	room.testOnlySetFrameHashes(warmup)
 
 	b.ReportAllocs()
 	b.ResetTimer()
