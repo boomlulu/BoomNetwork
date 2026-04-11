@@ -21,8 +21,9 @@ type ServerConfig struct {
 	MetricsAddr string `yaml:"metricsAddr"`
 
 	// Admin HTTP 服务（健康检查 / GM 操作）
-	AdminAddr  string `yaml:"adminAddr"`
-	AdminToken string `yaml:"adminToken"` // Bearer Token 鉴权，空 = 不鉴权
+	AdminAddr         string `yaml:"adminAddr"`
+	AdminToken        string `yaml:"adminToken"`         // Bearer Token 鉴权，空 = 不鉴权
+	AdminShutdownSec  int    `yaml:"admin_shutdown_sec"` // 优雅关闭超时（秒），0 = 默认 5
 
 	// 房间
 	PlayersPerRoom int `yaml:"playersPerRoom"`

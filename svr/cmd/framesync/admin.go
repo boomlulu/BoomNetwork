@@ -37,7 +37,7 @@ var totalConnEver int64
 //	GET  /rooms            房间列表 + 玩家详情
 //	POST /kick/{pid}       踢出玩家
 //	POST /rooms/stop/{id}  强停房间
-func startAdminServer(ctx context.Context, addr, token string) {
+func startAdminServer(ctx context.Context, addr, token string, cfg ServerConfig) {
 	mux := http.NewServeMux()
 
 	// /health 不鉴权（健康检查探针需要无障碍访问）
@@ -74,10 +74,19 @@ func startAdminServer(ctx context.Context, addr, token string) {
 
 	srv := &http.Server{Addr: addr, Handler: handler}
 
+	// PERF-06: 启动后台 perf 采集 goroutine，消除请求路径上的 STW
+	startPerfCollector(ctx)
+
+	// ARCH-06: shutdown timeout 从配置读取，默认 5 秒
+	shutdownSec := cfg.AdminShutdownSec
+	if shutdownSec <= 0 {
+		shutdownSec = 5
+	}
+
 	// 优雅关闭
 	go func() {
 		<-ctx.Done()
-		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutCtx, cancel := context.WithTimeout(context.Background(), time.Duration(shutdownSec)*time.Second)
 		defer cancel()
 		srv.Shutdown(shutCtx)
 		gmHub.Stop()
@@ -575,14 +584,47 @@ func handlePlayerDetail(w http.ResponseWriter, r *http.Request) {
 
 // ===================== GET /perf (G6) =====================
 
-// 缓存 ReadMemStats 结果，避免每次请求都触发 STW
-// NEW-07: perfCache 改用 atomic.Value，消除 []byte slice header 的非原子读写竞态。
-var (
-	perfCache     atomic.Value // stores []byte
-	perfCacheTime int64        // unix seconds（atomic 读写）
-)
+// perfCache 存储后台 goroutine 定期刷新的 /perf JSON（[]byte）。
+// PERF-06: ReadMemStats 移入后台，请求路径零 STW。
+var perfCache atomic.Value // stores []byte
 
-const perfCacheTTL = 5 // 秒
+// buildPerfJSON 将 MemStats 序列化为 /perf 响应 JSON。
+func buildPerfJSON(ms *runtime.MemStats) []byte {
+	return fmt.Appendf(nil,
+		`{"goroutines":%d,"heap_mb":%.2f,"sys_mb":%.2f,"gc_count":%d,"gc_pause_us":%d,"rooms":%d,"players":%d}`,
+		runtime.NumGoroutine(),
+		float64(ms.HeapAlloc)/(1024*1024),
+		float64(ms.Sys)/(1024*1024),
+		ms.NumGC,
+		ms.PauseNs[(ms.NumGC+255)%256]/1000,
+		roomMgr.RoomCount(),
+		countOnlinePlayers(),
+	)
+}
+
+// startPerfCollector 每 5 秒在后台调用 ReadMemStats 并刷新 perfCache。
+// 随 ctx 取消退出，完全消除请求路径上的 STW。
+func startPerfCollector(ctx context.Context) {
+	// 启动时立即采集一次，避免服务刚起时 /perf 返回空
+	var ms runtime.MemStats
+	runtime.ReadMemStats(&ms)
+	perfCache.Store(buildPerfJSON(&ms))
+
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				var ms runtime.MemStats
+				runtime.ReadMemStats(&ms)
+				perfCache.Store(buildPerfJSON(&ms))
+			}
+		}
+	}()
+}
 
 func handlePerf(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -590,32 +632,15 @@ func handlePerf(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	now := time.Now().Unix()
-	if cached, ok := perfCache.Load().([]byte); ok && atomic.LoadInt64(&perfCacheTime)+perfCacheTTL > now {
+	// 直接读缓存，无 STW
+	if cached, ok := perfCache.Load().([]byte); ok {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(cached)
 		return
 	}
 
-	var memStats runtime.MemStats
-	runtime.ReadMemStats(&memStats)
-
-	jsonBytes := fmt.Appendf(nil,
-		`{"goroutines":%d,"heap_mb":%.2f,"sys_mb":%.2f,"gc_count":%d,"gc_pause_us":%d,"rooms":%d,"players":%d}`,
-		runtime.NumGoroutine(),
-		float64(memStats.HeapAlloc)/(1024*1024),
-		float64(memStats.Sys)/(1024*1024),
-		memStats.NumGC,
-		memStats.PauseNs[(memStats.NumGC+255)%256]/1000,
-		roomMgr.RoomCount(),
-		countOnlinePlayers(),
-	)
-
-	perfCache.Store(jsonBytes)
-	atomic.StoreInt64(&perfCacheTime, now)
-
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(jsonBytes)
+	// 极罕见：collector 尚未完成首次采集（服务启动后首毫秒）
+	http.Error(w, "perf data not ready", http.StatusServiceUnavailable)
 }
 
 // ===================== GET /rates (G8) =====================

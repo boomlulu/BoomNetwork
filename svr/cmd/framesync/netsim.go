@@ -2,7 +2,6 @@ package main
 
 import (
 	"math/rand"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -35,22 +34,17 @@ var GlobalNetSim = &NetSimConfig{}
 
 // 模拟统计
 var (
-	simDropped  int64 // 丢弃的消息数
-	simDelayed  int64 // 延迟的消息数
-	simPending  int64 // 当前排队中的延迟消息数
-	simMu       sync.Mutex
-	simRand     = rand.New(rand.NewSource(time.Now().UnixNano()))
+	simDropped int64 // 丢弃的消息数
+	simDelayed int64 // 延迟的消息数
+	simPending int64 // 当前排队中的延迟消息数
 )
 
 // simPendingMax 超过此阈值时降级为直接发送，防止 timer 积压 OOM
 const simPendingMax = 10000
 
-func simRandIntn(n int) int {
-	simMu.Lock()
-	v := simRand.Intn(n)
-	simMu.Unlock()
-	return v
-}
+// simRandIntn 返回 [0, n) 范围内的随机整数。
+// Go 1.22+ 全局 rand 已并发安全，无需加锁。
+func simRandIntn(n int) int { return rand.Intn(n) }
 
 // simConn 网络模拟层 — 包装 PlayerConn，模拟延迟和丢包
 //

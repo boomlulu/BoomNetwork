@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -340,9 +341,10 @@ func TestMessages_GET(t *testing.T) {
 
 func TestPerf_GET(t *testing.T) {
 	ensureTestGlobals()
-	// Clear perf cache
-	atomic.StoreInt64(&perfCacheTime, 0)
-	perfCache.Store([]byte(nil))
+	// PERF-06: ReadMemStats 在后台 goroutine 中执行；测试直接预填充缓存
+	var ms runtime.MemStats
+	runtime.ReadMemStats(&ms)
+	perfCache.Store(buildPerfJSON(&ms))
 
 	req := httptest.NewRequest(http.MethodGet, "/perf", nil)
 	rec := httptest.NewRecorder()

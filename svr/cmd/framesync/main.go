@@ -280,7 +280,7 @@ func main() {
 
 	// Admin HTTP + WebSocket server
 	if *adminAddr != "" {
-		go startAdminServer(ctx, *adminAddr, *adminToken)
+		go startAdminServer(ctx, *adminAddr, *adminToken, cfg)
 	}
 
 	// RoomReconciler：期望状态 vs 实际状态协调循环
