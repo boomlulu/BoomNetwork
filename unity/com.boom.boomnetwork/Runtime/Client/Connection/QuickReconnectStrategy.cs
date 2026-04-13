@@ -10,7 +10,7 @@ namespace BoomNetwork.Client.Connection
     /// 快速重连策略
     ///
     /// 流程: 重建 TCP → 发送 Reconnect(playerId, lastFrame) → 服务器重发缺失帧 → 重发未确认消息
-    /// 适用: 短时间断线（< 几秒），服务器帧缓冲区还有数据
+    /// 适用: 短时间断线（&lt; 几秒），服务器帧缓冲区还有数据
     /// </summary>
     public class QuickReconnectStrategy : IReconnectStrategy
     {
@@ -21,7 +21,7 @@ namespace BoomNetwork.Client.Connection
         private bool _cancelled;
 
         public void Attempt(NetworkSession session, string host, int port,
-            ReconnectContext context, Action onSuccess, Action<NetworkError> onFail)
+            ReconnectState state, Action<ReconnectOutcome> onSuccess, Action<NetworkError> onFail)
         {
             _cancelled = false;
 
@@ -33,9 +33,10 @@ namespace BoomNetwork.Client.Connection
                 if (_cancelled) return;
 
                 // 发送 [playerId:4][lastFrame:4][lastS2CSeq:4]
+                // state.LastFrameNumber 由 CM 每帧同步，此处读到的是当前最新帧号
                 var data = new byte[12];
-                BinaryPrimitives.WriteInt32LittleEndian(data.AsSpan(0), context.PlayerId);
-                BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(4), context.LastFrameNumber);
+                BinaryPrimitives.WriteInt32LittleEndian(data.AsSpan(0), state.PlayerId);
+                BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(4), state.LastFrameNumber);
                 BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(8), session.LastDeliveredS2CSeq);
 
                 session.SendAsync(FrameSyncCmd.Reconnect, data, TimeoutMs,
@@ -58,15 +59,16 @@ namespace BoomNetwork.Client.Connection
                             return;
                         }
 
-                        context.ServerFrameNumber = serverFrame;
-                        context.IsSnapshotRestore = false;
-
                         // 清空旧的 sent buffer（SessionBind/JoinRoom 等不能重发）
                         session.ClearSentBuffer();
                         // 重发 C→S reliable 队列中服务端未处理的消息
                         session.ReplayC2SQueue(serverLastC2SSeq);
 
-                        onSuccess();
+                        onSuccess(new ReconnectOutcome
+                        {
+                            ServerFrameNumber = serverFrame,
+                            IsSnapshotRestore = false,
+                        });
                     },
                     onTimeout: err =>
                     {

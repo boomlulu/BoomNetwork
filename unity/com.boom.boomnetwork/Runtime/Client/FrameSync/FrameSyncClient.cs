@@ -607,18 +607,18 @@ namespace BoomNetwork.Client.FrameSync
             OnDisconnected?.Invoke();
         }
 
-        private void HandleReconnected(ReconnectContext context)
+        private void HandleReconnected(ReconnectOutcome outcome)
         {
             _pendingSnapshotData = null;
             _snapshotRetryCount = 0;
             _snapshotRetryTimer = 0;
 
-            if (context.IsSnapshotRestore && context.SnapshotData != null)
+            if (outcome.IsSnapshotRestore && outcome.SnapshotData != null)
             {
-                OnLoadSnapshot?.Invoke(context.SnapshotData);
-                LastFrameNumber = context.SnapshotFrame;
-                _lastSnapshotFrame = context.SnapshotFrame;
-                Log($"Snapshot restored (frame {context.SnapshotFrame})");
+                OnLoadSnapshot?.Invoke(outcome.SnapshotData);
+                LastFrameNumber = outcome.SnapshotFrame;
+                _lastSnapshotFrame = outcome.SnapshotFrame;
+                Log($"Snapshot restored (frame {outcome.SnapshotFrame})");
             }
             else
             {
@@ -642,7 +642,7 @@ namespace BoomNetwork.Client.FrameSync
             if (InitData.HasValue && InitData.Value.SnapshotInterval > 0)
                 SnapshotInterval = (uint)InitData.Value.SnapshotInterval;
 
-            if (_frameSyncStarted || context.ServerFrameNumber > 0)
+            if (_frameSyncStarted || outcome.ServerFrameNumber > 0)
             {
                 _frameSyncStarted = true;
                 CurrentState = State.Syncing;
@@ -652,7 +652,7 @@ namespace BoomNetwork.Client.FrameSync
                 CurrentState = State.Connected;
             }
 
-            Log($"Reconnected (serverFrame={context.ServerFrameNumber}, snapshot={context.IsSnapshotRestore})");
+            Log($"Reconnected (serverFrame={outcome.ServerFrameNumber}, snapshot={outcome.IsSnapshotRestore})");
             OnReconnected?.Invoke();
             OnReady?.Invoke();
         }
