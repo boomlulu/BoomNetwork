@@ -195,6 +195,9 @@ type Room struct {
 	// 生命周期委托：通知外层状态变更
 	delegate RoomDelegate
 
+	// per-room 日志缓冲区
+	logBuf *roomLogBuffer
+
 	// 房间生命周期
 	createdAt time.Time  // 创建时间
 	alive     atomic.Bool // 是否仍在 RoomManager 中（原子标志，消除热路径 RLock）
@@ -253,5 +256,6 @@ func NewRoomWithConfig(config RoomConfig) *Room {
 		dataStore:        make(map[int64]DataEntry),
 		frameHashes:      make(map[uint32]map[int32]uint32),
 		createdAt:        time.Now(),
+		logBuf:           newRoomLogBuffer(),
 	}
 }

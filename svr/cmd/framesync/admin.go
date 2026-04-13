@@ -31,12 +31,13 @@ var totalConnEver int64
 //
 // 路由：
 //
-//	GET  /health           健康检查（不鉴权）
-//	GET  /stats            流量统计（Game + GM）
-//	GET  /messages         最近 N 条网络消息
-//	GET  /rooms            房间列表 + 玩家详情
-//	POST /kick/{pid}       踢出玩家
-//	POST /rooms/stop/{id}  强停房间
+//	GET  /health                  健康检查（不鉴权）
+//	GET  /stats                   流量统计（Game + GM）
+//	GET  /messages                最近 N 条网络消息
+//	GET  /rooms                   房间列表 + 玩家详情
+//	GET  /rooms/{id}/logs         拉取指定 room 运行日志
+//	POST /kick/{pid}              踢出玩家
+//	POST /rooms/stop/{id}         强停房间
 func startAdminServer(ctx context.Context, addr, token string, cfg ServerConfig) {
 	mux := http.NewServeMux()
 
@@ -47,6 +48,7 @@ func startAdminServer(ctx context.Context, addr, token string, cfg ServerConfig)
 	mux.HandleFunc("/stats", withAuth(token, handleStats))
 	mux.HandleFunc("/messages", withAuth(token, handleMessages))
 	mux.HandleFunc("/rooms/inspect/", withAuth(token, handleRoomInspect))
+	mux.HandleFunc("/rooms/logs/", withAuth(token, handleGetRoomLogs))
 	mux.HandleFunc("/rooms", withAuth(token, handleRooms))
 	mux.HandleFunc("/rooms/stop/", withAuth(token, handleStopRoom))
 	mux.HandleFunc("/rooms/kill/", withAuth(token, handleAdminKillRoom))
@@ -873,6 +875,50 @@ func handleRoomReplay(w http.ResponseWriter, r *http.Request) {
 	slog.Info("admin replay export", "room_id", id, "frames", len(result))
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(result)
+}
+
+// ===================== GET /rooms/logs/{id}?limit=200 =====================
+
+func handleGetRoomLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	idStr := strings.TrimPrefix(r.URL.Path, "/rooms/logs/")
+	id, err := strconv.Atoi(idStr)
+	if err != nil || id <= 0 {
+		jsonError(w, http.StatusBadRequest, "invalid room id")
+		return
+	}
+
+	room := roomMgr.GetRoom(int32(id))
+	if room == nil {
+		jsonError(w, http.StatusNotFound, fmt.Sprintf("room %d not found", id))
+		return
+	}
+
+	limit := 200
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err2 := strconv.Atoi(v); err2 == nil && n > 0 && n <= 500 {
+			limit = n
+		}
+	}
+
+	logs := room.GetLogs(limit)
+
+	type logsResp struct {
+		RoomID   int32                       `json:"room_id"`
+		LogCount int                         `json:"log_count"`
+		Logs     []framesync.RoomLogEntry    `json:"logs"`
+	}
+	resp := logsResp{
+		RoomID:   int32(id),
+		LogCount: len(logs),
+		Logs:     logs,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
 
 func jsonError(w http.ResponseWriter, code int, msg string) {

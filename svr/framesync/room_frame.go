@@ -32,6 +32,7 @@ func (r *Room) Start() {
 	r.mu.Unlock()
 
 	slog.Info("room started: snapshot cleared", "roomId", r.ID)
+	r.LogEvent("INFO", "room started", nil)
 
 	initData := &InitData{
 		FrameRate:           r.frameRate,
@@ -64,6 +65,7 @@ func (r *Room) Stop() {
 	if !startedAt.IsZero() {
 		Metrics.RoomLifetimeSeconds.Observe(time.Since(startedAt).Seconds())
 	}
+	r.LogEvent("INFO", "room stopped", nil)
 	r.broadcast(codec.NewCoreMessage(CmdStopFrameSync, nil))
 
 	if d != nil {

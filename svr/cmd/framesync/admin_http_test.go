@@ -533,6 +533,141 @@ func TestRoomReplay_MethodNotAllowed(t *testing.T) {
 	}
 }
 
+// ===================== /rooms/logs/{id} =====================
+
+func TestGetRoomLogs_NotFound(t *testing.T) {
+	ensureTestGlobals()
+	req := httptest.NewRequest(http.MethodGet, "/rooms/logs/99999", nil)
+	rec := httptest.NewRecorder()
+	handleGetRoomLogs(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rec.Code)
+	}
+}
+
+func TestGetRoomLogs_InvalidId(t *testing.T) {
+	ensureTestGlobals()
+	req := httptest.NewRequest(http.MethodGet, "/rooms/logs/abc", nil)
+	rec := httptest.NewRecorder()
+	handleGetRoomLogs(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestGetRoomLogs_MethodNotAllowed(t *testing.T) {
+	ensureTestGlobals()
+	req := httptest.NewRequest(http.MethodPost, "/rooms/logs/1", nil)
+	rec := httptest.NewRecorder()
+	handleGetRoomLogs(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", rec.Code)
+	}
+}
+
+func TestGetRoomLogs_OK_Empty(t *testing.T) {
+	ensureTestGlobals()
+	room := roomMgr.CreateRoomWithMaxPlayers(2, "logs-test-empty")
+	if room == nil {
+		t.Skip("could not create room")
+	}
+	defer roomMgr.RemoveRoom(room.ID)
+
+	url := "/rooms/logs/" + strconv.Itoa(int(room.ID))
+	req := httptest.NewRequest(http.MethodGet, url, nil)
+	rec := httptest.NewRecorder()
+	handleGetRoomLogs(rec, req)
+
+	if rec.Code != 200 {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var body map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if body["room_id"] == nil {
+		t.Fatal("missing room_id field")
+	}
+	if body["logs"] == nil {
+		t.Fatal("missing logs field")
+	}
+	logCount, _ := body["log_count"].(float64)
+	if logCount != 0 {
+		t.Fatalf("expected log_count=0 for fresh room, got %v", logCount)
+	}
+}
+
+func TestGetRoomLogs_OK_WithLogs(t *testing.T) {
+	ensureTestGlobals()
+	room := roomMgr.CreateRoomWithMaxPlayers(2, "logs-test-with-entries")
+	if room == nil {
+		t.Skip("could not create room")
+	}
+	defer roomMgr.RemoveRoom(room.ID)
+
+	// Write a few log entries directly via the public API
+	room.LogEvent("INFO", "test event 1", map[string]any{"key": "val1"})
+	room.LogEvent("WARN", "test event 2", nil)
+	room.LogEvent("ERROR", "test event 3", map[string]any{"err": "something"})
+
+	url := "/rooms/logs/" + strconv.Itoa(int(room.ID)) + "?limit=10"
+	req := httptest.NewRequest(http.MethodGet, url, nil)
+	rec := httptest.NewRecorder()
+	handleGetRoomLogs(rec, req)
+
+	if rec.Code != 200 {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var body map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	logCount, _ := body["log_count"].(float64)
+	if logCount != 3 {
+		t.Fatalf("expected log_count=3, got %v", logCount)
+	}
+	logs, _ := body["logs"].([]interface{})
+	if len(logs) != 3 {
+		t.Fatalf("expected 3 log entries, got %d", len(logs))
+	}
+	// Most recent first: event 3
+	first, _ := logs[0].(map[string]interface{})
+	if first["msg"] != "test event 3" {
+		t.Fatalf("expected first entry msg='test event 3', got %v", first["msg"])
+	}
+	if first["level"] != "ERROR" {
+		t.Fatalf("expected first entry level='ERROR', got %v", first["level"])
+	}
+}
+
+func TestGetRoomLogs_LimitParam(t *testing.T) {
+	ensureTestGlobals()
+	room := roomMgr.CreateRoomWithMaxPlayers(2, "logs-test-limit")
+	if room == nil {
+		t.Skip("could not create room")
+	}
+	defer roomMgr.RemoveRoom(room.ID)
+
+	for i := 0; i < 10; i++ {
+		room.LogEvent("INFO", "entry", nil)
+	}
+
+	url := "/rooms/logs/" + strconv.Itoa(int(room.ID)) + "?limit=3"
+	req := httptest.NewRequest(http.MethodGet, url, nil)
+	rec := httptest.NewRecorder()
+	handleGetRoomLogs(rec, req)
+
+	if rec.Code != 200 {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var body map[string]interface{}
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	logCount, _ := body["log_count"].(float64)
+	if logCount != 3 {
+		t.Fatalf("expected log_count=3 (limited), got %v", logCount)
+	}
+}
+
 // ===================== jsonError =====================
 
 func TestJsonError(t *testing.T) {

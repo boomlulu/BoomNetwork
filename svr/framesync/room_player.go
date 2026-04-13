@@ -87,6 +87,12 @@ func (r *Room) AddPlayer(id int32, conn PlayerConn, replaying bool, startFrame u
 
 	go r.deliveryLoop(ctx, player, conn, newFrameCh, preamble)
 
+	if isReconnect {
+		r.LogEvent("INFO", "player reconnected", map[string]any{"player_id": id})
+	} else {
+		r.LogEvent("INFO", "player joined", map[string]any{"player_id": id})
+	}
+
 	if d != nil {
 		if isReconnect {
 			d.OnPlayerReconnected(r, player)
@@ -139,6 +145,10 @@ func (r *Room) DisconnectPlayer(id int32) {
 	d := r.delegate
 	r.mu.Unlock()
 
+	if player != nil {
+		r.LogEvent("INFO", "player disconnected", map[string]any{"player_id": id})
+	}
+
 	if d != nil && player != nil {
 		d.OnPlayerDisconnected(r, player)
 	}
@@ -150,6 +160,8 @@ func (r *Room) RemovePlayer(id int32) {
 	r.removePlayerLocked(id)
 	d := r.delegate
 	r.mu.Unlock()
+
+	r.LogEvent("INFO", "player removed", map[string]any{"player_id": id})
 
 	if d != nil {
 		d.OnPlayerRemoved(r, id)
