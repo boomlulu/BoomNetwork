@@ -5,6 +5,19 @@ All notable changes to BoomNetwork will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Reconnect: byPlayer premature deletion** (`session_store.go`, commit 85b59ba) — `Disconnect()` no longer deletes `byPlayer[playerId]`; cleanup is deferred to `sessions.Reconnect()` or the Reconciler's `DeleteByPlayer()`. Previously all reconnect attempts failed instantly with `AllStrategiesExhausted`.
+- **Reconnect: DuplicateFrame across attempts** (`ConnectionManager.cs`, commit 8acbc5c) — `_activeContext` added to `UpdateFrameNumber()` so that attempt 2+ uses the latest frame number instead of the stale snapshot value captured at disconnect time.
+
+### Refactored
+
+- **ReconnectContext → ReconnectState + ReconnectOutcome** (commit 5a26a9d) — `ReconnectContext` split into two single-responsibility types: `ReconnectState` (CM-owned, updated every frame) and `ReconnectOutcome` (readonly struct returned by strategy via `onSuccess` callback). Affected files: `IReconnectStrategy.cs`, `QuickReconnectStrategy.cs`, `SnapshotReconnectStrategy.cs`, `CompositeReconnectStrategy.cs`, `ConnectionManager.cs`, `FrameSyncClient.cs`.
+
+---
+
 ## [0.1.0] - 2026-03-28
 
 First public release. Frame-sync networking framework for Unity — C# client + Go server.
