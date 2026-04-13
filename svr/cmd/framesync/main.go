@@ -626,8 +626,12 @@ func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
 		broadcastToRoom(room, playerId, codec.NewExtMessage(framesync.ExtCmdPlayerOnline, framesync.EncodePlayerId(playerId)))
 	}
 
-	// 先从 handler goroutine 发送 ReconnectRsp（在 delivery loop 启动前，保证顺序）
-	_ = sendMsg(conn, codec.NewCoreMessage(framesync.CmdReconnectRsp, rsp))
+	// 先从 handler goroutine 发送 ReconnectRsp（附上原始 Seq，确保客户端 onResponse 触发），
+	// 再通过 AddPlayer 启动 delivery loop。TCP 保序，Rsp 必先于帧数据到达客户端。
+	reconnectRspMsg := codec.NewCoreMessage(framesync.CmdReconnectRsp, rsp)
+	reconnectRspMsg.HasSeq = msg.HasSeq // 回显客户端请求的 seq，对齐 handleJoinRoom 模式
+	reconnectRspMsg.Seq = msg.Seq
+	_ = sendMsg(conn, reconnectRspMsg)
 
 	// 若房间处于游戏级暂停，在 delivery loop 前补发（preamble 之外，conn 互斥保证顺序）
 	if rs.GamePaused {
