@@ -253,18 +253,20 @@ namespace BoomNetwork.Client.Connection
                 return;
             }
 
+            // 正在重连中再次断开 → 忽略，由当前策略处理
+            // 必须在 _reconnectPaused 检查之前：策略内部触发的 Disconnect（如 SnapshotReconnect
+            // 调用 session.Connect() → transport.Disconnect()）不能因短暂失焦导致重连被中断。
+            if (CurrentState == State.Reconnecting)
+            {
+                Log("Already reconnecting, ignoring disconnect");
+                return;
+            }
+
             // 重连暂停中 → 停在 Disconnected 状态，等 ResumeReconnect
             if (_reconnectPaused)
             {
                 Log("Reconnect paused, waiting for resume");
                 TransitionTo(State.Disconnected);
-                return;
-            }
-
-            // 正在重连中再次断开 → 忽略，由当前策略处理
-            if (CurrentState == State.Reconnecting)
-            {
-                Log("Already reconnecting, ignoring disconnect");
                 return;
             }
 

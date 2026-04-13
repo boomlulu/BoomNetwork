@@ -893,7 +893,6 @@ namespace BoomNetwork.Client.FrameSync
                     }
                     else
                     {
-                        Log($"Snapshot upload rejected (frame={_pendingSnapshotFrame}), scheduling retry {_snapshotRetryCount + 1}/{MaxSnapshotRetries}");
                         ScheduleSnapshotRetry();
                     }
                 },
@@ -902,7 +901,6 @@ namespace BoomNetwork.Client.FrameSync
                     // ConnectionDropped / SessionReset = CancelAllPending 强制取消，不是真正超时。
                     // 断线重连流程（HandleReconnected）会清空 _pendingSnapshotData，无需重试。
                     if (err.Code != ErrorCode.RequestTimeout) return;
-                    Log($"Snapshot upload timeout (frame={_pendingSnapshotFrame}), scheduling retry {_snapshotRetryCount + 1}/{MaxSnapshotRetries}");
                     ScheduleSnapshotRetry();
                 });
         }
@@ -916,6 +914,7 @@ namespace BoomNetwork.Client.FrameSync
                 _snapshotRetryCount = 0;
                 return;
             }
+            Log($"Snapshot upload rejected (frame={_pendingSnapshotFrame}), retry {_snapshotRetryCount + 1}/{MaxSnapshotRetries}");
             _snapshotRetryTimer = SnapshotRetryDelays[_snapshotRetryCount];
             _snapshotRetryCount++;
         }
