@@ -1161,20 +1161,19 @@ func handleFrameHash(conn *transport.Conn, msg *codec.Message) *codec.Message {
 		return nil
 	}
 
-	if room.ReportFrameHash(playerId, frameNum, hash) {
-		// Desync detected
-		hashes := room.GetFrameHashes(frameNum)
+	if detected, mismatchHashes := room.ReportFrameHash(playerId, frameNum, hash); detected {
+		// Desync detected — mismatchHashes already captured before internal map was cleared
 		slog.Error("DESYNC DETECTED",
 			"roomId", room.ID,
 			"frame", frameNum,
-			"hashes", hashes,
+			"hashes", mismatchHashes,
 		)
-		mismatchData := framesync.EncodeFrameHashMismatch(frameNum, hashes)
+		mismatchData := framesync.EncodeFrameHashMismatch(frameNum, mismatchHashes)
 		broadcastToRoom(room, -1, codec.NewExtMessage(framesync.ExtCmdFrameHashMismatch, mismatchData))
 		broadcastToRoom(room, -1, codec.NewExtMessage(framesync.ExtCmdFrameSyncPaused, []byte{byte(framesync.PauseReasonDesync)}))
 		// 通知 GM Hub 推送 desync 事件
 		if gmHub != nil {
-			gmHub.NotifyDesync(DesyncEvent{RoomID: room.ID, FrameNumber: frameNum, PlayerHashes: hashes})
+			gmHub.NotifyDesync(DesyncEvent{RoomID: room.ID, FrameNumber: frameNum, PlayerHashes: mismatchHashes})
 		}
 	}
 	return nil

@@ -893,8 +893,11 @@ namespace BoomNetwork.Client.FrameSync
                     }
                     else
                     {
-                        Log($"Snapshot upload rejected (frame={_pendingSnapshotFrame}), scheduling retry {_snapshotRetryCount + 1}/{MaxSnapshotRetries}");
-                        ScheduleSnapshotRetry();
+                        // Server explicitly rejected (stale frame or no session).
+                        // Retrying the same frame won't help — give up and wait for next boundary.
+                        Log($"Snapshot upload rejected (frame={_pendingSnapshotFrame}), skipping (server has newer)");
+                        _pendingSnapshotData = null;
+                        _snapshotRetryCount = 0;
                     }
                 },
                 onTimeout: err =>

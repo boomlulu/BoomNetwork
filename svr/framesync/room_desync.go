@@ -3,24 +3,25 @@ package framesync
 // ===================== Desync Detection =====================
 
 // ReportFrameHash 客户端上报帧 hash，检测不同步
-// Returns true if desync detected
+// Returns (true, mismatchHashes) if desync detected; (false, nil) otherwise.
+// mismatchHashes 包含触发检测的那帧所有玩家的 hash，用于广播诊断信息。
 //
 // 锁顺序规则：先短暂持 r.mu 读 running，再持 r.desyncMu 操作 desync 状态。
 // 永远不在持有 r.desyncMu 时再获取 r.mu（防死锁）。
-func (r *Room) ReportFrameHash(playerId int32, frameNumber uint32, hash uint32) bool {
+func (r *Room) ReportFrameHash(playerId int32, frameNumber uint32, hash uint32) (bool, map[int32]uint32) {
 	// 快速读取 running（由 r.mu 保护），不进入 desync 锁
 	r.mu.Lock()
 	running := r.running
 	r.mu.Unlock()
 	if !running {
-		return false
+		return false, nil
 	}
 
 	r.desyncMu.Lock()
 	defer r.desyncMu.Unlock()
 
 	if r.desyncDetected {
-		return false
+		return false, nil
 	}
 
 	if r.frameHashes[frameNumber] == nil {
@@ -40,9 +41,14 @@ func (r *Room) ReportFrameHash(playerId int32, frameNumber uint32, hash uint32) 
 				continue
 			}
 			if h != firstHash {
+				// 在清除前保存各玩家 hash，供调用方广播诊断信息使用
+				saved := make(map[int32]uint32, len(hashes))
+				for k, v := range hashes {
+					saved[k] = v
+				}
 				r.desyncDetected = true
 				r.frameHashes = make(map[uint32]map[int32]uint32) // M9: 释放内存，检测完成后无需保留
-				return true
+				return true, saved
 			}
 		}
 	}
@@ -59,7 +65,7 @@ func (r *Room) ReportFrameHash(playerId int32, frameNumber uint32, hash uint32) 
 		}
 	}
 
-	return false
+	return false, nil
 }
 
 // GetFrameHashes returns hashes for a specific frame (for logging)

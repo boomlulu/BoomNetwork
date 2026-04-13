@@ -27,14 +27,17 @@ func TestDesyncDetection_DetectsHashMismatch(t *testing.T) {
 
 	// 同一帧，两玩家上报不同 hash
 	frame := uint32(10)
-	desync1 := room.ReportFrameHash(1, frame, 0xDEAD)
+	desync1, _ := room.ReportFrameHash(1, frame, 0xDEAD)
 	if desync1 {
 		t.Fatal("first player report should not detect desync yet")
 	}
 
-	desync2 := room.ReportFrameHash(2, frame, 0xBEEF)
+	desync2, mismatchHashes := room.ReportFrameHash(2, frame, 0xBEEF)
 	if !desync2 {
 		t.Error("second player with different hash should detect desync")
+	}
+	if len(mismatchHashes) != 2 {
+		t.Errorf("mismatchHashes should have 2 entries, got %d", len(mismatchHashes))
 	}
 
 	// M9: 检测到 desync 后，frameHashes 必须被清空以释放内存
@@ -59,7 +62,7 @@ func TestDesyncDetection_SameHash_NoDesync(t *testing.T) {
 
 	frame := uint32(5)
 	room.ReportFrameHash(1, frame, 0xABCD)
-	desync := room.ReportFrameHash(2, frame, 0xABCD) // same hash
+	desync, _ := room.ReportFrameHash(2, frame, 0xABCD) // same hash
 	if desync {
 		t.Error("same hash from two players should not detect desync")
 	}

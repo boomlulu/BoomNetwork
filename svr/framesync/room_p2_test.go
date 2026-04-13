@@ -80,7 +80,7 @@ func TestReportFrameHash_DesyncDetection(t *testing.T) {
 
 	// 两名玩家对同一帧上报不同 hash → 应检测到脱裂
 	room.ReportFrameHash(1, 50, 0xAAAA)
-	desync := room.ReportFrameHash(2, 50, 0xBBBB)
+	desync, _ := room.ReportFrameHash(2, 50, 0xBBBB)
 	if !desync {
 		t.Error("should detect desync when two players report different hashes for same frame")
 	}
@@ -92,7 +92,7 @@ func TestReportFrameHash_NoDesync(t *testing.T) {
 	setRunning(room, true)
 
 	room.ReportFrameHash(1, 50, 0xAAAA)
-	desync := room.ReportFrameHash(2, 50, 0xAAAA)
+	desync, _ := room.ReportFrameHash(2, 50, 0xAAAA)
 	if desync {
 		t.Error("should NOT detect desync when hashes match")
 	}
