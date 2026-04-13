@@ -123,7 +123,15 @@ header h1{font-size:14px;color:#f0f6fc}
 .stat.ds b{color:#58a6ff}.stat.ok b{color:#3fb950}
 .hdr-btn{padding:3px 10px;background:#21262d;color:#8b949e;border:1px solid #30363d;border-radius:5px;cursor:pointer;font-size:11px;font-family:inherit}
 .hdr-btn:hover{background:#30363d;color:#f0f6fc}
+/* Tab 切换 */
+.tab-bar{display:flex;gap:2px;margin-left:14px}
+.tab-btn{padding:3px 14px;background:#21262d;color:#8b949e;border:1px solid #30363d;border-radius:5px;cursor:pointer;font-size:11px;font-family:inherit;letter-spacing:.5px}
+.tab-btn.active{background:#1f6feb22;color:#58a6ff;border-color:#1f6feb}
+.tab-btn:hover:not(.active){background:#30363d;color:#f0f6fc}
+/* 内容区 */
 main{display:flex;flex:1;overflow:hidden}
+.tab-pane{display:none;flex:1;overflow:hidden}
+.tab-pane.active{display:flex}
 /* 左：Desync Groups */
 #left{flex:1;display:flex;flex-direction:column;border-right:1px solid #21262d;min-width:0;overflow-y:auto;padding:10px 14px;gap:10px}
 #left-hdr{padding:7px 0 7px 0;font-size:11px;color:#8b949e;text-transform:uppercase;letter-spacing:.5px;flex-shrink:0;border-bottom:1px solid #30363d;margin-bottom:4px}
@@ -158,12 +166,36 @@ main{display:flex;flex:1;overflow:hidden}
 .log-line.error{color:#f85149}.log-line.warning{color:#d29922}.log-line.log{color:#8b949e}
 .log-ts{color:#484f58;margin-right:5px;font-size:10px}
 #con-empty{text-align:center;padding:30px;color:#484f58;font-size:11px}
+/* LOGS Tab */
+#pane-logs{flex-direction:column}
+#logs-filter{padding:8px 14px;background:#161b22;border-bottom:1px solid #30363d;display:flex;align-items:center;gap:8px;flex-shrink:0;flex-wrap:wrap}
+#logs-filter label{font-size:10px;color:#8b949e}
+#log-ch-select{background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:2px 6px;font-size:11px;font-family:inherit}
+.lvl-btn{padding:2px 9px;border-radius:10px;font-size:10px;cursor:pointer;border:1px solid #30363d;background:#21262d;color:#8b949e;font-family:inherit}
+.lvl-btn.active{border-color:#58a6ff;color:#58a6ff;background:#1f6feb22}
+.lvl-btn.err.active{border-color:#f85149;color:#f85149;background:#49040422}
+.lvl-btn.warn.active{border-color:#d29922;color:#d29922;background:#2d200022}
+#log-pid-input{background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:2px 6px;font-size:11px;font-family:inherit;width:70px}
+#log-pid-input::placeholder{color:#484f58}
+#logs-count{margin-left:auto;font-size:10px;color:#484f58}
+#logs-list{flex:1;overflow-y:auto;padding:4px 0;font-size:11px;line-height:1.7}
+.cl-line{padding:2px 14px;white-space:pre-wrap;word-break:break-all;display:flex;gap:8px;align-items:baseline}
+.cl-line.ERR{color:#f85149}.cl-line.WARN{color:#d29922}.cl-line.LOG{color:#8b949e}.cl-line.INFO{color:#8b949e}
+.cl-ts{color:#484f58;font-size:10px;flex-shrink:0}
+.cl-ch{color:#58a6ff;font-size:10px;flex-shrink:0}
+.cl-pid{color:#6e7681;font-size:10px;flex-shrink:0}
+.cl-msg{flex:1}
+#logs-empty{text-align:center;padding:40px;color:#484f58}
 </style>
 </head>
 <body>
 <header>
   <div id="dot"></div>
   <h1>BoomNetwork FrameSync Inspector</h1>
+  <div class="tab-bar">
+    <button class="tab-btn active" id="tab-desync" onclick="switchTab('desync')">DESYNC</button>
+    <button class="tab-btn" id="tab-logs" onclick="switchTab('logs')">LOGS</button>
+  </div>
   <div id="stats">
     <span class="stat ds">Desync帧 <b id="s-groups">0</b></span>
     <span class="stat">事件 <b id="s-events">0</b></span>
@@ -172,30 +204,67 @@ main{display:flex;flex:1;overflow:hidden}
   <button class="hdr-btn" onclick="clearAll()">清空</button>
 </header>
 <main>
-  <!-- 左：Desync Groups -->
-  <div id="left">
-    <div id="left-hdr">Desync 帧分组（鼠标悬停 history 详情）</div>
-    <div id="g-empty">等待 Desync 上报…</div>
-  </div>
-  <!-- 右：Console -->
-  <div id="right">
-    <div id="con-hdr">
-      Console
-      <div id="con-filter">
-        <span class="flt active" data-level="all"     onclick="setFilter('all')">全部</span>
-        <span class="flt"        data-level="error"   onclick="setFilter('error')">Err</span>
-        <span class="flt"        data-level="warning" onclick="setFilter('warning')">Warn</span>
-        <span class="flt"        data-level="log"     onclick="setFilter('log')">Log</span>
-      </div>
+  <!-- DESYNC Tab -->
+  <div id="pane-desync" class="tab-pane active">
+    <!-- 左：Desync Groups -->
+    <div id="left">
+      <div id="left-hdr">Desync 帧分组（鼠标悬停 history 详情）</div>
+      <div id="g-empty">等待 Desync 上报…</div>
     </div>
-    <div id="console"><div id="con-empty">等待日志上报…</div></div>
+    <!-- 右：Console -->
+    <div id="right">
+      <div id="con-hdr">
+        Console
+        <div id="con-filter">
+          <span class="flt active" data-level="all"     onclick="setFilter('all')">全部</span>
+          <span class="flt"        data-level="error"   onclick="setFilter('error')">Err</span>
+          <span class="flt"        data-level="warning" onclick="setFilter('warning')">Warn</span>
+          <span class="flt"        data-level="log"     onclick="setFilter('log')">Log</span>
+        </div>
+      </div>
+      <div id="console"><div id="con-empty">等待日志上报…</div></div>
+    </div>
+  </div>
+  <!-- LOGS Tab -->
+  <div id="pane-logs" class="tab-pane">
+    <div id="logs-filter">
+      <label>Channel</label>
+      <select id="log-ch-select" onchange="applyLogsFilter()">
+        <option value="">全部</option>
+      </select>
+      <label style="margin-left:4px">Level</label>
+      <button class="lvl-btn active" data-lv="" onclick="setLvFilter(this,'')">全部</button>
+      <button class="lvl-btn err"    data-lv="ERR"  onclick="setLvFilter(this,'ERR')">ERR</button>
+      <button class="lvl-btn warn"   data-lv="WARN" onclick="setLvFilter(this,'WARN')">WARN</button>
+      <button class="lvl-btn"        data-lv="LOG"  onclick="setLvFilter(this,'LOG')">LOG</button>
+      <label style="margin-left:4px">PID</label>
+      <input id="log-pid-input" type="text" placeholder="全部" oninput="applyLogsFilter()">
+      <button class="hdr-btn" onclick="clearClientLogs()">清空</button>
+      <span id="logs-count">0 条</span>
+    </div>
+    <div id="logs-list"><div id="logs-empty">等待客户端日志上报…</div></div>
   </div>
 </main>
 <script>
 let gCount=0, eCount=0, dCount=0, curFilter='all';
 const MAX_LOG=1000;
+const MAX_CLIENT_LOG=2000;
+let _logsLoaded=false;
+let _allClientLogs=[];
+let _lvFilter='', _chFilter='', _pidFilter='';
+
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 
+// ── Tab 切换 ─────────────────────────────────────────────────────────────
+function switchTab(name){
+  document.querySelectorAll('.tab-pane').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+  document.getElementById('pane-'+name).classList.add('active');
+  document.getElementById('tab-'+name).classList.add('active');
+  if(name==='logs'&&!_logsLoaded){ loadClientLogs(); }
+}
+
+// ── DESYNC Tab ────────────────────────────────────────────────────────────
 function renderGroup(g){
   document.getElementById('g-empty').style.display='none';
   const d=g.diff||{}, evts=g.events||[];
@@ -284,6 +353,120 @@ function setFilter(level){
     el.style.display=(level==='all'||el.dataset.level===level)?'':'none';
   });
 }
+
+// ── LOGS Tab ──────────────────────────────────────────────────────────────
+function fmtTs(ts){
+  if(!ts) return '';
+  const d=new Date(ts);
+  if(isNaN(d)) return String(ts);
+  return d.toTimeString().slice(0,8)+'.'+String(d.getMilliseconds()).padStart(3,'0');
+}
+
+function addClientLog(entry, scroll){
+  _allClientLogs.push(entry);
+  if(_allClientLogs.length>MAX_CLIENT_LOG) _allClientLogs.splice(0, _allClientLogs.length-MAX_CLIENT_LOG);
+  // Update channel dropdown
+  const sel=document.getElementById('log-ch-select');
+  const ch=entry.channel||'';
+  if(ch && !Array.from(sel.options).some(o=>o.value===ch)){
+    const opt=document.createElement('option');
+    opt.value=ch; opt.textContent=ch;
+    sel.appendChild(opt);
+  }
+  // Check if passes current filter
+  if(!entryPassesFilter(entry)) return;
+  const list=document.getElementById('logs-list');
+  document.getElementById('logs-empty').style.display='none';
+  const lv=(entry.level||'LOG').toUpperCase();
+  const div=document.createElement('div');
+  div.className='cl-line '+lv;
+  div.dataset.ch=entry.channel||'';
+  div.dataset.lv=lv;
+  div.dataset.pid=String(entry.pid||'');
+  div.innerHTML=`<span class="cl-ts">${esc(fmtTs(entry.ts))}</span><span class="cl-ch">[${esc(entry.channel||'')}]</span><span class="cl-pid">pid=${esc(entry.pid||'')}</span><span class="cl-msg">${esc(entry.msg||'')}</span>`;
+  list.appendChild(div);
+  // Trim rendered list
+  const items=list.querySelectorAll('.cl-line');
+  if(items.length>MAX_CLIENT_LOG) items[0].remove();
+  if(scroll) list.scrollTop=list.scrollHeight;
+  updateLogsCount();
+}
+
+function entryPassesFilter(entry){
+  const lv=(entry.level||'LOG').toUpperCase();
+  if(_lvFilter && lv!==_lvFilter) return false;
+  if(_chFilter && (entry.channel||'')!==_chFilter) return false;
+  if(_pidFilter && String(entry.pid||'')!==_pidFilter) return false;
+  return true;
+}
+
+function applyLogsFilter(){
+  _chFilter=document.getElementById('log-ch-select').value;
+  _pidFilter=document.getElementById('log-pid-input').value.trim();
+  rebuildLogsList();
+}
+
+function setLvFilter(btn, lv){
+  _lvFilter=lv;
+  document.querySelectorAll('.lvl-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  rebuildLogsList();
+}
+
+function rebuildLogsList(){
+  const list=document.getElementById('logs-list');
+  list.innerHTML='<div id="logs-empty" style="display:none">等待客户端日志上报…</div>';
+  const filtered=_allClientLogs.filter(entryPassesFilter);
+  if(filtered.length===0){
+    document.getElementById('logs-empty').style.display='';
+  }
+  for(const e of filtered){
+    const lv=(e.level||'LOG').toUpperCase();
+    const div=document.createElement('div');
+    div.className='cl-line '+lv;
+    div.dataset.ch=e.channel||'';
+    div.dataset.lv=lv;
+    div.dataset.pid=String(e.pid||'');
+    div.innerHTML=`<span class="cl-ts">${esc(fmtTs(e.ts))}</span><span class="cl-ch">[${esc(e.channel||'')}]</span><span class="cl-pid">pid=${esc(e.pid||'')}</span><span class="cl-msg">${esc(e.msg||'')}</span>`;
+    list.appendChild(div);
+  }
+  list.scrollTop=list.scrollHeight;
+  updateLogsCount();
+}
+
+function updateLogsCount(){
+  const visible=document.getElementById('logs-list').querySelectorAll('.cl-line').length;
+  document.getElementById('logs-count').textContent=`${visible} / ${_allClientLogs.length} 条`;
+}
+
+function loadClientLogs(){
+  _logsLoaded=true;
+  fetch('/client-logs?limit=500').then(r=>r.json()).then(list=>{
+    for(const e of list) addClientLog(e, false);
+    const listEl=document.getElementById('logs-list');
+    listEl.scrollTop=listEl.scrollHeight;
+    updateLogsCount();
+  });
+  // Also populate channel dropdown
+  fetch('/client-logs/channels').then(r=>r.json()).then(data=>{
+    const sel=document.getElementById('log-ch-select');
+    (data.channels||[]).forEach(ch=>{
+      if(!Array.from(sel.options).some(o=>o.value===ch)){
+        const opt=document.createElement('option');
+        opt.value=ch; opt.textContent=ch;
+        sel.appendChild(opt);
+      }
+    });
+  });
+}
+
+function clearClientLogs(){
+  _allClientLogs=[];
+  _logsLoaded=false;
+  document.getElementById('logs-list').innerHTML='<div id="logs-empty">等待客户端日志上报…</div>';
+  updateLogsCount();
+}
+
 function clearAll(){
   fetch('/clear',{method:'POST'}).then(()=>{
     document.querySelectorAll('.g-card').forEach(c=>c.remove());
@@ -291,6 +474,10 @@ function clearAll(){
     document.getElementById('console').innerHTML='<div id="con-empty">等待日志上报…</div>';
     gCount=eCount=dCount=0;
     ['s-groups','s-events','s-diffs'].forEach(id=>document.getElementById(id).textContent=0);
+    _allClientLogs=[];
+    _logsLoaded=false;
+    document.getElementById('logs-list').innerHTML='<div id="logs-empty">等待客户端日志上报…</div>';
+    updateLogsCount();
   });
 }
 
@@ -304,12 +491,17 @@ es.onmessage=e=>{
   const d=JSON.parse(e.data);
   if(d._type==='desync_group')  upsertGroup(d.group);
   else if(d._type==='log')      addLog(d, false);
+  else if(d._type==='client_log') addClientLog(d.entry, true);
   else if(d._type==='clear'){
     document.querySelectorAll('.g-card').forEach(c=>c.remove());
     document.getElementById('g-empty').style.display='';
     document.getElementById('console').innerHTML='<div id="con-empty">等待日志上报…</div>';
     gCount=eCount=dCount=0;
     ['s-groups','s-events','s-diffs'].forEach(id=>document.getElementById(id).textContent=0);
+    _allClientLogs=[];
+    _logsLoaded=false;
+    document.getElementById('logs-list').innerHTML='<div id="logs-empty">等待客户端日志上报…</div>';
+    updateLogsCount();
   }
 };
 es.onerror=()=>document.getElementById('dot').style.background='#f85149';
@@ -382,9 +574,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if len(client_logs) > 5000:
                     del client_logs[:len(client_logs) - 5000]
             for entry in valid:
-                broadcast({"type": "client_log", "channel": entry["channel"],
-                           "level": entry["level"], "pid": entry["pid"],
-                           "msg": entry["msg"], "ts": entry["ts"]})
+                broadcast({"_type": "client_log", "entry": entry})
             self._cors(); self._respond(200, "ok")
 
         elif path == "/clear":
