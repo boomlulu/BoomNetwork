@@ -9,19 +9,22 @@ BoomNetwork FrameSync Inspector
   python3 tools/framesync/server.py [PORT=9878]
 
 端点:
-  POST /desync          客户端上报不同步事件（DesyncReporter.cs）
-  POST /log             客户端上报 [VS] 日志
-  GET  /                Web 面板（自动打开浏览器）
-  GET  /desync          全量事件（JSON array）
-  GET  /desync/latest   最近 10 条事件
-  GET  /desync/groups   按帧分组 + 自动 diff（供 bn-desync-analyze 拉取）
-  GET  /logs            全量日志
-  GET  /events          SSE 实时推送
-  POST /clear           清空所有数据
+  POST /desync             客户端上报不同步事件（DesyncReporter.cs）
+  POST /log                客户端上报 [VS] 日志
+  POST /client-logs        批量上报分层日志（VSLogReporter.cs）
+  GET  /                   Web 面板（自动打开浏览器）
+  GET  /desync             全量事件（JSON array）
+  GET  /desync/latest      最近 10 条事件
+  GET  /desync/groups      按帧分组 + 自动 diff（供 bn-desync-analyze 拉取）
+  GET  /logs               全量日志
+  GET  /client-logs        分层日志查询（?channel=X&level=Y&pid=Z&limit=N&since_ts=T）
+  GET  /client-logs/channels  返回所有出现过的 channel 列表
+  GET  /events             SSE 实时推送
+  POST /clear              清空所有数据
 """
 
 import http.server, json, sys, datetime, threading, queue, os, webbrowser
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 9878
 
@@ -29,8 +32,10 @@ PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 9878
 desync_events: list[dict]       = []   # 按到达顺序，最多 200 条
 desync_groups: dict             = {}   # frame(int) → {"events": [...], "diff": {...}}
 logs:          list[dict]       = []   # [VS] 日志，最多 2000 条
+client_logs:   list[dict]       = []   # 分层客户端日志，最多 5000 条（环形）
 sse_clients:   list[queue.Queue] = []
 lock = threading.Lock()
+client_log_lock = threading.Lock()
 
 G="\033[32m"; R="\033[31m"; Y="\033[33m"; C="\033[36m"; B="\033[1m"; X="\033[0m"
 def ts(): return datetime.datetime.now().strftime("%H:%M:%S")
@@ -349,11 +354,46 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 broadcast(data)
             self._cors(); self._respond(200, "ok")
 
+        elif path == "/client-logs":
+            try:
+                entries = json.loads(body)
+            except Exception as e:
+                return self._respond(400, f"JSON parse error: {e}")
+            if not isinstance(entries, list):
+                return self._respond(400, "body must be a JSON array")
+            # Validate required fields
+            valid = []
+            for item in entries[:200]:  # 单次最多 200 条
+                if not isinstance(item, dict):
+                    continue
+                if "ts" not in item or "channel" not in item or "level" not in item or "msg" not in item:
+                    return self._respond(400, "each entry must have ts, channel, level, msg")
+                entry = {
+                    "ts":      item["ts"],
+                    "channel": item["channel"],
+                    "level":   item["level"],
+                    "pid":     item.get("pid", -1),
+                    "msg":     item["msg"],
+                    "extra":   item.get("extra", {}),
+                }
+                valid.append(entry)
+            with client_log_lock:
+                client_logs.extend(valid)
+                if len(client_logs) > 5000:
+                    del client_logs[:len(client_logs) - 5000]
+            for entry in valid:
+                broadcast({"type": "client_log", "channel": entry["channel"],
+                           "level": entry["level"], "pid": entry["pid"],
+                           "msg": entry["msg"], "ts": entry["ts"]})
+            self._cors(); self._respond(200, "ok")
+
         elif path == "/clear":
             with lock:
                 desync_events.clear()
                 desync_groups.clear()
                 logs.clear()
+            with client_log_lock:
+                client_logs.clear()
             broadcast({"_type": "clear"})
             print(f"  {Y}[{ts()}] 已清空{X}")
             self._cors(); self._respond(200, "cleared")
@@ -383,6 +423,34 @@ class Handler(http.server.BaseHTTPRequestHandler):
         elif path == "/logs":
             with lock: data = json.dumps(logs, ensure_ascii=False)
             self._json(data)
+
+        elif path == "/client-logs":
+            qs = parse_qs(urlparse(self.path).query)
+            f_channel  = qs["channel"][0]  if "channel"  in qs else None
+            f_level    = qs["level"][0]    if "level"    in qs else None
+            f_pid      = int(qs["pid"][0]) if "pid"      in qs else None
+            f_since_ts = int(qs["since_ts"][0]) if "since_ts" in qs else None
+            try:
+                limit = min(int(qs["limit"][0]), 500) if "limit" in qs else 200
+            except (ValueError, KeyError):
+                limit = 200
+            with client_log_lock:
+                snap = list(client_logs)
+            result = []
+            for e in snap:
+                if f_channel  is not None and e["channel"] != f_channel:   continue
+                if f_level    is not None and e["level"]   != f_level:     continue
+                if f_pid      is not None and e["pid"]     != f_pid:       continue
+                if f_since_ts is not None and e["ts"]      <  f_since_ts:  continue
+                result.append(e)
+            result.sort(key=lambda x: x["ts"])
+            self._json(json.dumps(result[-limit:] if len(result) > limit else result, ensure_ascii=False))
+
+        elif path == "/client-logs/channels":
+            with client_log_lock:
+                channels = list({e["channel"] for e in client_logs})
+            channels.sort()
+            self._json(json.dumps({"channels": channels}, ensure_ascii=False))
 
         elif path == "/events":
             self.send_response(200)
