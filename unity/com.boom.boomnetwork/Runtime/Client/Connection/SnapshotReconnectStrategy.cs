@@ -54,13 +54,10 @@ namespace BoomNetwork.Client.Connection
                             return;
                         }
 
-                        onSuccess(new ReconnectOutcome
-                        {
-                            ServerFrameNumber = serverFrame,
-                            SnapshotFrame     = snapshotFrame,
-                            SnapshotData      = snapshotData != null && snapshotData.Length > 0 ? snapshotData : null,
-                            IsSnapshotRestore = snapshotData != null && snapshotData.Length > 0,
-                        });
+                        var hasSnapshot = snapshotData != null && snapshotData.Length > 0;
+                        onSuccess(new ReconnectOutcome(serverFrame, isSnapshotRestore: hasSnapshot,
+                            snapshotFrame: snapshotFrame,
+                            snapshotData:  hasSnapshot ? snapshotData : null));
                     },
                     onTimeout: err =>
                     {

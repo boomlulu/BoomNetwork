@@ -59,15 +59,24 @@ namespace BoomNetwork.Client.Connection
     public readonly struct ReconnectOutcome
     {
         /// <summary>重连成功时服务器的当前帧号</summary>
-        public uint ServerFrameNumber { get; init; }
+        public uint ServerFrameNumber { get; }
 
         /// <summary>快照对应的帧号（快照重连时有效）</summary>
-        public uint SnapshotFrame { get; init; }
+        public uint SnapshotFrame { get; }
 
         /// <summary>服务器返回的快照数据（快照重连时有效，否则 null）</summary>
-        public byte[]? SnapshotData { get; init; }
+        public byte[] SnapshotData { get; }
 
         /// <summary>true = 需要加载快照恢复状态；false = 快速重连，直接补帧</summary>
-        public bool IsSnapshotRestore { get; init; }
+        public bool IsSnapshotRestore { get; }
+
+        public ReconnectOutcome(uint serverFrameNumber, bool isSnapshotRestore,
+            uint snapshotFrame = 0, byte[] snapshotData = null)
+        {
+            ServerFrameNumber = serverFrameNumber;
+            IsSnapshotRestore = isSnapshotRestore;
+            SnapshotFrame     = snapshotFrame;
+            SnapshotData      = snapshotData;
+        }
     }
 }

@@ -64,11 +64,7 @@ namespace BoomNetwork.Client.Connection
                         // 重发 C→S reliable 队列中服务端未处理的消息
                         session.ReplayC2SQueue(serverLastC2SSeq);
 
-                        onSuccess(new ReconnectOutcome
-                        {
-                            ServerFrameNumber = serverFrame,
-                            IsSnapshotRestore = false,
-                        });
+                        onSuccess(new ReconnectOutcome(serverFrame, isSnapshotRestore: false));
                     },
                     onTimeout: err =>
                     {
