@@ -633,8 +633,12 @@ func handleReconnect(conn *transport.Conn, msg *codec.Message) *codec.Message {
 	reconnectRspMsg.Seq = msg.Seq
 	_ = sendMsg(conn, reconnectRspMsg)
 
-	// 若房间处于游戏级暂停，在 delivery loop 前补发（preamble 之外，conn 互斥保证顺序）
-	if rs.GamePaused {
+	// 若房间处于游戏级暂停，在 delivery loop 前补发（仅 QuickReconnect 需要）。
+	// SnapshotReconnect（lastFrame=0）不发：客户端从快照 replay，PendingLevelUp 在 replay 过程中
+	// 自然触发 Level-Triggered Pause → RequestGamePause，无需 preamble 预告。
+	// 若此处对 SnapshotReconnect 也发送，会导致 replay 期间 !wantsPause && IsGamePaused=true，
+	// 客户端误发 RequestGameResume，提前解除暂停，升级界面逻辑异常。
+	if rs.GamePaused && lastFrame > 0 {
 		_ = sendMsg(conn, codec.NewExtMessage(framesync.ExtCmdFrameSyncPaused, []byte{byte(framesync.PauseReasonGamePause)}))
 	}
 
