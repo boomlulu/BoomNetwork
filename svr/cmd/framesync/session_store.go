@@ -103,9 +103,10 @@ func (s *SessionStore) Disconnect(connID int) (playerId int32, room *framesync.R
 	playerId = entry.playerId
 	room = entry.room
 
-	// CAS：只有当 byPlayer 仍指向同一个 entry（即相同 connID）时才删除
+	// CAS：判断 byPlayer 是否仍指向同一 entry（shouldCleanup=true → 触发 DisconnectPlayer）
+	// 注意：不删除 byPlayer，保留供后续 Reconnect 使用（避免重连窗口内 ByPlayer 查不到）。
+	// byPlayer 清理由 sessions.Reconnect() 或 sessions.DeleteByPlayer()（Reconciler）负责。
 	if cur, ok2 := s.byPlayer[playerId]; ok2 && cur.connID == connID {
-		delete(s.byPlayer, playerId)
 		shouldCleanup = true
 	}
 	s.mu.Unlock()

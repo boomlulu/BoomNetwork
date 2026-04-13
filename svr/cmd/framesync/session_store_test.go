@@ -157,14 +157,14 @@ func TestDisconnect_Normal_ShouldCleanupTrue(t *testing.T) {
 		t.Error("Disconnect normal: expected shouldCleanup=true")
 	}
 
-	// byConn 和 byPlayer 都应已删除
+	// byConn 应已删除；byPlayer 必须保留（供后续 Reconnect / Reconciler 清理）
 	_, _, ok1 := s.ByConn(300)
 	if ok1 {
 		t.Error("Disconnect normal: byConn[300] should be gone")
 	}
 	_, _, ok2 := s.ByPlayer(88)
-	if ok2 {
-		t.Error("Disconnect normal: byPlayer[88] should be gone")
+	if !ok2 {
+		t.Error("Disconnect normal: byPlayer[88] should be preserved for reconnect")
 	}
 }
 
