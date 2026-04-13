@@ -239,10 +239,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
         void OnNetworkError(BoomNetwork.Core.NetworkError err)
         {
-            VSLog.Error(VSLog.Channel.Desync, $"[NetworkError] {err}");
-#if UNITY_EDITOR
-            UnityEditor.EditorApplication.isPaused = true;
-#endif
+            VSLog.Error(VSLog.Channel.Key, $"[NetworkError] {err}");
         }
 
         void OnJoinedRoom(int roomId, int[] existingPlayerIds)
