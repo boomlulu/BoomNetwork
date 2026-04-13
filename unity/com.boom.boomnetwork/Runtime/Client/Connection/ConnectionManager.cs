@@ -90,6 +90,7 @@ namespace BoomNetwork.Client.Connection
         public float RttMs { get; private set; } = -1;
         private int _playerId;
         private uint _lastFrameNumber;
+        private ReconnectContext? _activeContext; // 重连期间保活，供 UpdateFrameNumber 同步帧号
 
         public NetworkSession Session => _session;
 
@@ -173,6 +174,10 @@ namespace BoomNetwork.Client.Connection
         public void UpdateFrameNumber(uint frameNumber)
         {
             _lastFrameNumber = frameNumber;
+            // 重连期间同步帧号：让下一次 Attempt 使用最新的 lastFrame，
+            // 避免 attempt 1 补帧推进后 attempt 2 仍从旧帧号重放导致 DuplicateFrame。
+            if (_activeContext != null)
+                _activeContext.LastFrameNumber = frameNumber;
         }
 
         #region Heartbeat
@@ -279,12 +284,14 @@ namespace BoomNetwork.Client.Connection
                 PlayerId = _playerId,
                 LastFrameNumber = _lastFrameNumber,
             };
+            _activeContext = context;
 
             Log($"Starting reconnect (player={_playerId}, frame={_lastFrameNumber})");
 
             _reconnectStrategy.Attempt(_session, _host, _port, context,
                 onSuccess: () =>
                 {
+                    _activeContext = null;
                     Log($"Reconnect success via {_reconnectStrategy.Name} (serverFrame={context.ServerFrameNumber})");
                     TransitionTo(State.Connected);
                     StartHeartbeat();
@@ -292,6 +299,7 @@ namespace BoomNetwork.Client.Connection
                 },
                 onFail: err =>
                 {
+                    _activeContext = null;
                     Log($"[CM] ReconnectFailed code={err.Code} msg={err.Message}");
                     Log($"Reconnect failed: {err}");
                     OnError?.Invoke(new NetworkError(ErrorCode.AllStrategiesExhausted, err.Message));
