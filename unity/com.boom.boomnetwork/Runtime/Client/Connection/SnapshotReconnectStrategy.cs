@@ -3,8 +3,6 @@ using System.Buffers.Binary;
 using BoomNetwork.Core;
 using BoomNetwork.Core.FrameSync;
 using BoomNetwork.Client.Session;
-using UnityEngine;
-
 namespace BoomNetwork.Client.Connection
 {
     /// <summary>
@@ -16,6 +14,7 @@ namespace BoomNetwork.Client.Connection
     public class SnapshotReconnectStrategy : IReconnectStrategy
     {
         public string Name => "SnapshotReconnect";
+        public event Action<string>? OnLog;
 
         public float TimeoutMs { get; set; } = 10000;
 
@@ -26,7 +25,7 @@ namespace BoomNetwork.Client.Connection
         {
             _cancelled = false;
 
-            Debug.Log($"[SnapshotReconnect] Attempt host={host}:{port} playerId={context.PlayerId}");
+            OnLog?.Invoke($"[SnapshotReconnect] Attempt host={host}:{port} playerId={context.PlayerId}");
 
             // 全量重置：清空所有缓冲区和状态
             session.FullReset();

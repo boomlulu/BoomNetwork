@@ -1,7 +1,6 @@
 using System;
 using BoomNetwork.Core;
 using BoomNetwork.Client.Session;
-using UnityEngine;
 
 namespace BoomNetwork.Client.Connection
 {
@@ -14,6 +13,7 @@ namespace BoomNetwork.Client.Connection
     public class CompositeReconnectStrategy : IReconnectStrategy
     {
         public string Name => "CompositeReconnect";
+        public event Action<string>? OnLog;
 
         private readonly (IReconnectStrategy strategy, int maxAttempts)[] _chain;
         private int _chainIndex;
@@ -69,7 +69,7 @@ namespace BoomNetwork.Client.Connection
             var (strategy, maxAttempts) = _chain[_chainIndex];
             _currentAttempts++;
 
-            Debug.Log($"[Composite] chain={_chainIndex}/{_chain.Length} attempt={_currentAttempts}/{maxAttempts} strategy={strategy.GetType().Name}");
+            OnLog?.Invoke($"[Composite] chain={_chainIndex}/{_chain.Length} attempt={_currentAttempts}/{maxAttempts} strategy={strategy.GetType().Name}");
 
             strategy.Attempt(session, host, port, context,
                 onSuccess: () =>

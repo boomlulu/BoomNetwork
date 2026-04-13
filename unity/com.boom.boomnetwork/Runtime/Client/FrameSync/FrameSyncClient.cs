@@ -499,10 +499,14 @@ namespace BoomNetwork.Client.FrameSync
             _transport = _transportFactory != null ? _transportFactory() : CreateDefaultTransport();
             _session = new NetworkSession(_transport);
 
+            var snapshotStrategy = new SnapshotReconnectStrategy { TimeoutMs = 10000 };
+            snapshotStrategy.OnLog += msg => OnLog?.Invoke($"[FrameSyncClient] {msg}");
+
             var reconnectStrategy = new CompositeReconnectStrategy(
                 (new QuickReconnectStrategy { TimeoutMs = 5000 }, 3),
-                (new SnapshotReconnectStrategy { TimeoutMs = 10000 }, 2)
+                (snapshotStrategy, 2)
             );
+            reconnectStrategy.OnLog += msg => OnLog?.Invoke($"[FrameSyncClient] {msg}");
 
             _connMgr = new ConnectionManager(_session, reconnectStrategy);
             _connMgr.HeartbeatIntervalMs = _heartbeatIntervalMs;
