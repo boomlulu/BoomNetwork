@@ -3,6 +3,7 @@ using System.Buffers.Binary;
 using BoomNetwork.Core;
 using BoomNetwork.Core.FrameSync;
 using BoomNetwork.Client.Session;
+using UnityEngine;
 
 namespace BoomNetwork.Client.Connection
 {
@@ -24,6 +25,8 @@ namespace BoomNetwork.Client.Connection
             ReconnectContext context, Action onSuccess, Action<NetworkError> onFail)
         {
             _cancelled = false;
+
+            Debug.Log($"[SnapshotReconnect] Attempt host={host}:{port} playerId={context.PlayerId}");
 
             // 全量重置：清空所有缓冲区和状态
             session.FullReset();

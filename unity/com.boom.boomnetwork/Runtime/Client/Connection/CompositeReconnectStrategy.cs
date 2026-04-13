@@ -1,6 +1,7 @@
 using System;
 using BoomNetwork.Core;
 using BoomNetwork.Client.Session;
+using UnityEngine;
 
 namespace BoomNetwork.Client.Connection
 {
@@ -67,6 +68,8 @@ namespace BoomNetwork.Client.Connection
 
             var (strategy, maxAttempts) = _chain[_chainIndex];
             _currentAttempts++;
+
+            Debug.Log($"[Composite] chain={_chainIndex}/{_chain.Length} attempt={_currentAttempts}/{maxAttempts} strategy={strategy.GetType().Name}");
 
             strategy.Attempt(session, host, port, context,
                 onSuccess: () =>

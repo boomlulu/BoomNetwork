@@ -256,6 +256,7 @@ namespace BoomNetwork.Client.Connection
             // 正在重连中再次断开 → 忽略，由当前策略处理
             // 必须在 _reconnectPaused 检查之前：策略内部触发的 Disconnect（如 SnapshotReconnect
             // 调用 session.Connect() → transport.Disconnect()）不能因短暂失焦导致重连被中断。
+            Log($"[CM] DisconnectEvent state={CurrentState} paused={_reconnectPaused}");
             if (CurrentState == State.Reconnecting)
             {
                 Log("Already reconnecting, ignoring disconnect");
@@ -291,6 +292,7 @@ namespace BoomNetwork.Client.Connection
                 },
                 onFail: err =>
                 {
+                    Log($"[CM] ReconnectFailed code={err.Code} msg={err.Message}");
                     Log($"Reconnect failed: {err}");
                     OnError?.Invoke(new NetworkError(ErrorCode.AllStrategiesExhausted, err.Message));
                     TransitionTo(State.Disconnected);
