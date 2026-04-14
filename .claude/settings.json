@@ -9,10 +9,12 @@
       "Bash(mkdir -p /Users/boom/data/archive/hwmain_2022/2026/W15/04-09 /Users/boom/data/archive/hwmain_2022/2026/W15/04-10)",
       "Bash(mkdir -p /Users/boom/data/archive/mlx/2026/W15/04-08)",
       "Bash(mkdir -p /Users/boom/data/archive/exhaustivityproject/2026/W15/04-08 /Users/boom/data/archive/exhaustivityproject/2026/W15/04-09 /Users/boom/data/archive/exhaustivityproject/2026/W15/04-10)",
-      "Bash(mkdir -p /Users/boom/data/archive/boomnetwork/2026/W15/04-08 /Users/boom/data/archive/boomnetwork/2026/W15/04-09 /Users/boom/data/archive/boomnetwork/2026/W15/04-10 /Users/boom/data/archive/boomnetwork/2026/W15/04-11 /Users/boom/data/archive/boomnetwork/2026/W15/04-12)"
+      "Bash(mkdir -p /Users/boom/data/archive/boomnetwork/2026/W15/04-08 /Users/boom/data/archive/boomnetwork/2026/W15/04-09 /Users/boom/data/archive/boomnetwork/2026/W15/04-10 /Users/boom/data/archive/boomnetwork/2026/W15/04-11 /Users/boom/data/archive/boomnetwork/2026/W15/04-12)",
+      "Edit(~/.claude/skills/bn-svr-logs/**)"
     ],
     "additionalDirectories": [
-      "/Users/boom/.claude/skills"
+      "/Users/boom/.claude/skills",
+      "/Users/boom/Demo/BoomNetwork/.git"
     ]
   }
 }
