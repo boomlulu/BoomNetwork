@@ -209,6 +209,10 @@ func main() {
 	server.SetOnRateLimited(func(c *transport.Conn) {
 		framesync.Metrics.RateLimited.Inc()
 		c.Send(codec.NewCoreMessage(framesync.CmdKicked, []byte{framesync.KickReasonRateLimit}))
+		// 写入 Room LogEvent，让 /rooms/logs 时间线直接显示 rate limit 触发时刻
+		if pid, room, ok := sessions.ByConn(c.ID); ok && room != nil {
+			room.LogEvent("ERROR", "client rate limited", map[string]any{"player_id": pid})
+		}
 	})
 	server.SetOnRateLimitWarn(func(c *transport.Conn) {
 		c.Send(codec.NewCoreMessage(framesync.CmdRateLimitWarning, nil))
@@ -239,6 +243,9 @@ func main() {
 		wsServer.SetOnRateLimited(func(c *transport.Conn) {
 			framesync.Metrics.RateLimited.Inc()
 			c.Send(codec.NewCoreMessage(framesync.CmdKicked, []byte{framesync.KickReasonRateLimit}))
+			if pid, room, ok := sessions.ByConn(c.ID); ok && room != nil {
+				room.LogEvent("ERROR", "client rate limited", map[string]any{"player_id": pid})
+			}
 		})
 		wsServer.SetOnRateLimitWarn(func(c *transport.Conn) {
 			c.Send(codec.NewCoreMessage(framesync.CmdRateLimitWarning, nil))

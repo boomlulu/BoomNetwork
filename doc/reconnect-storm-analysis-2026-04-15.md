@@ -1,6 +1,6 @@
 # Reconnect Storm 根因分析（2026-04-15）
 
-**Status:** 已修复（Bug 1 + Bug 2，见修复计划章节）
+**Status:** Bug 1+2 已修复（`5a8cf34`）；诊断日志已补全（`03af608` + rate limit Room LogEvent + BurstDiag in-progress）；待第三次测试验证
 
 ---
 

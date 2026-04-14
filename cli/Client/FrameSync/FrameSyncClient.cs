@@ -205,6 +205,10 @@ namespace BoomNetwork.Client.FrameSync
         /// <summary>Hash 上报节流间隔（ms）。0 = 每帧上报（调试用）；100 = 稳态 10 msg/sec，补帧 burst 防速率限制。</summary>
         public float HashThrottleMs = 100f;
 
+        // --- 补帧 burst 诊断（每 Tick 重置，>1 帧说明是重连/补帧 burst）---
+        private int _tickFrameCount;  // 本 Tick 内 HandlePushFrames 调用次数
+        private int _tickHashCount;   // 本 Tick 内实际发送的 FrameHash 数
+
         // --- 快照上传 ACK 重试 ---
         private int _snapshotRetryCount;
         private float _snapshotRetryTimer;  // 倒计时 ms，<=0 表示不在等待
@@ -250,6 +254,12 @@ namespace BoomNetwork.Client.FrameSync
         /// </summary>
         public void Tick(float deltaTimeMs)
         {
+            // 补帧 burst 诊断：Tick 开始时报告上一帧的 burst（>1 表示重连补帧 burst）
+            if (_tickFrameCount > 1)
+                Log($"[BurstDiag] catchup burst: frames={_tickFrameCount} hashes={_tickHashCount} hashThrottleMs={HashThrottleMs}");
+            _tickFrameCount = 0;
+            _tickHashCount = 0;
+
             _totalElapsedMs += deltaTimeMs;
             _connMgr?.Tick(deltaTimeMs);
             TickSnapshotRetry(deltaTimeMs);
@@ -461,6 +471,7 @@ namespace BoomNetwork.Client.FrameSync
             // 远低于服务器 100msg/sec 速率上限的 80% 警告阈值。
             if (_totalElapsedMs - _lastHashSentMs < HashThrottleMs) return;
             _lastHashSentMs = _totalElapsedMs;
+            _tickHashCount++;   // burst 诊断：计本 Tick 内实际发送的 hash 数
             // P1-5: 复用类字段 _hashBuf，消除每帧 new byte[8] 分配（20fps × N 玩家高频路径）
             BinaryPrimitives.WriteUInt32LittleEndian(_hashBuf, frameNumber);
             BinaryPrimitives.WriteUInt32LittleEndian(_hashBuf.AsSpan(4), hash);
@@ -806,6 +817,10 @@ namespace BoomNetwork.Client.FrameSync
         private void HandlePushFrames(Message msg)
         {
             if (!_frameSyncStarted || msg.DataLength == 0) return;
+            _tickFrameCount++;  // burst 诊断：计本 Tick 内处理的帧数
+            // 大 burst 立即上报（每 50 帧一条，不等下一 Tick 的 BurstDiag）
+            if (_tickFrameCount % 50 == 0)
+                Log($"[BurstDiag] catchup in progress: frames={_tickFrameCount} hashes={_tickHashCount} hashThrottleMs={HashThrottleMs}");
             var frame = FrameDataCodec.Decode(msg.DataSpan);
 
             // Invariant: frame numbers must strictly increase.

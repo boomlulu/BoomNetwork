@@ -828,6 +828,10 @@ namespace BoomNetwork.Client.FrameSync
         {
             if (!_frameSyncStarted || msg.DataLength == 0) return;
             _tickFrameCount++;  // burst 诊断：计本 Tick 内处理的帧数
+            // 大 burst 立即上报（每 50 帧一条，不等下一 Tick 的 BurstDiag）
+            // Phase1 count=160 会在当前 Tick 内产生 "[in progress]" 日志，不会被后续消息挤出缓冲区
+            if (_tickFrameCount % 50 == 0)
+                Log($"[BurstDiag] catchup in progress: frames={_tickFrameCount} hashes={_tickHashCount} hashThrottleMs={HashThrottleMs}");
             var frame = FrameDataCodec.Decode(msg.DataSpan);
 
             // Invariant: frame numbers must strictly increase.
