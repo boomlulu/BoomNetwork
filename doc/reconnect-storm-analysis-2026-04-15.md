@@ -1,6 +1,6 @@
 # Reconnect Storm 根因分析（2026-04-15）
 
-**Status:** 根因已确认，诊断日志已添加（commit `03af608`），修复待下一步实施
+**Status:** 已修复（Bug 1 + Bug 2，见修复计划章节）
 
 ---
 
@@ -121,9 +121,12 @@ curl -s "http://localhost:9878/client-logs?channel=VS&limit=500" \
 
 ---
 
-## 修复计划（待用户确认后实施）
+## 修复方案（已实施）
 
-1. **Fix 1（根本）** `FrameSyncClient.cs`: 补帧期间跳过 FrameHash，只在 phase1 最后一帧发一次  
-2. **Fix 2（截断）** `ConnectionManager.cs`: `onFail` 设 `_intentionalDisconnect=true` 防止无限重启
+### Fix 1（根本）`FrameSyncClient.cs`
+- `HashThrottleMs = 0f` → `100f`（节流 100ms = 稳态 10 msg/sec）
+- 效果：补帧 burst（同一 Tick 收到 N 帧）时，节流器保证整个 Tick 只发 1 条 FrameHash；N 条 → 1 条，彻底消除 rate limit 触发
 
-详见下一步 code review。
+### Fix 2（截断）`ConnectionManager.cs`
+- `onFail` 回调中添加 `_intentionalDisconnect = true`，位于 `TransitionTo(State.Disconnected)` 之前
+- 效果：AllStrategiesExhausted 后，后续服务器 rate-limit 杀连接产生的 TCP close 事件进入 `HandleSessionDisconnected` → 检测到 `_intentionalDisconnect=true` → 直接 return，不再重启 reconnect

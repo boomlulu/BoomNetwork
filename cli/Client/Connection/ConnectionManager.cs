@@ -291,6 +291,8 @@ namespace BoomNetwork.Client.Connection
                 {
                     Log($"Reconnect failed: {err}");
                     OnError?.Invoke(new NetworkError(ErrorCode.AllStrategiesExhausted, err.Message));
+                    // 防止后续 TCP close 事件绕过保护再次触发 reconnect storm
+                    _intentionalDisconnect = true;
                     TransitionTo(State.Disconnected);
                     OnDisconnected?.Invoke();
                 });

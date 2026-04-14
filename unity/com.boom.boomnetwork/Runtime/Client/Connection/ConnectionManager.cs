@@ -307,6 +307,9 @@ namespace BoomNetwork.Client.Connection
                     Log($"[CM] ReconnectFailed code={err.Code} msg={err.Message}");
                     Log($"Reconnect failed: {err}");
                     OnError?.Invoke(new NetworkError(ErrorCode.AllStrategiesExhausted, err.Message));
+                    // 标记主动断开，防止后续 TCP close 事件（如服务端 rate limit 杀连接）
+                    // 绕过 "Already reconnecting" 保护再次触发 reconnect storm
+                    _intentionalDisconnect = true;
                     TransitionTo(State.Disconnected);
                     OnDisconnected?.Invoke();
                 });

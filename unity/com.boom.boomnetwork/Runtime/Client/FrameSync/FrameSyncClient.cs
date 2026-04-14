@@ -202,8 +202,8 @@ namespace BoomNetwork.Client.FrameSync
         // 调试时可将 HashThrottleMs 设为 0 实现每帧上报。
         private float _totalElapsedMs;
         private float _lastHashSentMs = float.MinValue;
-        /// <summary>Hash 上报节流间隔（ms）。0 = 每帧上报（调试用）；100 = 稳态 2 帧一次。</summary>
-        public float HashThrottleMs = 0f;
+        /// <summary>Hash 上报节流间隔（ms）。0 = 每帧上报（调试用）；100 = 稳态 10 msg/sec，补帧 burst 防速率限制。</summary>
+        public float HashThrottleMs = 100f;
 
         // --- 补帧 burst 诊断（每 Tick 重置，>1 帧说明是重连/补帧 burst）---
         private int _tickFrameCount;  // 本 Tick 内 HandlePushFrames 调用次数
