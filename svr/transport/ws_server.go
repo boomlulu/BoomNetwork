@@ -177,7 +177,7 @@ func NewWsServer(handler Handler, configs ...ServerConfig) *WsServer {
 			CheckOrigin: checkOrigin(sec.AllowedOrigins),
 		},
 		conns:     make(map[int]*Conn),
-		ipLimiter: NewIPRateLimiter(10),
+		ipLimiter: NewIPRateLimiter(30), // S18: 默认每 IP 每秒最多 30 个新连接（支持同 IP 多玩家重连）
 	}
 }
 

@@ -71,7 +71,7 @@ func NewKcpServer(handler Handler, configs ...ServerConfig) *KcpServer {
 		config:    cfg,
 		security:  DefaultSecurityConfig(),
 		conns:     make(map[int]*Conn),
-		ipLimiter: NewIPRateLimiter(10), // S18: 默认每 IP 每秒最多 10 个新连接
+		ipLimiter: NewIPRateLimiter(30), // S18: 默认每 IP 每秒最多 30 个新连接（支持同 IP 多玩家重连）
 	}
 }
 

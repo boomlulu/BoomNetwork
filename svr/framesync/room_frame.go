@@ -308,15 +308,18 @@ func (r *Room) deliveryLoop(ctx context.Context, p *Player, conn PlayerConn, fra
 	for {
 		select {
 		case <-ctx.Done():
+			slog.Info("deliveryLoop phase2 ctx done", "roomId", r.ID, "playerId", p.ID, "cursor", p.cursor)
 			return
 		case cf, ok := <-frameCh:
 			if !ok {
+				slog.Info("deliveryLoop phase2 frameCh closed", "roomId", r.ID, "playerId", p.ID, "cursor", p.cursor)
 				return
 			}
 			if cf.FrameNumber <= p.cursor {
 				continue // 阶段 1 已发，跳过
 			}
 			if err := conn.Send(codec.NewCoreMessage(CmdPushFrames, cf.EncodedData)); err != nil {
+				slog.Warn("deliveryLoop phase2 send error", "roomId", r.ID, "playerId", p.ID, "frame", cf.FrameNumber, "err", err)
 				return
 			}
 			p.cursor = cf.FrameNumber
@@ -327,10 +330,17 @@ func (r *Room) deliveryLoop(ctx context.Context, p *Player, conn PlayerConn, fra
 // onDeliveryExit 在 deliveryLoop 退出时调用。
 // 若玩家仍在线（ctx 非正常取消，即 conn 发送失败），关闭 conn 并标记断线。
 // DisconnectPlayer 幂等：transport 的 onClientDisconnect 回调也可能调用它，无副作用。
+//
+// conn == p.Conn 守卫：旧 deliveryLoop（重连前的 goroutine）的退出不能关闭新连接。
+// 重连时 AddPlayer 将 p.Conn 更新为新连接；旧循环的 conn 与 p.Conn 不匹配 → 跳过清理，
+// 防止旧循环竞态地 DisconnectPlayer → 取消新 deliveryLoop → 新连接无法推帧。
 func (r *Room) onDeliveryExit(p *Player, conn PlayerConn) {
 	r.mu.Lock()
-	isOnline := p.State == PlayerOnline
+	isCurrentConn := p.Conn == conn
+	state := p.State
+	isOnline := state == PlayerOnline && isCurrentConn
 	r.mu.Unlock()
+	slog.Info("onDeliveryExit", "roomId", r.ID, "playerId", p.ID, "state", state, "isCurrentConn", isCurrentConn, "isOnline", isOnline)
 	if isOnline && conn != nil {
 		conn.Close() //nolint:errcheck — 触发 transport.OnDisconnect → onClientDisconnect
 		r.DisconnectPlayer(p.ID)

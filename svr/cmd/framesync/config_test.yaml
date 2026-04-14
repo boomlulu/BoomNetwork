@@ -13,3 +13,4 @@ disconnectKeepSec: 120
 roomCleanupSec: 30
 maxMessageSize: 65536
 maxMessagesPerSec: 100
+wsAddr: ""       # 测试环境禁用 WS，避免与 TCP :9001 端口冲突
