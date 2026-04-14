@@ -98,22 +98,28 @@ namespace BoomNetwork.Unity
         // 在 Android 上，App 进入后台后 TCP 连接可能被系统中断，但重连需要网络权限已就绪。
         // OnApplicationPause(true)  → 暂停重连（防止后台无限重试耗电）
         // OnApplicationPause(false) → 恢复重连（回到前台，补触发断线重连）
+        // Editor 下跳过 Pause：Editor 失焦（切窗口）不等同于 App 后台，不应阻断重连。
         private void OnApplicationPause(bool pauseStatus)
         {
+#if !UNITY_EDITOR
             if (pauseStatus)
                 Client?.PauseReconnect();
             else
                 Client?.ResumeReconnect();
+#endif
         }
 
         // OnApplicationFocus 与 OnApplicationPause 语义互补：
         // 部分 Android 版本 Focus 比 Pause 更早/晚触发，双钩子确保覆盖。
+        // Editor 下跳过 Pause：同上。
         private void OnApplicationFocus(bool hasFocus)
         {
+#if !UNITY_EDITOR
             if (!hasFocus)
                 Client?.PauseReconnect();
             else
                 Client?.ResumeReconnect();
+#endif
         }
 
         private void OnDestroy()
