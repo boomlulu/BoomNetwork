@@ -1,6 +1,6 @@
 # Reconnect Storm 根因分析（2026-04-15）
 
-**Status:** Bug 1+2 已修复（`5a8cf34`）；诊断日志已补全（`03af608` + rate limit Room LogEvent + BurstDiag in-progress）；待第三次测试验证
+**Status:** Bug 1+2+3 已修复（`5a8cf34` + `0a99d36`）；诊断日志已补全；待第四次测试验证
 
 ---
 
@@ -41,7 +41,7 @@ VS Demo 多人联机，游戏启动约 8-10 秒后进入 reconnect storm：
 
 ---
 
-## 两个根本 Bug
+## 三个根本 Bug
 
 ### Bug 1：HashThrottleMs=0，补帧时 FrameHash 无节流（主因）
 
@@ -54,6 +54,22 @@ VS Demo 多人联机，游戏启动约 8-10 秒后进入 reconnect storm：
 - **文件:** `unity/com.boom.boomnetwork/Runtime/Client/Connection/ConnectionManager.cs:304-312`
 - **现象:** `onFail` 将状态置为 `Disconnected`；后续 TCP close 事件（来自 rate limit 杀连接）绕过 `Reconnecting` 保护 → 立即重启 reconnect
 - **修复:** `onFail` 中设置 `_intentionalDisconnect=true`，防止后续 TCP close 事件重启 reconnect
+
+### Bug 3：onDeliveryExit 竞态——旧 goroutine 断开新连接（测试 3 发现）
+
+- **文件:** `svr/framesync/room_frame.go:onDeliveryExit`（commit `0a99d36`）
+- **现象:** 重连时 `AddPlayer()` 先将 `p.Conn` 更新为新连接，再 cancel 旧 deliveryLoop。旧 loop 退出时调用 `onDeliveryExit`，此时 `p.State==PlayerOnline`（新 loop 已调用 `SetPlayerLive()`）→ 误判为"正常断线"→ 调用 `DisconnectPlayer()` cancel 新 loop → 新连接被关闭 → 37ms 内再次断线 → storm 循环。（Bug 1+2 修复后 test 3 仍 400 帧停帧的根因）
+- **修复:** `onDeliveryExit(p, conn)` 新增 `conn == p.Conn` 守卫：exiting goroutine 持有旧 conn 与当前 `p.Conn` 不匹配时直接跳过 Close+Disconnect
+- **验证矩阵:**
+  - Case A（正常断线，当前 loop 发送失败）: `conn=connN, p.Conn=connN` → match → Close+Disconnect ✓
+  - Case B（旧 loop 退出，新连接已建立）: `conn=connN-1, p.Conn=connN` → no match → skip ✓
+  - Case C（被更新的重连 cancel）: `conn=connN, p.Conn=connN+1` → no match → skip ✓
+
+### Bug 3b：per-IP 连接速率 10/sec 触发（同 IP 多玩家重连）
+
+- **文件:** `svr/transport/{tcp,kcp,ws}_server.go`（commit `0a99d36`）
+- **现象:** storm 期间 2 个 ParrelSync 实例来自同一 IP，快速重连达到 ~54 conn/sec，超过 `NewIPRateLimiter(10)` → 新 TCP 被直接关闭
+- **修复:** 3 个 transport 统一改为 `NewIPRateLimiter(30)`
 
 ---
 
@@ -130,3 +146,11 @@ curl -s "http://localhost:9878/client-logs?channel=VS&limit=500" \
 ### Fix 2（截断）`ConnectionManager.cs`
 - `onFail` 回调中添加 `_intentionalDisconnect = true`，位于 `TransitionTo(State.Disconnected)` 之前
 - 效果：AllStrategiesExhausted 后，后续服务器 rate-limit 杀连接产生的 TCP close 事件进入 `HandleSessionDisconnected` → 检测到 `_intentionalDisconnect=true` → 直接 return，不再重启 reconnect
+
+### Fix 3（根本）`room_frame.go:onDeliveryExit`（commit `0a99d36`）
+- `onDeliveryExit(p *Player, conn PlayerConn)` 新增 `conn == p.Conn` 比对
+- 效果：旧 deliveryLoop goroutine 退出时，检测到 conn 不再是当前连接 → 跳过 Close+Disconnect → 新 deliveryLoop 正常运行
+
+### Fix 3b（防御）`{tcp,kcp,ws}_server.go`（commit `0a99d36`）
+- `NewIPRateLimiter(10)` → `NewIPRateLimiter(30)` 
+- 效果：同 IP 多玩家（ParrelSync）在 storm 中快速重连不再触发 IP 速率限制
