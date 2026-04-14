@@ -188,12 +188,17 @@ func (s *KcpServer) handleConn(c *Conn) {
 		if c.rateLimiter != nil {
 			switch c.rateLimiter.AllowLevel() {
 			case RateLevelDeny:
-				slog.Error("client rate limited, disconnecting", "component", "kcp", "connId", c.ID)
+				slog.Error("client rate limited, disconnecting",
+					"component", "kcp", "connId", c.ID,
+					"cmdType", msg.CmdType, "cmd", msg.Cmd, "extCmd", msg.ExtCmd)
 				if s.onRateLimited != nil {
 					s.onRateLimited(c)
 				}
 				return
 			case RateLevelWarn:
+				slog.Warn("client rate limit warn",
+					"component", "kcp", "connId", c.ID,
+					"cmdType", msg.CmdType, "cmd", msg.Cmd, "extCmd", msg.ExtCmd)
 				if s.onRateLimitWarn != nil {
 					s.onRateLimitWarn(c)
 				}

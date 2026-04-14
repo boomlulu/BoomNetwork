@@ -116,11 +116,24 @@ func (r *Room) tickLoop() {
 	ticker := time.NewTicker(r.frameInterval)
 	defer ticker.Stop()
 
+	var lastTickAt time.Time
 	for {
 		select {
 		case <-r.stopCh:
 			return
-		case <-ticker.C:
+		case t := <-ticker.C:
+			if !lastTickAt.IsZero() {
+				if elapsed := t.Sub(lastTickAt); elapsed > r.frameInterval*2 {
+					elapsedMs := elapsed.Milliseconds()
+					expectedMs := r.frameInterval.Milliseconds()
+					slog.Warn("tickLoop jitter detected",
+						"roomId", r.ID, "elapsedMs", elapsedMs, "expectedMs", expectedMs, "frame", r.frameNumber)
+					r.LogEvent("WARN", "tickLoop jitter", map[string]any{
+						"elapsed_ms": elapsedMs, "expected_ms": expectedMs,
+					})
+				}
+			}
+			lastTickAt = t
 			r.stepFrame()
 		}
 	}
@@ -254,6 +267,13 @@ func (r *Room) deliveryLoop(ctx context.Context, p *Player, conn PlayerConn, fra
 	currentFrame := r.CurrentFrameNumber()
 	if p.cursor < currentFrame {
 		frames := r.GetFramesSince(p.cursor)
+		catchupCount := len(frames)
+		catchupStart := time.Now()
+		slog.Info("deliveryLoop phase1 start",
+			"roomId", r.ID, "playerId", p.ID, "fromFrame", p.cursor, "toFrame", currentFrame, "count", catchupCount)
+		r.LogEvent("INFO", "deliveryLoop phase1 start", map[string]any{
+			"player_id": p.ID, "from_frame": p.cursor, "to_frame": currentFrame, "count": catchupCount,
+		})
 		for i, cf := range frames {
 			select {
 			case <-ctx.Done():
@@ -273,6 +293,12 @@ func (r *Room) deliveryLoop(ctx context.Context, p *Player, conn PlayerConn, fra
 				}
 			}
 		}
+		elapsedMs := time.Since(catchupStart).Milliseconds()
+		slog.Info("deliveryLoop phase1 done",
+			"roomId", r.ID, "playerId", p.ID, "count", catchupCount, "elapsedMs", elapsedMs)
+		r.LogEvent("INFO", "deliveryLoop phase1 done", map[string]any{
+			"player_id": p.ID, "count": catchupCount, "elapsed_ms": elapsedMs,
+		})
 	}
 
 	// 阶段 1 结束：升级补帧玩家为在线（可以接收实时广播了）

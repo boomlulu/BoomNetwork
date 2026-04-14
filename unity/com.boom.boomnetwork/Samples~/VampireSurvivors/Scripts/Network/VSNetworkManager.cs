@@ -145,6 +145,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             if (ability != 0)
             {
                 VSLog.Log(VSLog.Channel.Upgrade, $"Upgrade choice sent: ability={ability}, IsGamePaused={_network.Client.IsGamePaused}");
+                VSLog.Log(VSLog.Channel.Key, $"[Pause] RequestGameResume (upgrade deadlock-breaker) ability={ability} frame={_network.Client.LastFrameNumber}");
                 _network.Client.RequestGameResume();
             }
         }
@@ -326,9 +327,15 @@ namespace BoomNetwork.Samples.VampireSurvivors
             // is deadlock-safe because Update() sends RequestGameResume after upgrade choice.
             bool wantsPause = _sim.IsAnyPlayerUpgrading();
             if (wantsPause && !_network.Client.IsGamePaused)
+            {
+                VSLog.Log(VSLog.Channel.Key, $"[Pause] RequestGamePause frame={frame.FrameNumber} wantsPause={wantsPause}");
                 _network.Client.RequestGamePause();
+            }
             else if (!wantsPause && _network.Client.IsGamePaused)
+            {
+                VSLog.Log(VSLog.Channel.Key, $"[Pause] RequestGameResume frame={frame.FrameNumber} wantsPause={wantsPause}");
                 _network.Client.RequestGameResume();
+            }
 
             _ui.UpdateHUD(_sim, _localSlot, (int)_network.Client.RttMs);
         }
