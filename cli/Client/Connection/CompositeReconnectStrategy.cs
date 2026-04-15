@@ -13,6 +13,7 @@ namespace BoomNetwork.Client.Connection
     public class CompositeReconnectStrategy : IReconnectStrategy
     {
         public string Name => "CompositeReconnect";
+        public event Action<string>? OnLog;
 
         private readonly (IReconnectStrategy strategy, int maxAttempts)[] _chain;
         private int _chainIndex;
@@ -37,13 +38,13 @@ namespace BoomNetwork.Client.Connection
         }
 
         public void Attempt(NetworkSession session, string host, int port,
-            ReconnectContext context, Action onSuccess, Action<NetworkError> onFail)
+            ReconnectState state, Action<ReconnectOutcome> onSuccess, Action<NetworkError> onFail)
         {
             _cancelled = false;
             _chainIndex = 0;
             _currentAttempts = 0;
 
-            TryNext(session, host, port, context, onSuccess, onFail);
+            TryNext(session, host, port, state, onSuccess, onFail);
         }
 
         public void Cancel()
@@ -54,7 +55,7 @@ namespace BoomNetwork.Client.Connection
         }
 
         private void TryNext(NetworkSession session, string host, int port,
-            ReconnectContext context, Action onSuccess, Action<NetworkError> onFail)
+            ReconnectState state, Action<ReconnectOutcome> onSuccess, Action<NetworkError> onFail)
         {
             if (_cancelled)
                 return;
@@ -68,11 +69,13 @@ namespace BoomNetwork.Client.Connection
             var (strategy, maxAttempts) = _chain[_chainIndex];
             _currentAttempts++;
 
-            strategy.Attempt(session, host, port, context,
-                onSuccess: () =>
+            OnLog?.Invoke($"[Composite] chain={_chainIndex}/{_chain.Length} attempt={_currentAttempts}/{maxAttempts} strategy={strategy.GetType().Name}");
+
+            strategy.Attempt(session, host, port, state,
+                onSuccess: outcome =>
                 {
                     if (_cancelled) return;
-                    onSuccess();
+                    onSuccess(outcome);
                 },
                 onFail: reason =>
                 {
@@ -81,14 +84,14 @@ namespace BoomNetwork.Client.Connection
                     if (_currentAttempts < maxAttempts)
                     {
                         // 同一策略再试
-                        TryNext(session, host, port, context, onSuccess, onFail);
+                        TryNext(session, host, port, state, onSuccess, onFail);
                     }
                     else
                     {
                         // 降级到下一个策略
                         _chainIndex++;
                         _currentAttempts = 0;
-                        TryNext(session, host, port, context, onSuccess, onFail);
+                        TryNext(session, host, port, state, onSuccess, onFail);
                     }
                 });
         }

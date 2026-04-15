@@ -65,9 +65,9 @@ namespace BoomNetwork.Client.Connection
         public event Action? OnDisconnected;
 
         /// <summary>
-        /// 重连成功
+        /// 重连成功，携带策略返回的结果
         /// </summary>
-        public event Action<ReconnectContext>? OnReconnected;
+        public event Action<ReconnectOutcome>? OnReconnected;
 
         /// <summary>
         /// 状态变化日志
@@ -90,6 +90,12 @@ namespace BoomNetwork.Client.Connection
         public float RttMs { get; private set; } = -1;
         private int _playerId;
         private uint _lastFrameNumber;
+
+        /// <summary>
+        /// 重连期间持有的活状态，由 UpdateFrameNumber 每帧同步帧号，
+        /// 策略每次 Attempt 时读取到的都是最新值。
+        /// </summary>
+        private ReconnectState? _activeState;
 
         public NetworkSession Session => _session;
 
@@ -168,11 +174,15 @@ namespace BoomNetwork.Client.Connection
         }
 
         /// <summary>
-        /// 更新帧号（收帧时由上层调用）
+        /// 更新帧号（收帧时由上层调用）。
+        /// 重连期间同步写入 _activeState.LastFrameNumber，保证下一次 Attempt
+        /// 使用的是当前最新帧号，而非断线时刻的快照。
         /// </summary>
         public void UpdateFrameNumber(uint frameNumber)
         {
             _lastFrameNumber = frameNumber;
+            if (_activeState != null)
+                _activeState.LastFrameNumber = frameNumber;
         }
 
         #region Heartbeat
@@ -253,6 +263,16 @@ namespace BoomNetwork.Client.Connection
                 return;
             }
 
+            // 正在重连中再次断开 → 忽略，由当前策略处理
+            // 必须在 _reconnectPaused 检查之前：策略内部触发的 Disconnect（如 SnapshotReconnect
+            // 调用 session.Connect() → transport.Disconnect()）不能因短暂失焦导致重连被中断。
+            Log($"[CM] DisconnectEvent state={CurrentState} paused={_reconnectPaused}");
+            if (CurrentState == State.Reconnecting)
+            {
+                Log("Already reconnecting, ignoring disconnect");
+                return;
+            }
+
             // 重连暂停中 → 停在 Disconnected 状态，等 ResumeReconnect
             if (_reconnectPaused)
             {
@@ -261,37 +281,34 @@ namespace BoomNetwork.Client.Connection
                 return;
             }
 
-            // 正在重连中再次断开 → 忽略，由当前策略处理
-            if (CurrentState == State.Reconnecting)
-            {
-                Log("Already reconnecting, ignoring disconnect");
-                return;
-            }
-
             // 被动断线 → 触发重连
             TransitionTo(State.Reconnecting);
 
-            var context = new ReconnectContext
+            _activeState = new ReconnectState
             {
-                PlayerId = _playerId,
+                PlayerId        = _playerId,
                 LastFrameNumber = _lastFrameNumber,
             };
 
             Log($"Starting reconnect (player={_playerId}, frame={_lastFrameNumber})");
 
-            _reconnectStrategy.Attempt(_session, _host, _port, context,
-                onSuccess: () =>
+            _reconnectStrategy.Attempt(_session, _host, _port, _activeState,
+                onSuccess: outcome =>
                 {
-                    Log($"Reconnect success via {_reconnectStrategy.Name} (serverFrame={context.ServerFrameNumber})");
+                    _activeState = null;
+                    Log($"Reconnect success via {_reconnectStrategy.Name} (serverFrame={outcome.ServerFrameNumber})");
                     TransitionTo(State.Connected);
                     StartHeartbeat();
-                    OnReconnected?.Invoke(context);
+                    OnReconnected?.Invoke(outcome);
                 },
                 onFail: err =>
                 {
+                    _activeState = null;
+                    Log($"[CM] ReconnectFailed code={err.Code} msg={err.Message}");
                     Log($"Reconnect failed: {err}");
                     OnError?.Invoke(new NetworkError(ErrorCode.AllStrategiesExhausted, err.Message));
-                    // 防止后续 TCP close 事件绕过保护再次触发 reconnect storm
+                    // 标记主动断开，防止后续 TCP close 事件（如服务端 rate limit 杀连接）
+                    // 绕过 "Already reconnecting" 保护再次触发 reconnect storm
                     _intentionalDisconnect = true;
                     TransitionTo(State.Disconnected);
                     OnDisconnected?.Invoke();

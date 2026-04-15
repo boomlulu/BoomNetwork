@@ -15,15 +15,18 @@ namespace BoomNetwork.Client.Connection
     public class SnapshotReconnectStrategy : IReconnectStrategy
     {
         public string Name => "SnapshotReconnect";
+        public event Action<string>? OnLog;
 
         public float TimeoutMs { get; set; } = 10000;
 
         private bool _cancelled;
 
         public void Attempt(NetworkSession session, string host, int port,
-            ReconnectContext context, Action onSuccess, Action<NetworkError> onFail)
+            ReconnectState state, Action<ReconnectOutcome> onSuccess, Action<NetworkError> onFail)
         {
             _cancelled = false;
+
+            OnLog?.Invoke($"[SnapshotReconnect] Attempt host={host}:{port} playerId={state.PlayerId}");
 
             // 全量重置：清空所有缓冲区和状态
             session.FullReset();
@@ -33,9 +36,9 @@ namespace BoomNetwork.Client.Connection
                 session.OnConnected -= onConnected;
                 if (_cancelled) return;
 
-                // 发送重连请求（和快速重连相同的协议，服务器根据上下文决定是否返回快照）
+                // 发送重连请求（只携带 playerId，lastFrame=0 告知服务器走快照路径）
                 var data = new byte[4];
-                BinaryPrimitives.WriteInt32LittleEndian(data, context.PlayerId);
+                BinaryPrimitives.WriteInt32LittleEndian(data, state.PlayerId);
 
                 session.SendAsync(FrameSyncCmd.Reconnect, data, TimeoutMs,
                     onResponse: msg =>
@@ -51,20 +54,10 @@ namespace BoomNetwork.Client.Connection
                             return;
                         }
 
-                        context.ServerFrameNumber = serverFrame;
-                        context.SnapshotFrame = snapshotFrame;
-
-                        if (snapshotData != null && snapshotData.Length > 0)
-                        {
-                            context.SnapshotData = snapshotData;
-                            context.IsSnapshotRestore = true;
-                        }
-                        else
-                        {
-                            context.IsSnapshotRestore = false;
-                        }
-
-                        onSuccess();
+                        var hasSnapshot = snapshotData != null && snapshotData.Length > 0;
+                        onSuccess(new ReconnectOutcome(serverFrame, isSnapshotRestore: hasSnapshot,
+                            snapshotFrame: snapshotFrame,
+                            snapshotData:  hasSnapshot ? snapshotData : null));
                     },
                     onTimeout: err =>
                     {
