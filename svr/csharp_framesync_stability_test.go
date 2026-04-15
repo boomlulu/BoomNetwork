@@ -32,11 +32,11 @@ const (
 
 // stabilityClientStats 单个客户端的运行统计
 type stabilityClientStats struct {
-	clientID        int32
-	totalFrames     uint64
-	gapCount        int64  // 帧序号非单调递增次数（期望为0）
-	firstFrameNum   uint32
-	lastFrameNum    uint32
+	clientID       int32
+	totalFrames    uint64
+	gapCount       int64  // 帧序号非连续次数（期望为0）：包含前跳（跳帧）和后跳（重复帧）两类
+	firstFrameNum  uint32
+	lastFrameNum   uint32
 }
 
 // serveStabilityConn 处理稳定性测试中一个服务端连接：
@@ -270,11 +270,15 @@ func runStabilityClient(
 			if !firstFrameSet {
 				stats.firstFrameNum = fd.FrameNumber
 				firstFrameSet = true
-			} else if fd.FrameNumber <= lastFrameNum {
-				// 帧序号非单调递增（跳帧或重复帧）
+				if fd.FrameNumber != 1 {
+					t.Errorf("[stab-cli %d] first frame expected 1, got %d", playerId, fd.FrameNumber)
+				}
+			} else if fd.FrameNumber != lastFrameNum+1 {
+				// 帧序号不连续：包含前跳（跳帧，fd.FrameNumber > lastFrameNum+1）
+				// 和后跳/重复（fd.FrameNumber <= lastFrameNum）两类
 				atomic.AddUint64(&gapCountAtomic, 1)
-				t.Errorf("[stab-cli %d] frame non-monotonic: got %d after %d",
-					playerId, fd.FrameNumber, lastFrameNum)
+				t.Errorf("[stab-cli %d] frame non-consecutive: got %d after %d (expected %d)",
+					playerId, fd.FrameNumber, lastFrameNum, lastFrameNum+1)
 			}
 			lastFrameNum = fd.FrameNumber
 			atomic.AddUint64(&frameCountAtomic, 1)
@@ -304,7 +308,7 @@ func runStabilityClient(
 // 验证：
 //   - 3个goroutine并发执行，使用 sync.WaitGroup 协调
 //   - 每分钟输出帧计数统计（约1200帧/分钟 @20fps）
-//   - 帧序号严格单调递增（无跳帧）
+//   - 帧序号严格连续递增（无跳帧，每帧 = 前帧 + 1）
 //   - 总帧数接近24000（20fps × 1200s，允许5%偏差）
 //   - 无panic（tickLoop内有recover，panic会被记录为测试失败）
 func TestCSharpFrameSyncStability(t *testing.T) {
@@ -399,9 +403,9 @@ func TestCSharpFrameSyncStability(t *testing.T) {
 				s.clientID, s.totalFrames, lowerBound, expectedFrames)
 		}
 
-		// 验证2：无跳帧（帧序号严格单调递增）
+		// 验证2：无跳帧（帧序号严格连续递增：每帧 = 前帧 + 1）
 		if s.gapCount > 0 {
-			t.Errorf("[stab-cli %d] %d frame gap(s) detected (non-monotonic frame numbers)",
+			t.Errorf("[stab-cli %d] %d frame gap(s) detected (non-consecutive frame numbers, expected each frame = prev+1)",
 				s.clientID, s.gapCount)
 		}
 	}
